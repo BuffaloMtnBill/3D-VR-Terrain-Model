@@ -355,6 +355,32 @@ async function main() {
 
   await page.locator('[data-palette="desert"]').click();
   assert.equal(await page.locator('[data-palette="desert"]').getAttribute('aria-pressed'),'true');
+  // Elevation profile: both methods reshape the model while readouts keep real elevations.
+  assert.equal(await page.locator('#relief-method').inputValue(),'standard');
+  assert.equal(await page.locator('#relief-strength-block').isHidden(),true);
+  const standardScene=await canvasImage(),standardSize=await page.evaluate(()=>document.getElementById('export-dimensions').textContent),lowStat=await page.locator('#stat-low').innerText();
+  for(const method of ['local','lowland']) {
+    const surface=page.waitForResponse(response=>response.url().includes('/api/terrain/')&&response.url().includes('relief='+method));
+    await page.locator('#relief-method').selectOption(method);
+    const body=await (await surface).json();
+    assert.equal(body.relief,method);assert.equal(body.true_elevations.length,body.elevations.length);
+    assert.equal(await page.locator('#relief-strength-block').isVisible(),true);
+    assert.notEqual(await canvasImage(),standardScene,method+' must reshape the rendered model');
+    assert.equal(await page.locator('#stat-low').innerText(),lowStat,'Statistics keep real elevations');
+  }
+  await page.locator('#relief-method').selectOption('local');
+  const strongSurface=page.waitForResponse(response=>response.url().includes('relief_strength=100'));
+  await slider(page,'relief-strength',100);await page.locator('#relief-strength').dispatchEvent('change');await strongSurface;
+  assert.equal(await page.locator('#relief-strength-value').innerText(),'100%');
+  await page.waitForFunction(previous=>document.getElementById('export-dimensions').textContent!==previous,standardSize);
+  const reliefExport=page.waitForRequest(request=>request.url().includes('/api/export/')&&request.method()==='POST');
+  await page.locator('#export-button').click();await page.locator('[data-export="metadata"]').click();
+  assert.equal((await reliefExport).postDataJSON().relief,'local');
+  await page.waitForFunction(()=>!document.querySelector('[data-export="stl"]').disabled);
+  await page.locator('#export-dialog button[aria-label="Close export dialog"]').click();
+  const standardSurface=page.waitForResponse(response=>response.url().includes('relief=standard'));
+  await page.locator('#relief-method').selectOption('standard');await standardSurface;
+  await page.waitForFunction(previous=>document.getElementById('export-dimensions').textContent===previous,standardSize);
   await slider(page,'exaggeration',3.5);
   assert.equal(await page.locator('#exaggeration-value').innerText(),'3.5×');
   assert.equal(await page.locator('#smoothing').count(),0);

@@ -83,6 +83,7 @@ Mount Fuji, Grand Canyon, and Chamonix.
 | --- | --- |
 | Alpine / Earth / Desert | Three elevation-based color palettes |
 | Print | Mapped surface colors for four-filament printing; opens a six-surface color menu |
+| Elevation profile | How heights are shaped before the multiplier: Standard, Local relief, or Lowland emphasis (see below) |
 | Elevation multiplier | 1× preserves the horizontal-to-vertical ratio; values above 1× emphasize relief |
 | Base thickness | Height of the solid base beneath the terrain, as a percentage of the longest horizontal edge |
 | Contour lines | Overlays elevation contours at an automatically chosen interval |
@@ -92,6 +93,28 @@ Mount Fuji, Grand Canyon, and Chamonix.
 | Elevation | Top-down elevation color map, in the selected frame's orientation |
 | Profile | A movable geographic cross-section, showing unexaggerated elevations |
 | Map features and colors | Optional OSM geometry draped over the terrain; railways have two rails and ties, boundaries use dashed lines, and water areas retain islands |
+
+## Elevation profile
+
+The **Elevation profile** selector above the Elevation multiplier chooses how
+heights are shaped before that multiplier is applied:
+
+- **Standard** multiplies every height equally.
+- **Local relief** separates the terrain into a smoothed trend surface and the
+  finer relief around it (a local relief model), then amplifies only the fine
+  relief: up to three times at full strength. Ridges, gullies, and terraces
+  stand out while broad landforms keep their height. The smoothing radius is
+  3% of the grid's longer side.
+- **Lowland emphasis** applies a power curve so low ground gets a larger share
+  of the same total height. The lowest and highest points and the order of all
+  heights are unchanged; valleys and plains gain shape that a plain multiplier
+  leaves flat.
+
+**Effect strength** appears for the two non-standard profiles. These profiles
+change the model's geometry in the preview, STL, OBJ, GLB, and 3MF. Statistics,
+the profile chart, contour lines, surface colors, and the CSV, NumPy, and
+heightmap exports keep the real elevations. The chosen profile and strength
+are saved in export metadata and in **Save as default**.
 
 ## Exports
 
@@ -327,7 +350,7 @@ python -m pip install -e '.[test]'
 python -m pytest -q
 ```
 
-Tests cover image-format restrictions on downloads, on-demand building downloads, USGS 3DEP raster sampling, missing-coverage errors and source selection, signed/fractional Terrarium decoding, interpolation across tile seams,
+Tests cover elevation profile reshaping, image-format restrictions on downloads, on-demand building downloads, USGS 3DEP raster sampling, missing-coverage errors and source selection, signed/fractional Terrarium decoding, interpolation across tile seams,
 cache reuse, input validation, smoothing, watertight geometry and winding,
 millimeter scaling, STL encoding, raw data/heightmap round trips, HTTP endpoints,
 background job success/failure, default presets, place search caching/errors, ZIP validation/caching/errors,

@@ -470,3 +470,49 @@ def test_downloads_are_decoded_only_as_their_expected_image_format(tmp_path, mon
 def test_feature_jobs_cannot_delay_terrain_jobs(application):
     pools = application.extensions["terrain"]["executor"]
     assert pools.terrain is not pools.features
+
+
+def test_relief_methods_reshape_model_heights_without_changing_data(terrain):
+    from terrain_app.mesh import shape_elevations
+    heights = terrain.elevations.astype(np.float64)
+    assert shape_elevations(heights) is not None and np.array_equal(shape_elevations(heights, "local", 0), heights)
+    lowland = shape_elevations(heights, "lowland", 100)
+    assert lowland.min() == heights.min() and lowland.max() == pytest.approx(heights.max())
+    assert np.all(lowland >= heights-1e-9) and lowland.mean() > heights.mean()  # low ground rises
+    assert np.array_equal(np.argsort(lowland, axis=None, kind="stable"), np.argsort(heights, axis=None, kind="stable"))
+    y, x = np.mgrid[0:120, 0:160]
+    ramp = x*5.0
+    rippled = ramp+2*np.sin(x/2)*np.sin(y/2)
+    boosted = shape_elevations(rippled, "local", 100)
+    inner = (slice(30, -30), slice(30, -30))
+    assert np.std((boosted-ramp)[inner]) > 2.5*np.std((rippled-ramp)[inner])  # fine relief is amplified
+    np.testing.assert_allclose(shape_elevations(ramp, "local", 100)[inner], ramp[inner], atol=1e-6)  # broad slope kept
+    assert np.array_equal(shape_elevations(np.full((20, 20), 7.0), "lowland", 80), np.full((20, 20), 7.0))
+    for bad in (("ridge", 50), ("local", 101), ("lowland", float("nan"))):
+        with pytest.raises(ValueError):
+            shape_elevations(heights, *bad)
+    plain, shaped = build_mesh(terrain, ModelOptions()), build_mesh(terrain, ModelOptions(relief="lowland", relief_strength=100))
+    assert shaped[0][:, 2].max() == pytest.approx(plain[0][:, 2].max()) and shaped[0][:, 2].sum() > plain[0][:, 2].sum()
+    assert np.array_equal(plain[1], shaped[1])
+    original = terrain.elevations.copy()
+    for format in ("csv", "npy"):
+        assert export_file(terrain, ModelOptions(relief="local"), format, "")[0].getvalue() == export_file(terrain, ModelOptions(), format, "")[0].getvalue()
+    assert np.array_equal(terrain.elevations, original)
+    with pytest.raises(ValueError):
+        ModelOptions.from_dict({"relief": "steep"})
+    assert ModelOptions.from_dict({"relief": "local", "relief_strength": 25}).relief_strength == 25
+
+
+def test_terrain_endpoint_returns_shaped_and_true_heights(application):
+    client = application.test_client()
+    standard = client.get("/api/terrain/example").get_json()
+    assert standard["relief"] == "standard" and "true_elevations" not in standard
+    shaped = client.get("/api/terrain/example?relief=lowland&relief_strength=100").get_json()
+    assert shaped["true_elevations"] == standard["elevations"] and shaped["elevations"] != standard["elevations"]
+    assert shaped["min_m"] == standard["min_m"] and shaped["surface_max_m"] == pytest.approx(standard["surface_max_m"])
+    local = client.get("/api/terrain/example?relief=local&relief_strength=50").get_json()
+    assert local["surface_max_m"] != standard["surface_max_m"] and local["max_m"] == standard["max_m"]
+    assert client.get("/api/terrain/example?relief=other").status_code == 400
+    assert client.get("/api/terrain/example?relief=local&relief_strength=500").status_code == 400
+    response = client.post("/api/export/example", json={"format": "metadata", "relief": "local", "relief_strength": 75})
+    assert response.get_json()["model_options"]["relief"] == "local"

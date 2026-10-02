@@ -292,7 +292,8 @@ function colorAt(value, palette, target=new THREE.Color()) {
 }
 
 function options() {
-  return {exaggeration:Number($('exaggeration').value),smoothing:0,base_percent:Number($('base').value),solid:true,size_mm:Number($('export-size').value)};
+  return {exaggeration:Number($('exaggeration').value),smoothing:0,base_percent:Number($('base').value),solid:true,size_mm:Number($('export-size').value),
+    relief:$('relief-method').value,relief_strength:Number($('relief-strength').value)};
 }
 
 function disposeMesh(mesh) {
@@ -313,7 +314,9 @@ function buildScene(reset=false) {
   const unit=SCALE/Math.max(data.width_m,data.height_m), width=data.width_m*unit, height=data.height_m*unit;
   const base=opts.solid?SCALE*opts.base_percent/100:0;
   const positions=new Float32Array(rows*columns*3),uvs=new Float32Array(rows*columns*2),colors=new Float32Array(rows*columns*3);
-  const tempColor=new THREE.Color(), range=Math.max(data.surface_max_m-data.surface_min_m,1e-9);
+  // Colors and contours follow real elevations even when the model's heights are reshaped.
+  const truth=data.true_elevations||elevations;
+  const tempColor=new THREE.Color(), range=Math.max(data.max_m-data.min_m,1e-9);
   const palette=state.view==='elevation'?'elevation':state.palette;
   for(let row=0;row<rows;row++) for(let column=0;column<columns;column++) {
     const index=row*columns+column, value=elevations[index];
@@ -322,7 +325,7 @@ function buildScene(reset=false) {
     positions[index*3+2]=(row/(rows-1)-.5)*height;
     uvs[index*2]=column/(columns-1); uvs[index*2+1]=1-row/(rows-1);
     if(palette==='print')tempColor.set(surfaceColors.dirt).toArray(colors,index*3);
-    else colorAt((value-data.surface_min_m)/range,palette,tempColor).toArray(colors,index*3);
+    else colorAt((truth[index]-data.min_m)/range,palette,tempColor).toArray(colors,index*3);
   }
   const indices=new Uint32Array((rows-1)*(columns-1)*6);
   let cursor=0;
@@ -334,7 +337,7 @@ function buildScene(reset=false) {
   geometry.setAttribute('position',new THREE.BufferAttribute(positions,3));
   geometry.setAttribute('uv',new THREE.BufferAttribute(uvs,2));
   geometry.setAttribute('color',new THREE.BufferAttribute(colors,3));
-  geometry.setAttribute('elevation',new THREE.Float32BufferAttribute(elevations,1));
+  geometry.setAttribute('elevation',new THREE.Float32BufferAttribute(truth,1));
   geometry.setIndex(new THREE.BufferAttribute(indices,1)); geometry.computeVertexNormals();
   if(palette==='print')geometry=paintSurface(geometry,surfaceColors,coverData);
   const material=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.93,metalness:0,wireframe:state.view==='wireframe'});
@@ -390,8 +393,8 @@ function contourInterval(range) {
 function updateLegend() {
   const data=state.data;
   const palette=state.view==='elevation'?'elevation':state.palette;
-  $('legend-low').textContent=`${number(data.surface_min_m*units().height)} ${units().label} ASL`;
-  $('legend-high').textContent=`${number(data.surface_max_m*units().height)} ${units().label} ASL`;
+  $('legend-low').textContent=`${number(data.min_m*units().height)} ${units().label} ASL`;
+  $('legend-high').textContent=`${number(data.max_m*units().height)} ${units().label} ASL`;
   const mapped=palette==='print';
   document.querySelector('.elevation-legend').hidden=mapped;
   $('print-legend').hidden=!mapped;
@@ -433,7 +436,7 @@ function updateElevationCredit() {
 
 async function loadSurface(id, reset=false, loadedName=null) {
   const version=++state.surfaceVersion;
-  const data=await api(`/api/terrain/${id}`);
+  const data=await api(`/api/terrain/${id}?relief=${$('relief-method').value}&relief_strength=${$('relief-strength').value}`);
   if(version!==state.surfaceVersion) return;
   const changedArea=state.id!==id;
   state.id=id; state.data=data;
@@ -684,7 +687,7 @@ async function changeView(view) {
 
 function profileSamples() {
   const data=state.data;if(!data) return null;
-  const {rows,columns,elevations}=data,horizontal=$('profile-direction').value==='ew';
+  const {rows,columns}=data,elevations=data.true_elevations||data.elevations,horizontal=$('profile-direction').value==='ew';
   const fraction=Number($('profile-position').value)/100;
   const cross=fraction*(horizontal?rows-1:columns-1),a=Math.floor(cross),b=Math.min(a+1,horizontal?rows-1:columns-1),mix=cross-a;
   const count=horizontal?columns:rows;
@@ -759,12 +762,12 @@ async function exportGLB() {
   if(!sceneReady||!topMesh) throw new Error('GLB export requires the WebGL preview. STL and OBJ are available without it.');
   const group=new THREE.Group(),data=state.data,opts=options();
   group.name='Terrain Studio';
-  group.userData={...data,elevations:undefined,model_options:opts,print_palette:state.palette==='print'?printColors():undefined,surface_source:state.palette==='print'?coverData.source:undefined,feature_layers:featureStyles(),mesh_units:'meters',axes:'X selection right, Y up, Z selection bottom',map_texture:'omitted; interactive viewing only',attribution:await fetch('/api/attribution').then(response=>response.text())};
+  group.userData={...data,elevations:undefined,true_elevations:undefined,model_options:opts,print_palette:state.palette==='print'?printColors():undefined,surface_source:state.palette==='print'?coverData.source:undefined,feature_layers:featureStyles(),mesh_units:'meters',axes:'X selection right, Y up, Z selection bottom',map_texture:'omitted; interactive viewing only',attribution:await fetch('/api/attribution').then(response=>response.text())};
   let geometry=topMesh.geometry.clone();geometry.deleteAttribute('elevation');
   if(state.palette==='print')geometry=paintSurface(geometry,printColors(),coverData);
   else {
     const colors=geometry.getAttribute('color'),color=new THREE.Color();
-    for(let index=0;index<data.elevations.length;index++) colorAt((data.elevations[index]-data.surface_min_m)/Math.max(data.surface_max_m-data.surface_min_m,1e-9),state.palette,color).toArray(colors.array,index*3);
+    for(let index=0;index<data.elevations.length;index++) colorAt(((data.true_elevations||data.elevations)[index]-data.min_m)/Math.max(data.max_m-data.min_m,1e-9),state.palette,color).toArray(colors.array,index*3);
     colors.needsUpdate=true;
   }
   const ownedMeshes=[new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({vertexColors:true,roughness:.93}))];
@@ -841,7 +844,7 @@ function updateSelectionParameters() {
 
 const styleDefaultsKey='terrain-style-defaults';
 function styleInputs() {
-  return [...document.querySelectorAll('#terrain-controls input[id], #style-editor input[id], [data-print-color]')];
+  return [...document.querySelectorAll('#terrain-controls input[id], #terrain-controls select[id], #style-editor input[id], [data-print-color]')];
 }
 function restoreStyleDefaults() {
   try {
@@ -850,7 +853,8 @@ function restoreStyleDefaults() {
     if(['alpine','earth','desert','print'].includes(saved.palette))state.palette=saved.palette;
     for(const input of styleInputs()) {
       const value=saved.controls?.[input.id];
-      if(input.type==='checkbox'&&typeof value==='boolean')input.checked=value;
+      if(input.tagName==='SELECT'){if([...input.options].some(option=>option.value===value))input.value=value;}
+      else if(input.type==='checkbox'&&typeof value==='boolean')input.checked=value;
       else if(input.type==='color'&&/^#[0-9a-f]{6}$/i.test(value))input.value=value;
       else if(input.type==='range'&&typeof value==='number'&&Number.isFinite(value)&&value>=Number(input.min)&&value<=Number(input.max))input.value=value;
     }
@@ -861,6 +865,7 @@ function restoreStyleDefaults() {
   });
   $('exaggeration-value').textContent=`${Number($('exaggeration').value).toFixed(1)}×`;
   $('base-value').textContent=`${$('base').value}%`;
+  updateReliefControls();
   for(const name of ['roads','water'])$(`detail-${name}-value`).textContent=`${$(`detail-${name}`).value}%`;
 }
 
@@ -875,7 +880,22 @@ function setUnits(value) {
   if(state.data){updateLegend();updateStats();drawProfile();}
 }
 
+const reliefHints={standard:'Every height is multiplied equally.',local:'Fine relief is amplified; broad landforms keep their height.',lowland:'Low ground gets a larger share of the model height.'};
+function updateReliefControls() {
+  const method=$('relief-method').value;
+  $('relief-hint').textContent=reliefHints[method]||'';
+  $('relief-strength-block').hidden=method==='standard';
+  $('relief-strength-value').textContent=`${$('relief-strength').value}%`;
+}
+function reloadSurface() {
+  updateReliefControls();
+  if(state.id)loadSurface(state.id).catch(error=>notify(error.message,true));
+}
+
 function wireControls() {
+  $('relief-method').addEventListener('change',reloadSurface);
+  $('relief-strength').addEventListener('input',updateReliefControls);
+  $('relief-strength').addEventListener('change',reloadSurface);
   document.querySelectorAll('[data-units]').forEach(button=>button.addEventListener('click',()=>{
     try{localStorage.setItem('terrain-units',button.dataset.units);}catch{/* Optional persistence. */}
     setUnits(button.dataset.units);

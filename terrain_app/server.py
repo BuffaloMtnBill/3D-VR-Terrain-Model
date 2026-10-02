@@ -11,7 +11,7 @@ from flask import Flask, jsonify, render_template, request, send_file
 import numpy as np
 
 from .elevation import Bounds, DEFAULT_SOURCE, SOURCES, THREE_DEP_URL, ElevationClient, Terrain, ThreeDepClient, grid_shape, source_id
-from .mesh import ModelOptions, export_file, smooth_elevations
+from .mesh import ModelOptions, export_file, relief_method, shape_elevations, smooth_elevations
 from .places import DEFAULT_PLACE, PRESETS
 from .features import FeatureClient, OVERPASS_URL, layer_options
 from .services import GEOCODER_URL, PlaceClient, ZipClient, ZipLookupError
@@ -297,10 +297,20 @@ def create_app(test_config=None):
             sigma = float(request.args.get("smoothing", "0"))
         except ValueError:
             raise ValueError("Smoothing must be numeric.") from None
-        heights = smooth_elevations(terrain, sigma)
-        return jsonify(id=identifier, **terrain.metadata(), smoothing=sigma,
-                       surface_min_m=float(heights.min()), surface_max_m=float(heights.max()),
-                       elevations=np.round(heights, 4).ravel().tolist())
+        relief = relief_method(request.args.get("relief", "standard"))
+        try:
+            strength = float(request.args.get("relief_strength", "50"))
+        except ValueError:
+            raise ValueError("relief_strength must be numeric.") from None
+        true_heights = smooth_elevations(terrain, sigma)
+        heights = shape_elevations(true_heights, relief, strength)
+        result = dict(id=identifier, **terrain.metadata(), smoothing=sigma, relief=relief, relief_strength=strength,
+                      surface_min_m=float(heights.min()), surface_max_m=float(heights.max()),
+                      elevations=np.round(heights, 4).ravel().tolist())
+        if heights is not true_heights:
+            # The model is reshaped; colors, contours, and the profile still use real elevations.
+            result["true_elevations"] = np.round(true_heights, 4).ravel().tolist()
+        return jsonify(result)
 
     @app.post("/api/export/<identifier>")
     def export(identifier):
