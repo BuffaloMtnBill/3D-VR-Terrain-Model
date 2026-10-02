@@ -10,11 +10,11 @@ import uuid
 from flask import Flask, jsonify, render_template, request, send_file
 import numpy as np
 
-from .elevation import Bounds, ElevationClient, Terrain, grid_shape
+from .elevation import Bounds, DEFAULT_SOURCE, SOURCES, THREE_DEP_URL, ElevationClient, Terrain, ThreeDepClient, grid_shape, source_id
 from .mesh import ModelOptions, export_file, smooth_elevations
 from .places import DEFAULT_PLACE, PRESETS
 from .features import FeatureClient, OVERPASS_URL, layer_options
-from .services import ZipClient, ZipLookupError
+from .services import GEOCODER_URL, PlaceClient, ZipClient, ZipLookupError
 from .landcover import LandCoverClient, print_colors, face_classes
 from .printing import export_3mf
 
@@ -46,9 +46,11 @@ def create_app(test_config=None):
         app.config.update(test_config)
     client = ElevationClient(Path(app.config["CACHE_DIR"]))
     cache_root = Path(app.config["CACHE_DIR"]).parent
+    clients = {"mapzen": client, "usgs3dep": ThreeDepClient(cache_root / "3dep", os.environ.get("TERRAIN_3DEP_URL", THREE_DEP_URL))}
     feature_client = FeatureClient(Path(os.environ.get("TERRAIN_FEATURE_CACHE_DIR", cache_root / "features")),
                                    os.environ.get("TERRAIN_OVERPASS_URL", OVERPASS_URL))
     zip_client = ZipClient(cache_root / "zip")
+    place_client = PlaceClient(cache_root / "places", os.environ.get("TERRAIN_GEOCODER_URL", GEOCODER_URL))
     cover_client = LandCoverClient(cache_root / "landcover", os.environ.get("TERRAIN_OVERPASS_URL", OVERPASS_URL))
     executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="terrain-job")
     lock = RLock()
@@ -56,8 +58,8 @@ def create_app(test_config=None):
     feature_jobs = {}
     cover_jobs = {}
     example = load_example()
-    app.extensions["terrain"] = {"client": client, "jobs": jobs, "lock": lock, "executor": executor,
-                                 "features": feature_client, "feature_jobs": feature_jobs, "zip": zip_client,
+    app.extensions["terrain"] = {"client": client, "clients": clients, "jobs": jobs, "lock": lock, "executor": executor,
+                                 "features": feature_client, "feature_jobs": feature_jobs, "zip": zip_client, "places": place_client,
                                  "landcover": cover_client, "cover_jobs": cover_jobs}
 
     @app.before_request
@@ -105,12 +107,12 @@ def create_app(test_config=None):
         while len(jobs) >= 12 and finished:
             del jobs[finished.pop(0)]
 
-    def run_job(identifier, bounds, resolution):
+    def run_job(identifier, bounds, resolution, source):
         def progress(fraction, message):
             with lock:
                 jobs[identifier].update(progress=fraction, message=message, state="loading")
         try:
-            terrain = client.fetch(bounds, resolution, progress)
+            terrain = clients[source].fetch(bounds, resolution, progress)
             with lock:
                 jobs[identifier].update(state="ready", progress=1, message="Terrain ready", terrain=terrain, accessed=time.monotonic())
         except Exception as error:
@@ -158,11 +160,16 @@ def create_app(test_config=None):
                        map_max_native_zoom=app.config["MAP_MAX_NATIVE_ZOOM"],
                        street_tile_url=STREET_URL, street_attribution=STREET_ATTRIBUTION,
                        presets=PRESETS, default_place=DEFAULT_PLACE,
+                       elevation_sources={key: value["label"] for key, value in SOURCES.items()},
                        example_available=example is not None)
 
     @app.get("/api/location/zip/<zipcode>")
     def locate_zip(zipcode):
         return jsonify(zip_client.lookup(zipcode))
+
+    @app.get("/api/location/search")
+    def locate_place():
+        return jsonify(place_client.lookup(request.args.get("q", "")))
 
     @app.post("/api/features/<identifier>")
     def create_features(identifier):
@@ -241,13 +248,14 @@ def create_app(test_config=None):
         bounds = Bounds.from_dict(payload.get("bounds"))
         resolution = payload.get("resolution", 160)
         grid_shape(bounds, resolution)
+        source = source_id(payload.get("source", DEFAULT_SOURCE))
         with lock:
             prune_jobs()
             if sum(job["state"] in ("queued", "loading") for job in jobs.values()) >= 4:
                 return jsonify(error="Four terrain downloads are already running. Wait for one to finish."), 429
             identifier = uuid.uuid4().hex
             jobs[identifier] = dict(state="queued", progress=0, message="Preparing elevation download…", accessed=time.monotonic())
-        executor.submit(run_job, identifier, bounds, resolution)
+        executor.submit(run_job, identifier, bounds, resolution, source)
         return jsonify(id=identifier), 202
 
     @app.get("/api/jobs/<identifier>")

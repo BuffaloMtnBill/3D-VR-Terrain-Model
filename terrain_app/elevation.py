@@ -1,8 +1,9 @@
-"""Download a bounded Terrarium mosaic and sample it in geographic coordinates."""
+"""Download bounded elevation rasters and sample them in geographic coordinates."""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
+import hashlib
 from io import BytesIO
 import math
 from pathlib import Path
@@ -22,6 +23,26 @@ SOURCE = "Mapzen / Tilezen Terrain Tiles (AWS Open Data)"
 SOURCE_URL = "https://registry.opendata.aws/terrain-tiles/"
 LICENSE_URL = "https://github.com/tilezen/joerd/blob/master/docs/attribution.md"
 USER_AGENT = "3D-Map-Extractor/1.0 (local terrain visualization; Mapzen Terrain Tiles)"
+THREE_DEP_USER_AGENT = "3D-Map-Extractor/1.0 (local terrain visualization; USGS 3DEP)"
+THREE_DEP_URL = "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage"
+WEB_MERCATOR_RADIUS = 6_378_137.0  # EPSG:3857 sphere; distinct from the mean radius used for model dimensions
+DEFAULT_SOURCE = "mapzen"
+SOURCES = {
+    "mapzen": {"label": "Mapzen · global", "short": "Mapzen Terrain Tiles", "source": SOURCE,
+               "source_url": SOURCE_URL, "license_url": LICENSE_URL,
+               "elevation_units": "meters above sea level (source dataset vertical datum)"},
+    "usgs3dep": {"label": "USGS 3DEP · United States", "short": "USGS 3DEP",
+                 "source": "USGS 3D Elevation Program (3DEP), The National Map",
+                 "source_url": "https://www.usgs.gov/3d-elevation-program",
+                 "license_url": "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits",
+                 "elevation_units": "meters (NAVD88 in the conterminous United States; local vertical datums elsewhere)"},
+}
+
+
+def source_id(value) -> str:
+    if not isinstance(value, str) or value not in SOURCES:
+        raise ValueError("Choose Mapzen or USGS 3DEP as the elevation source.")
+    return value
 
 
 @dataclass(frozen=True)
@@ -93,6 +114,8 @@ class Terrain:
     zoom: int
     tile_count: int
     fetched_at: str
+    source: str = DEFAULT_SOURCE
+    pixel_spacing_m: float | None = None  # ground spacing of the downloaded raster, when not tile-based
 
     @property
     def width(self):
@@ -105,7 +128,11 @@ class Terrain:
     def metadata(self) -> dict:
         rows, columns = self.elevations.shape
         spacing = max(self.width / (columns - 1), self.height / (rows - 1))
-        source_spacing = 156543.033928 * math.cos(math.radians((self.bounds.north + self.bounds.south) / 2)) / 2**self.zoom
+        source_spacing = self.pixel_spacing_m
+        tiled = source_spacing is None
+        if source_spacing is None:
+            source_spacing = 156543.033928 * math.cos(math.radians((self.bounds.north + self.bounds.south) / 2)) / 2**self.zoom
+        source = SOURCES[self.source]
         return {
             "bounds": self.bounds.to_dict(), "rows": rows, "columns": columns,
             "rotation_deg": self.bounds.rotation_deg,
@@ -114,12 +141,13 @@ class Terrain:
             "width_m": self.width, "height_m": self.height,
             "min_m": float(self.elevations.min()), "max_m": float(self.elevations.max()),
             "mean_m": float(self.elevations.mean()), "grid_spacing_m": spacing,
-            "tile_pixel_spacing_m": source_spacing, "zoom": self.zoom,
-            "tile_count": self.tile_count, "fetched_at": self.fetched_at,
-            "source": SOURCE, "source_url": SOURCE_URL, "license_url": LICENSE_URL,
+            "tile_pixel_spacing_m": source_spacing, "zoom": None if tiled is False else self.zoom,
+            "tile_count": None if tiled is False else self.tile_count, "fetched_at": self.fetched_at,
+            "source_id": self.source, "source": source["source"], "source_short": source["short"],
+            "source_url": source["source_url"], "license_url": source["license_url"],
             "projection": "Local dimensions at center latitude; X toward selection right, Y toward selection top, Z up; north-up at 0° rotation",
             "grid_orientation": "Rows: selection top to bottom; columns: selection left to right. At 0° rotation, top is north and left is west.",
-            "elevation_units": "meters above sea level (source dataset vertical datum)",
+            "elevation_units": source["elevation_units"],
             "notes": "Grid spacing is sampling density, not survey accuracy. Source resolution varies by region. No buildings or vegetation are added.",
         }
 
@@ -257,3 +285,87 @@ class ElevationClient:
         if not np.all(np.isfinite(elevations)):
             raise ValueError("The selected area contains missing elevation data.")
         return Terrain(bounds, elevations, zoom, len(tiles), time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+
+
+def mercator_meters(longitude, latitude):
+    x, y = pixel_coordinates(longitude, latitude, 0)
+    span = 2 * math.pi * WEB_MERCATOR_RADIUS
+    return (x / 256 - .5) * span, (.5 - y / 256) * span
+
+
+class ThreeDepClient:
+    """One bounded Web Mercator export from the USGS 3DEP dynamic elevation service."""
+    max_pixels = 1200
+    coverage_error = ("USGS 3DEP has no complete elevation data for this selection. It covers the United States "
+                      "and its territories, without open ocean; choose Mapzen for this area.")
+
+    def __init__(self, cache_dir: Path, url: str = THREE_DEP_URL):
+        self.cache_dir = Path(cache_dir)
+        self.url = url
+
+    def _decode(self, content: bytes, width: int, height: int) -> np.ndarray:
+        try:
+            with Image.open(BytesIO(content)) as image:
+                if image.size != (width, height) or image.mode != "F":
+                    raise ValueError("USGS 3DEP returned an unexpected image.")
+                return np.asarray(image, dtype=np.float32).copy()
+        except (OSError, UnidentifiedImageError):
+            # The service answers areas without any data with an empty, truncated TIFF.
+            raise ValueError(self.coverage_error) from None
+
+    def raster(self, xmin: float, ymin: float, xmax: float, ymax: float, width: int, height: int) -> np.ndarray:
+        box = ",".join(f"{value:.2f}" for value in (xmin, ymin, xmax, ymax))
+        path = self.cache_dir / f"{hashlib.sha256(f'{box}:{width}x{height}'.encode()).hexdigest()[:32]}.tif"
+        if path.exists() and time.time() - path.stat().st_mtime < 30 * 86400:
+            try:
+                return self._decode(path.read_bytes(), width, height)
+            except (OSError, ValueError):
+                pass  # A damaged cache entry is replaced with a verified download.
+        parameters = {"bbox": box, "bboxSR": 3857, "imageSR": 3857, "size": f"{width},{height}", "format": "tiff",
+                      "pixelType": "F32", "noData": -9999, "interpolation": "RSP_BilinearInterpolation", "f": "image"}
+        try:
+            response = requests.get(self.url, params=parameters, headers={"User-Agent": THREE_DEP_USER_AGENT}, timeout=(8, 90))
+            response.raise_for_status()
+        except requests.RequestException as error:
+            raise ValueError("Could not download USGS 3DEP elevation data. Check your internet connection and try again.") from error
+        if len(response.content) > 24_000_000:
+            raise ValueError("USGS 3DEP returned an oversized image.")
+        if "image/tiff" not in response.headers.get("Content-Type", "image/tiff"):
+            raise ValueError("USGS 3DEP is temporarily unavailable. Try again shortly, or choose Mapzen.")
+        decoded = self._decode(response.content, width, height)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_bytes(response.content)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return decoded
+
+    def fetch(self, bounds: Bounds, resolution: int = 160,
+              progress: Callable[[float, str], None] = lambda *_: None) -> Terrain:
+        bounds.validate()
+        rows, columns = grid_shape(bounds, resolution)
+        u, v = np.meshgrid(np.linspace(0, 1, columns), np.linspace(0, 1, rows))
+        x, y = mercator_meters(*selection_coordinates(bounds, u, v))
+        # Mercator meters are stretched by 1/cos(latitude) relative to the ground.
+        ground = math.cos(math.radians((bounds.south + bounds.north) / 2))
+        spacing = max(bounds.dimensions[0] / (columns - 1), bounds.dimensions[1] / (rows - 1))
+        pixel = max(spacing / 2, 1.0) / ground  # twice the grid density, not finer than the 1 m source
+        span = max(x.max() - x.min(), y.max() - y.min())
+        pixel = max(pixel, span / (self.max_pixels - 4))
+        width, height = (int(math.ceil((axis.max() - axis.min()) / pixel)) + 4 for axis in (x, y))
+        xmin = (x.min() + x.max()) / 2 - width * pixel / 2
+        ymax = (y.min() + y.max()) / 2 + height * pixel / 2
+        progress(.05, "Requesting USGS 3DEP elevation…")
+        image = self.raster(xmin, ymax - height * pixel, xmin + width * pixel, ymax, width, height)
+        progress(.9, "Sampling terrain in meters…")
+        valid = np.isfinite(image) & (image > -1000) & (image < 9000)
+        coordinates = [(ymax - y) / pixel - .5, (x - xmin) / pixel - .5]
+        # Any missing pixel touching a sample invalidates it; edges of coverage also hold garbage values.
+        coverage = map_coordinates(valid.astype(np.float32), coordinates, order=1, mode="nearest", prefilter=False)
+        if coverage.min() < .999:
+            raise ValueError(self.coverage_error)
+        elevations = map_coordinates(np.where(valid, image, 0), coordinates, order=1, mode="nearest", prefilter=False)
+        return Terrain(bounds, elevations, 0, 1, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                       "usgs3dep", pixel * ground)

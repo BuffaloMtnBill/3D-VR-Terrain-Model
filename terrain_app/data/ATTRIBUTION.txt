@@ -1,11 +1,17 @@
 Terrain Studio / 3D Map Extractor
 
-Elevation data: Mapzen / Tilezen Terrain Tiles, accessed from AWS Open Data.
+Default elevation data: Mapzen / Tilezen Terrain Tiles, accessed from AWS Open Data.
 https://registry.opendata.aws/terrain-tiles/
 Full source attribution and license details:
 https://github.com/tilezen/joerd/blob/master/docs/attribution.md
 
-Regional terrain source credits (as applicable to the selected area):
+Optional elevation source (when USGS 3DEP is selected): U.S. Geological Survey,
+3D Elevation Program (3DEP), The National Map. Public domain; courtesy of the
+U.S. Geological Survey. Heights use NAVD88 in the conterminous United States.
+https://www.usgs.gov/3d-elevation-program
+Each model's own elevation source is recorded in its metadata.
+
+Regional terrain source credits for Mapzen terrain (as applicable to the selected area):
 * ArcticDEM terrain data DEM(s) were created from DigitalGlobe, Inc., imagery and
   funded under National Science Foundation awards 1043681, 1559691, and 1542736;
 * Australia terrain data © Commonwealth of Australia (Geoscience Australia) 2017;
@@ -47,6 +53,9 @@ the Open Database License (ODbL). Obtained through the configured Overpass API.
 https://www.openstreetmap.org/copyright
 GLB exports and preview images include selected feature layers and colors.
 These features are clipped and draped over the terrain by Terrain Studio.
+
+Address and place search: © OpenStreetMap contributors (ODbL), through Nominatim.
+https://nominatim.org/
 
 US ZIP navigation: Zippopotam.us / GeoNames.
 https://www.zippopotam.us/

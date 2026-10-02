@@ -1,8 +1,10 @@
 """Small, bounded JSON requests and local caches for map data services."""
+import hashlib
 import json
 import math
 from pathlib import Path
 import re
+from threading import Lock
 import time
 import uuid
 
@@ -11,7 +13,7 @@ import requests
 USER_AGENT = "Terrain-Studio/1.0 (local 3D-Map-Extractor)"
 
 
-def response_json(response, max_bytes):
+def response_json(response, max_bytes, kind=dict):
     response.raise_for_status()
     chunks, length = [], 0
     for chunk in response.iter_content(65_536):
@@ -23,7 +25,7 @@ def response_json(response, max_bytes):
         value = json.loads(b"".join(chunks))
     except (ValueError, UnicodeDecodeError):
         raise ValueError("The map service returned an invalid response. Try again later.") from None
-    if not isinstance(value, dict):
+    if not isinstance(value, kind):
         raise ValueError("The map service returned an invalid response. Try again later.")
     return value
 
@@ -84,5 +86,57 @@ class ZipClient:
             raise
         except (ValueError, KeyError, IndexError, TypeError):
             raise ZipLookupError("ZIP lookup returned an incomplete location. Try again later.", 502) from None
+        cache_json(path, result)
+        return result
+
+
+GEOCODER_URL = "https://nominatim.openstreetmap.org/search"
+
+
+class PlaceLookupError(ZipLookupError):
+    pass
+
+
+class PlaceClient:
+    """Address and place-name search through Nominatim: one result, cached, at most one request per second."""
+
+    def __init__(self, cache_dir: Path, url=GEOCODER_URL):
+        self.cache_dir, self.url = Path(cache_dir), url
+        self.lock, self.last_request = Lock(), 0.0
+
+    def lookup(self, value):
+        query = " ".join(value.split()) if isinstance(value, str) else ""
+        if not 2 <= len(query) <= 200:
+            raise PlaceLookupError("Enter an address, city, or place name.")
+        path = self.cache_dir / f"{hashlib.sha256(query.casefold().encode()).hexdigest()[:32]}.json"
+        result = cached_json(path, 30*86400, 100_000)
+        if isinstance(result, dict) and result.get("query", "").casefold() == query.casefold():
+            return result
+        try:
+            with self.lock:  # Nominatim's usage policy allows one request per second.
+                time.sleep(max(0, self.last_request + 1.1 - time.monotonic()))
+                try:
+                    with requests.get(self.url, params={"q": query, "format": "jsonv2", "limit": 1},
+                                      headers={"User-Agent": USER_AGENT}, timeout=(8, 15), stream=True) as response:
+                        data = response_json(response, 200_000, list)
+                finally:
+                    self.last_request = time.monotonic()
+            if not data:
+                raise PlaceLookupError("No place matched that search. Try adding a city, state, or country.", 404)
+            place = data[0]
+            latitude, longitude = float(place["lat"]), float(place["lon"])
+            south, north, west, east = (float(edge) for edge in place["boundingbox"])
+            if not (all(map(math.isfinite, (latitude, longitude, south, north, west, east)))
+                    and abs(latitude) <= 85 and abs(longitude) <= 180):
+                raise PlaceLookupError("That place is outside the map's range (85° south to 85° north).", 404)
+            result = {"query": query, "name": str(place["display_name"]), "latitude": latitude, "longitude": longitude,
+                      "bounds": {"south": south, "west": west, "north": north, "east": east},
+                      "source": "© OpenStreetMap contributors · Nominatim", "source_url": "https://nominatim.org/"}
+        except requests.RequestException:
+            raise PlaceLookupError("Place search is unavailable. Check your connection and try again.", 502) from None
+        except ZipLookupError:
+            raise
+        except (ValueError, KeyError, IndexError, TypeError):
+            raise PlaceLookupError("Place search returned an incomplete location. Try again later.", 502) from None
         cache_json(path, result)
         return result

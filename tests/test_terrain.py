@@ -377,3 +377,76 @@ def test_failed_download_returns_a_visible_error(application, terrain, monkeypat
     assert status["state"] == "error"
     assert status["message"] == "Elevation service is offline"
     assert client.get(f"/api/terrain/{result['id']}").status_code == 404
+
+
+def three_dep_response(monkeypatch, surface, calls=None):
+    """Answer exportImage requests with a plane or function of Web Mercator meters."""
+    def get(url, params, **_kwargs):
+        xmin, ymin, xmax, ymax = map(float, params["bbox"].split(","))
+        width, height = map(int, params["size"].split(","))
+        x = xmin + (np.arange(width) + .5) * (xmax - xmin) / width
+        y = ymax - (np.arange(height) + .5) * (ymax - ymin) / height
+        buffer = BytesIO()
+        Image.fromarray(surface(*np.meshgrid(x, y)).astype(np.float32)).save(buffer, "TIFF")
+        if calls is not None:
+            calls.append(params)
+        return type("Response", (), {"content": buffer.getvalue(), "headers": {"Content-Type": "image/tiff"},
+                                     "raise_for_status": lambda self: None})()
+    monkeypatch.setattr("terrain_app.elevation.requests.get", get)
+
+
+@pytest.mark.parametrize("rotation", [0, 30])
+def test_three_dep_samples_mercator_raster_at_pixel_centers(tmp_path, monkeypatch, rotation):
+    from terrain_app.elevation import ThreeDepClient, mercator_meters, selection_coordinates
+    bounds = Bounds(36.09, -82.13, 36.12, -82.09, rotation)
+    calls = []
+    plane = lambda x, y: 1500 + (x + 9_141_000) * .01 - (y - 4_313_000) * .02
+    three_dep_response(monkeypatch, plane, calls)
+    client = ThreeDepClient(tmp_path)
+    result = client.fetch(bounds, 96)
+    rows, columns = result.elevations.shape
+    u, v = np.meshgrid(np.linspace(0, 1, columns), np.linspace(0, 1, rows))
+    np.testing.assert_allclose(result.elevations, plane(*mercator_meters(*selection_coordinates(bounds, u, v))), atol=.02)
+    metadata = result.metadata()
+    assert metadata["source_id"] == "usgs3dep" and "3DEP" in metadata["source"]
+    assert metadata["tile_pixel_spacing_m"] == pytest.approx(metadata["grid_spacing_m"] / 2, rel=.01)
+    assert calls[0]["bboxSR"] == calls[0]["imageSR"] == 3857 and max(map(int, calls[0]["size"].split(","))) <= 1200
+    client.fetch(bounds, 96)
+    assert len(calls) == 1  # the second extraction reads the cached raster
+
+
+def test_three_dep_rejects_missing_coverage(tmp_path, monkeypatch):
+    from terrain_app.elevation import ThreeDepClient
+    bounds = Bounds(36.09, -82.13, 36.12, -82.09)
+    three_dep_response(monkeypatch, lambda x, y: np.where(x > -9_141_000, -9999, 1500))
+    with pytest.raises(ValueError, match="choose Mapzen"):
+        ThreeDepClient(tmp_path / "edge").fetch(bounds, 96)
+    def truncated(url, params, **_kwargs):
+        width, height = map(int, params["size"].split(","))
+        buffer = BytesIO()
+        Image.fromarray(np.zeros((height, width), dtype=np.float32)).save(buffer, "TIFF")
+        return type("Response", (), {"content": buffer.getvalue()[:800], "headers": {"Content-Type": "image/tiff"},
+                                     "raise_for_status": lambda self: None})()
+    monkeypatch.setattr("terrain_app.elevation.requests.get", truncated)
+    with pytest.raises(ValueError, match="choose Mapzen"):
+        ThreeDepClient(tmp_path / "empty").fetch(bounds, 96)
+    assert not list((tmp_path / "empty").rglob("*.tif"))  # an unreadable answer is never cached
+
+
+def test_terrain_request_selects_its_elevation_source(application, terrain, monkeypatch):
+    used = []
+    clients = application.extensions["terrain"]["clients"]
+    for name in clients:
+        monkeypatch.setattr(clients[name], "fetch", lambda *_args, name=name: used.append(name) or terrain)
+    client = application.test_client()
+    bounds = terrain.metadata()["bounds"]
+    assert client.post("/api/terrain", json={"bounds": bounds, "source": "lidar"}).status_code == 400
+    for source in ("usgs3dep", None):
+        identifier = client.post("/api/terrain", json={"bounds": bounds, **({"source": source} if source else {})}).get_json()["id"]
+        for _ in range(100):
+            if client.get(f"/api/jobs/{identifier}").get_json()["state"] == "ready":
+                break
+            time.sleep(.01)
+    assert used == ["usgs3dep", "mapzen"]
+    assert set(client.get("/api/config").get_json()["elevation_sources"]) == {"mapzen", "usgs3dep"}
+    assert client.get("/api/terrain/example").get_json()["source_id"] == "mapzen"

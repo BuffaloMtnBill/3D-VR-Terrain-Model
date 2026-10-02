@@ -18,7 +18,7 @@ const ramps = Object.fromEntries(Object.entries(paletteStops).map(([key, stops])
 const state = {selection:null, selectionError:null, palette:'alpine', view:'relief', mapStyle:'terrain', data:null, id:null, loading:false, name:'', surfaceVersion:0};
 let map, mapLayer, selectionFrame, profileMapLine, renderer, scene, camera, perspective, orthographic, controls, sun, grid, model, topMesh, baseMesh, mapTexture, featureGroup;
 let toastTimer, sceneReady = false, lastMapError = 0;
-let featureData=null,featureRequest=null,featureError=null,zipRequest=null;
+let featureData=null,featureRequest=null,featureError=null,zipRequest=null,placeRequest=null;
 const featureCache=new Map();
 let coverData=null,coverRequest=null,coverError=null;
 const coverCache=new Map();
@@ -134,11 +134,31 @@ function setupMap(config) {
     const preset=presets[event.target.value];
     if(preset) { state.name=preset.name; updateSelection(preset.bounds,true,false); }
   });
-  $('coordinate-form').addEventListener('submit',event=>{
+  $('place-form').addEventListener('submit',async event=>{
     event.preventDefault();
-    const parts=$('coordinates').value.trim().split(/[,\s]+/).filter(Boolean).map(Number);
-    if(parts.length!==2||!parts.every(Number.isFinite)||Math.abs(parts[0])>85||Math.abs(parts[1])>180) return notify('Enter latitude, longitude, for example: 35.36, 138.73.',true);
-    selectionFrame.cancelAlignment();map.setView(parts,12);
+    const query=$('place-search').value.trim(),status=$('place-status');
+    if(query.length<2)return notify('Enter an address, city, or place name.',true);
+    const parts=query.split(/[,\s]+/).filter(Boolean).map(Number);
+    if(parts.length===2&&parts.every(Number.isFinite)) {
+      if(Math.abs(parts[0])>85||Math.abs(parts[1])>180)return notify('Latitude must be within ±85° and longitude within ±180°.',true);
+      placeRequest?.abort();placeRequest=null;status.hidden=true;
+      selectionFrame.cancelAlignment();map.setView(parts,12);return;
+    }
+    placeRequest?.abort();const controller=new AbortController();placeRequest=controller;
+    const button=$('place-form').querySelector('button');button.disabled=true;
+    status.hidden=false;status.classList.remove('error');status.textContent='Searching…';
+    try {
+      const place=await api(`/api/location/search?q=${encodeURIComponent(query)}`,{signal:controller.signal});
+      if(placeRequest!==controller)return;
+      const {south,west,north,east}=place.bounds;
+      const zoom=Math.min(15,Math.max(8,map.getBoundsZoom([[south,west],[north,east]])));
+      state.name=place.name.split(',').slice(0,2).join(',');$('place').value='custom';
+      selectionFrame.centerOn([place.latitude,place.longitude],zoom);
+      status.textContent=place.name;
+    } catch(error) {
+      if(error.name==='AbortError'||placeRequest!==controller)return;
+      status.textContent=error.message;status.classList.add('error');
+    } finally {if(placeRequest===controller){placeRequest=null;button.disabled=false;}}
   });
   $('zip-form').addEventListener('submit',async event=>{
     event.preventDefault();
@@ -380,6 +400,18 @@ function updateStats() {
   $('landscape-title').textContent=state.loadedName||state.name;
 }
 
+const sourceHints={mapzen:'Global coverage; about 10 m detail in the US, 30 m elsewhere.',usgs3dep:'United States only. Lidar-derived, down to 1 m where surveyed; best for small areas.'};
+const plainUrl=url=>String(url||'').replace(/^https?:\/\/(www\.)?/,'');
+
+function updateElevationSource() {
+  $('elevation-source-hint').textContent=sourceHints[$('elevation-source').value]||'';
+}
+
+function updateElevationCredit() {
+  const link=$('elevation-credit');
+  link.textContent=`${state.data.source} ↗`; link.href=state.data.source_url;
+}
+
 async function loadSurface(id, reset=false, loadedName=null) {
   const version=++state.surfaceVersion;
   const data=await api(`/api/terrain/${id}`);
@@ -391,7 +423,7 @@ async function loadSurface(id, reset=false, loadedName=null) {
   if(loadedName) state.loadedName=loadedName;
   if(changedArea&&mapTexture) {mapTexture.dispose();mapTexture=null;}
   if(changedArea&&state.view==='map') await changeView('relief');
-  buildScene(reset); updateExportDimensions();
+  buildScene(reset); updateExportDimensions(); updateElevationCredit();
   if(featuresEnabled())ensureFeatures().catch(()=>{});
   if(state.palette==='print')ensureCover().catch(()=>{});
 }
@@ -538,7 +570,7 @@ async function generateTerrain() {
   $('progress').value=0; $('job-message').textContent='Preparing terrain…';
   const selectedName=state.name;
   try {
-    const result=await api('/api/terrain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bounds:state.selection,resolution:Number($('resolution').value)})});
+    const result=await api('/api/terrain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bounds:state.selection,resolution:Number($('resolution').value),source:$('elevation-source').value})});
     let status;
     do {
       await new Promise(resolve=>setTimeout(resolve,450));
@@ -764,9 +796,9 @@ async function screenshot() {
   const context=canvas.getContext('2d');context.fillStyle='#142219';context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(source,0,0);
   context.fillStyle='#ffeec3';context.font=`${13*ratio}px Georgia`;context.fillText(`${state.loadedName||state.name} · ${Number($('exaggeration').value).toFixed(1)}× elevation`,15*ratio,source.height+23*ratio);
   context.fillStyle='#b0ac95';context.font=`${8*ratio}px Arial`;
-  context.fillText('Elevation: Mapzen / Tilezen Terrain Tiles · registry.opendata.aws/terrain-tiles',15*ratio,source.height+42*ratio);
+  context.fillText(`Elevation: ${state.data.source} · ${plainUrl(state.data.source_url)}`,15*ratio,source.height+42*ratio);
   const mapCredits=state.mapStyle==='terrain'?'© OpenStreetMap · SRTM · OpenTopoMap (CC-BY-SA)':'© OpenStreetMap contributors · openstreetmap.org/copyright';
-  context.fillText(state.view==='map'?mapCredits:'Source credits: github.com/tilezen/joerd/blob/master/docs/attribution.md',15*ratio,source.height+56*ratio);
+  context.fillText(state.view==='map'?mapCredits:`Source credits: ${plainUrl(state.data.license_url)}`,15*ratio,source.height+56*ratio);
   if(mapped)context.fillText('Map surfaces & features: © OpenStreetMap contributors · openstreetmap.org/copyright',15*ratio,source.height+70*ratio);
   canvas.toBlob(blob=>download(blob,'terrain-preview.png'),'image/png');
 }
@@ -787,6 +819,16 @@ function wireControls() {
     $(`detail-${input.dataset.featureDetail}-value`).textContent=`${input.value}%`;
     featureError=null;rebuildFeatures();
   }));
+  try {
+    const savedSource=localStorage.getItem('terrain-elevation-source');
+    if(sourceHints[savedSource])$('elevation-source').value=savedSource;
+  } catch { /* Saved source is optional. */ }
+  updateElevationSource();
+  $('elevation-source').addEventListener('change',()=>{
+    try{localStorage.setItem('terrain-elevation-source',$('elevation-source').value);}catch{/* Optional persistence. */}
+    updateElevationSource();
+    if(state.data)$('selection-state').textContent=$('elevation-source').value===state.data.source_id&&sameBounds(state.selection,state.data.bounds)?'Terrain generated':'Generate to update';
+  });
   try {
     const saved=JSON.parse(localStorage.getItem('terrain-print-palette')||'null');
     for(const name of Object.keys(coverLabels))if(/^#[0-9a-f]{6}$/i.test(saved?.[name]))$(`print-${name}`).value=saved[name];

@@ -321,3 +321,39 @@ def test_appalachian_trail_relations_and_named_ways_are_clipped():
     query = overpass_query(bounds)
     assert 'relation["route"~"^(hiking|foot)$"]["ref"~"^AT$",i]' in query
     assert layer_options({"at": {"enabled": True, "color": "#F0EAD6"}})["at"]["color"] == "#f0ead6"
+
+
+def test_place_search_returns_best_match_and_caches_it(tmp_path, monkeypatch):
+    from terrain_app.services import PlaceClient
+    calls = []
+    def get(url, **options):
+        calls.append(options["params"])
+        assert options["headers"]["User-Agent"] and options["stream"]
+        return JsonResponse([{"lat": "35.5951", "lon": "-82.5515", "display_name": "Asheville, Buncombe County, North Carolina, United States",
+                              "boundingbox": ["35.4219", "35.6560", "-82.6711", "-82.4590"]}])
+    monkeypatch.setattr("terrain_app.services.requests.get", get)
+    client = PlaceClient(tmp_path)
+    place = client.lookup("  Asheville,   NC ")
+    assert place["latitude"] == 35.5951 and place["longitude"] == -82.5515 and place["name"].startswith("Asheville")
+    assert place["bounds"] == {"south": 35.4219, "west": -82.6711, "north": 35.6560, "east": -82.4590}
+    assert client.lookup("asheville, nc") == place
+    assert calls == [{"q": "Asheville, NC", "format": "jsonv2", "limit": 1}]
+
+
+def test_place_search_errors_are_explicit(tmp_path, monkeypatch, application):
+    from terrain_app.services import PlaceClient, PlaceLookupError
+    client = PlaceClient(tmp_path)
+    with pytest.raises(PlaceLookupError):
+        client.lookup(" ")
+    monkeypatch.setattr("terrain_app.services.requests.get", lambda *_a, **_k: JsonResponse([]))
+    with pytest.raises(PlaceLookupError) as missing:
+        client.lookup("nowhere at all")
+    assert missing.value.status == 404
+    client.last_request = 0
+    monkeypatch.setattr("terrain_app.services.requests.get", lambda *_a, **_k: JsonResponse({}, 503))
+    with pytest.raises(PlaceLookupError) as offline:
+        client.lookup("Asheville")
+    assert offline.value.status == 502 and not list(tmp_path.iterdir())
+    monkeypatch.setattr(application.extensions["terrain"]["places"], "lookup", lambda query: {"query": query, "name": "Asheville"})
+    http = application.test_client()
+    assert http.get("/api/location/search?q=Asheville%2C%20NC").get_json() == {"query": "Asheville, NC", "name": "Asheville"}

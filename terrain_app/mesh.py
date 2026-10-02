@@ -10,7 +10,7 @@ from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 from scipy.ndimage import gaussian_filter
 
-from .elevation import Terrain
+from .elevation import Terrain, SOURCES
 
 
 @dataclass(frozen=True)
@@ -82,7 +82,7 @@ def build_mesh(terrain: Terrain, options: ModelOptions):
     return vertices * (options.size_mm / longest), faces.astype(np.uint32)
 
 
-def binary_stl(vertices, faces):
+def binary_stl(vertices, faces, source="Mapzen Terrain Tiles"):
     triangles = vertices[faces]
     normals = np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0])
     magnitudes = np.linalg.norm(normals, axis=1)
@@ -90,7 +90,7 @@ def binary_stl(vertices, faces):
     records = np.zeros(len(faces), dtype=[("normal", "<f4", (3,)), ("vertices", "<f4", (3, 3)), ("attribute", "<u2")])
     records["normal"] = normals
     records["vertices"] = triangles
-    header = b"Terrain Studio; units mm; Z up; elevation: Mapzen Terrain Tiles; credits in app".ljust(80, b" ")
+    header = f"Terrain Studio; units mm; Z up; elevation: {source}; credits in app".encode("ascii").ljust(80, b" ")
     return header + struct.pack("<I", len(faces)) + records.tobytes()
 
 
@@ -137,7 +137,7 @@ def export_file(terrain: Terrain, options: ModelOptions, format: str, attributio
     if format in ("stl", "obj"):
         vertices, faces = build_mesh(terrain, options)
         metadata |= {"vertices": len(vertices), "triangles": len(faces)}
-        content = binary_stl(vertices, faces) if format == "stl" else obj_file(vertices, faces, metadata, attribution)
+        content = binary_stl(vertices, faces, SOURCES[terrain.source]["short"]) if format == "stl" else obj_file(vertices, faces, metadata, attribution)
         buffer = BytesIO(content)
     elif format == "npy":
         buffer = BytesIO()

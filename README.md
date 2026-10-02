@@ -24,8 +24,10 @@ browser. You can also install with `pip install .` and run `terrain-studio`.
 
 ## Use
 
-1. Pick a preset, jump to a `latitude, longitude` pair, or enter a **US ZIP code**
-   (five digits or ZIP+4). ZIP navigation centers the selected frame on the
+1. Pick a preset, **search for an address, city, or place name**, or enter a
+   **US ZIP code** (five digits or ZIP+4). The search box zooms to fit the place
+   it finds; typing a `latitude, longitude` pair there jumps straight to it.
+   Search and ZIP navigation center the selected frame on the
    location while retaining its size, rotation, and aspect ratio. The selection frame
    stays fixed on screen while you pan the map beneath it. Zoom with the +/−
    buttons or mouse wheel to change the geographic area inside the frame. Buttons
@@ -47,7 +49,8 @@ browser. You can also install with `pip install .` and run `terrain-studio`.
    The **1:1**, **3:4**, and **16:9** map buttons snap its width-to-height ratio,
    preserving its center and rotation. The selected ratio is highlighted. Click
    it again to switch orientation: **3:4 ↔ 4:3** or **16:9 ↔ 9:16**. Square remains 1:1.
-3. Choose a terrain detail level and click **Generate terrain**. Downloads show
+3. Choose an **Elevation source** (Mapzen worldwide, or USGS 3DEP for the United
+   States) and a terrain detail level, then click **Generate terrain**. Downloads show
    progress; your previous model stays available while the new one is built.
 4. Click **Edit** in the right-hand **Make it yours** status panel to adjust the
    style and geometry. Click **Done** to collapse it back to its current settings;
@@ -66,7 +69,7 @@ browser. You can also install with `pip install .` and run `terrain-studio`.
 
 The default Roan Mountain terrain is a **real bundled DEM**, downloaded from
 Mapzen Terrain Tiles. It renders without network access. New area extraction and
-map tiles, ZIP lookup, and feature layers require internet access. The UI libraries are bundled locally.
+map tiles, place search, ZIP lookup, and feature layers require internet access. The UI libraries are bundled locally.
 The Explore a place list includes Roan Mountain, Mount Rainier, Yosemite Valley,
 Mount Fuji, Grand Canyon, and Chamonix.
 
@@ -153,12 +156,32 @@ as the model's zero-height reference. Retain source attribution when sharing.
 
 [OpenTopoMap](https://opentopomap.org/about) provides the default terrain map
 with contour lines, using OpenStreetMap and SRTM data. The street-map option
-uses OpenStreetMap's standard tiles. Heights come from the public
+uses OpenStreetMap's standard tiles. By default, heights come from the public
 [Mapzen / Tilezen Terrain Tiles dataset on AWS](https://registry.opendata.aws/terrain-tiles/),
 decoded from Terrarium PNG tiles. The program caches these tiles for 30 days in
 `.cache/elevation/` under the directory where you launch it. At most 64 tiles are
 used for a selection, with four simultaneous tile downloads. Local jobs are
 limited to two simultaneous extractions and four outstanding jobs.
+
+The **Elevation source** selector in the left sidebar switches between two DEMs;
+the map in the finder box stays the same either way.
+
+| Source | Coverage | Detail |
+| --- | --- | --- |
+| **Mapzen** (default) | Global, including ocean bathymetry | About 10 m in the US, about 30 m elsewhere |
+| **USGS 3DEP** | United States and territories, land only | Lidar-derived, down to 1 m where surveyed; 10 m elsewhere |
+
+USGS 3DEP heights come from The National Map's public
+[3DEP elevation image service](https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer),
+which needs no API key and is public domain. Each selection is one request for a
+Web Mercator raster at twice the grid density (never finer than 1 m, at most
+1200 pixels per side), cached for 30 days in `.cache/3dep/`. The extra detail
+shows on small selections: at 384 points, an area wider than about 4 km is
+already sampled more coarsely than Mapzen's 10 m data. Selections outside the
+United States, or reaching beyond the edge of its coverage, fail with a message
+instead of filling gaps; use Mapzen there. 3DEP heights use NAVD88 in the
+conterminous United States; no datum conversion is applied between sources.
+The source of each model is shown below the profile and saved in export metadata.
 
 - Select areas with each side between **50 m and 250 km**, within Web Mercator's
   latitude range of ±85.0511°. Date-line crossings are not supported.
@@ -189,7 +212,14 @@ caching and visible attribution follow the
 [OpenStreetMap tile usage policy](https://operations.osmfoundation.org/policies/tiles/).
 A provider must support CORS to use its tiles as a 3D texture.
 
-## ZIP navigation and map features
+## Place search, ZIP navigation, and map features
+
+Address and place-name search uses OpenStreetMap data through the public
+[Nominatim](https://nominatim.org/) service. Searches run when you submit the
+box (there is no as-you-type lookup), return the best single match, are limited
+to one request per second, and cache for 30 days in `.cache/places/`, following
+the [Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/).
+Coverage and address precision depend on OSM.
 
 US ZIP locations come from [Zippopotam.us](https://www.zippopotam.us/), using
 GeoNames data. Leading zeros are preserved; ZIP+4 uses its five-digit area.
@@ -268,6 +298,8 @@ Optional environment variables:
 | --- | --- |
 | `TERRAIN_CACHE_DIR` | Directory for cached elevation tiles; ZIP and feature caches default to sibling directories |
 | `TERRAIN_FEATURE_CACHE_DIR` | Directory for cached clipped map features |
+| `TERRAIN_3DEP_URL` | USGS 3DEP `exportImage` endpoint; defaults to The National Map's 3DEPElevation ImageServer |
+| `TERRAIN_GEOCODER_URL` | Nominatim-compatible `search` endpoint for address and place lookup |
 | `TERRAIN_OVERPASS_URL` | Overpass endpoint; defaults to `https://overpass-api.de/api/interpreter` |
 | `TERRAIN_MAP_TILE_URL` | Alternative map provider URL with `{z}`, `{x}`, `{y}` placeholders |
 | `TERRAIN_MAP_ATTRIBUTION` | Attribution HTML for that provider |
@@ -291,10 +323,10 @@ python -m pip install -e '.[test]'
 python -m pytest -q
 ```
 
-Tests cover signed/fractional Terrarium decoding, interpolation across tile seams,
+Tests cover USGS 3DEP raster sampling, missing-coverage errors and source selection, signed/fractional Terrarium decoding, interpolation across tile seams,
 cache reuse, input validation, smoothing, watertight geometry and winding,
 millimeter scaling, STL encoding, raw data/heightmap round trips, HTTP endpoints,
-background job success/failure, default presets, ZIP validation/caching/errors,
+background job success/failure, default presets, place search caching/errors, ZIP validation/caching/errors,
 feature clipping against rotated grids, incomplete Overpass responses, water
 multipolygons with islands, building heights, feature-job deduplication/retry,
 saved colors, mapped surface classes, closed color-part partitions, 3MF
