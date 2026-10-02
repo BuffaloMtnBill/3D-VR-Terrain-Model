@@ -34,6 +34,15 @@ def load_example():
                        int(data["zoom"]), int(data["tile_count"]), str(data["fetched_at"]))
 
 
+class WorkerPools:
+    def __init__(self, terrain, features):
+        self.terrain, self.features = terrain, features
+
+    def shutdown(self, wait=True):
+        self.terrain.shutdown(wait=wait)
+        self.features.shutdown(wait=wait)
+
+
 def create_app(test_config=None):
     app = Flask(__name__)
     app.config.update(MAX_CONTENT_LENGTH=16_384,
@@ -52,14 +61,17 @@ def create_app(test_config=None):
     zip_client = ZipClient(cache_root / "zip")
     place_client = PlaceClient(cache_root / "places", os.environ.get("TERRAIN_GEOCODER_URL", GEOCODER_URL))
     cover_client = LandCoverClient(cache_root / "landcover", os.environ.get("TERRAIN_OVERPASS_URL", OVERPASS_URL))
-    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="terrain-job")
+    # Slow map-feature services must not hold up elevation downloads.
+    executor = WorkerPools(ThreadPoolExecutor(max_workers=2, thread_name_prefix="terrain-job"),
+                           ThreadPoolExecutor(max_workers=3, thread_name_prefix="feature-job"))
     lock = RLock()
     jobs = {}
     feature_jobs = {}
+    building_jobs = {}
     cover_jobs = {}
     example = load_example()
     app.extensions["terrain"] = {"client": client, "clients": clients, "jobs": jobs, "lock": lock, "executor": executor,
-                                 "features": feature_client, "feature_jobs": feature_jobs, "zip": zip_client, "places": place_client,
+                                 "features": feature_client, "feature_jobs": feature_jobs, "building_jobs": building_jobs, "zip": zip_client, "places": place_client,
                                  "landcover": cover_client, "cover_jobs": cover_jobs}
 
     @app.before_request
@@ -121,18 +133,25 @@ def create_app(test_config=None):
             with lock:
                 jobs[identifier].update(state="error", message=message, accessed=time.monotonic())
 
-    def run_features(identifier, terrain):
+    def run_features(identifier, terrain, records, fetch):
         with lock:
-            feature_jobs[identifier].update(state="loading", message="Loading map features…")
+            records[identifier].update(state="loading", message="Loading map features…")
         try:
-            result = feature_client.fetch(terrain.bounds)
+            result = fetch(terrain.bounds)
             with lock:
-                feature_jobs[identifier].update(state="ready", message="Map features ready", data=result, accessed=time.monotonic())
+                records[identifier].update(state="ready", message="Map features ready", data=result, accessed=time.monotonic())
         except Exception as error:
             LOGGER.exception("Map feature download failed")
             message = str(error) if isinstance(error, ValueError) else "Map features could not be processed. Retry or select a smaller area."
             with lock:
-                feature_jobs[identifier].update(state="error", message=message, accessed=time.monotonic())
+                records[identifier].update(state="error", message=message, accessed=time.monotonic())
+
+    def feature_records():
+        """Buildings are a separate, on-demand job: ?layer=buildings."""
+        layer = request.args.get("layer", "")
+        if layer not in ("", "buildings"):
+            raise ValueError("Request all map features, or layer=buildings.")
+        return (building_jobs, feature_client.fetch_buildings) if layer else (feature_jobs, feature_client.fetch)
 
     def run_cover(identifier, terrain):
         with lock:
@@ -173,31 +192,33 @@ def create_app(test_config=None):
 
     @app.post("/api/features/<identifier>")
     def create_features(identifier):
+        records, fetch = feature_records()
         terrain = find_terrain(identifier)
         if terrain is None:
             return jsonify(error="Terrain is unavailable. Generate the area again."), 404
         with lock:
-            existing = feature_jobs.get(identifier)
+            existing = records.get(identifier)
             if existing and existing["state"] != "error":
                 existing["accessed"] = time.monotonic()
                 return jsonify(id=identifier, state=existing["state"]), 200 if existing["state"] == "ready" else 202
-            finished = sorted((key for key in feature_jobs if feature_jobs[key]["state"] in ("ready", "error")),
-                              key=lambda key: feature_jobs[key]["accessed"])
+            finished = sorted((key for key in records if records[key]["state"] in ("ready", "error")),
+                              key=lambda key: records[key]["accessed"])
             for key in finished:
-                if len(feature_jobs) >= 12 or time.monotonic()-feature_jobs[key]["accessed"] > 3600:
-                    del feature_jobs[key]
-            if sum(record["state"] in ("queued", "loading") for record in feature_jobs.values()) >= 2:
+                if len(records) >= 12 or time.monotonic()-records[key]["accessed"] > 3600:
+                    del records[key]
+            if sum(record["state"] in ("queued", "loading") for record in records.values()) >= 2:
                 return jsonify(error="Two map feature downloads are already running. Wait for one to finish."), 429
-            feature_jobs[identifier] = dict(state="queued", message="Preparing map features…", accessed=time.monotonic())
-        executor.submit(run_features, identifier, terrain)
+            records[identifier] = dict(state="queued", message="Preparing map features…", accessed=time.monotonic())
+        executor.features.submit(run_features, identifier, terrain, records, fetch)
         return jsonify(id=identifier, state="queued"), 202
 
     @app.get("/api/features/<identifier>")
     def get_features(identifier):
+        records, _ = feature_records()
         if find_terrain(identifier) is None:
             return jsonify(error="Terrain is unavailable. Generate the area again."), 404
         with lock:
-            record = feature_jobs.get(identifier)
+            record = records.get(identifier)
             if record is None:
                 return jsonify(error="Map features have not been requested for this terrain."), 404
             record["accessed"] = time.monotonic()
@@ -223,7 +244,7 @@ def create_app(test_config=None):
             if sum(record["state"] in ("queued", "loading") for record in cover_jobs.values()) >= 2:
                 return jsonify(error="Two surface maps are already loading. Wait for one to finish."), 429
             cover_jobs[identifier] = dict(state="queued", message="Preparing mapped colors…", accessed=time.monotonic())
-        executor.submit(run_cover, identifier, terrain)
+        executor.features.submit(run_cover, identifier, terrain)
         return jsonify(id=identifier, state="queued"), 202
 
     @app.get("/api/landcover/<identifier>")
@@ -255,7 +276,7 @@ def create_app(test_config=None):
                 return jsonify(error="Four terrain downloads are already running. Wait for one to finish."), 429
             identifier = uuid.uuid4().hex
             jobs[identifier] = dict(state="queued", progress=0, message="Preparing elevation download…", accessed=time.monotonic())
-        executor.submit(run_job, identifier, bounds, resolution, source)
+        executor.terrain.submit(run_job, identifier, bounds, resolution, source)
         return jsonify(id=identifier), 202
 
     @app.get("/api/jobs/<identifier>")
@@ -309,6 +330,11 @@ def create_app(test_config=None):
                     if not feature_record or feature_record["state"] != "ready":
                         raise ValueError("Wait for selected map features to load before exporting 3MF.")
                     feature_data = feature_record["data"]
+                    if features.get("buildings", {}).get("enabled"):
+                        building_record = building_jobs.get(identifier)
+                        if not building_record or building_record["state"] != "ready":
+                            raise ValueError("Wait for buildings to load before exporting 3MF.")
+                        feature_data = {**feature_data, "layers": {**feature_data["layers"], "buildings": building_record["data"]["layers"]["buildings"]}}
             content, mimetype, filename = export_3mf(terrain, options, colors, classes, attribution, features, feature_data)
         else:
             content, mimetype, filename = export_file(terrain, options, format, attribution, features, colors)

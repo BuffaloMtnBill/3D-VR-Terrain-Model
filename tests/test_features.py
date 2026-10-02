@@ -181,7 +181,7 @@ def test_road_and_water_classification_supports_detail_filtering():
     result = prepare_features({"elements": features}, bounds)
     assert result["layers"]["roads"][0]["kind"] == "primary"
     assert {feature["kind"] for feature in result["layers"]["water"]} == {"stream", "river"}
-    assert result["schema_version"] == 4
+    assert result["schema_version"] == 5
 
 
 @pytest.mark.parametrize("detail", [-1, 101, True, "50", float("nan")])
@@ -420,3 +420,35 @@ def test_building_parts_replace_their_outline_in_3d_mode():
     for bad in ({"roads": {"enabled": True, "color": "#ffffff", "detailed": True}}, {"buildings": {"enabled": True, "color": "#ffffff", "detailed": 1}}):
         with pytest.raises(ValueError):
             layer_options(bad)
+
+
+def test_buildings_download_separately_from_other_layers(tmp_path, monkeypatch, application):
+    from terrain_app.features import building_query
+    bounds = Bounds(0, 0, .01, .01)
+    assert "building" not in overpass_query(bounds)
+    assert 'wr["building:part"]' in building_query(bounds) and "highway" not in building_query(bounds)
+    queries = []
+    def post(url, data, **_options):
+        queries.append(data["data"])
+        return JsonResponse({"elements": [osm_way(1, {"building": "yes"}, [(.002, .002), (.004, .002), (.004, .004), (.002, .002)])]})
+    monkeypatch.setattr("terrain_app.features.requests.post", post)
+    client = FeatureClient(tmp_path)
+    assert client.fetch_buildings(bounds)["counts"]["buildings"] == 1
+    client.fetch_buildings(bounds)
+    client.fetch(bounds)
+    assert queries == [building_query(bounds), overpass_query(bounds)]  # separately cached
+
+    provider, calls = application.extensions["terrain"]["features"], []
+    monkeypatch.setattr(provider, "fetch", lambda bounds: calls.append("other") or prepare_features({"elements": []}, bounds))
+    monkeypatch.setattr(provider, "fetch_buildings", lambda bounds: calls.append("buildings") or prepare_features({"elements": []}, bounds))
+    http = application.test_client()
+    assert http.post("/api/features/example", json={}).status_code == 202
+    assert wait_for_features(http, "example")["state"] == "ready"
+    assert calls == ["other"] and http.get("/api/features/example?layer=buildings").status_code == 404
+    assert http.post("/api/features/example?layer=buildings", json={}).status_code == 202
+    for _ in range(100):
+        if http.get("/api/features/example?layer=buildings").get_json()["state"] == "ready":
+            break
+        time.sleep(.01)
+    assert calls == ["other", "buildings"]
+    assert http.post("/api/features/example?layer=roads", json={}).status_code == 400

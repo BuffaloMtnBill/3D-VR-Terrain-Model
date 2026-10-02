@@ -450,3 +450,23 @@ def test_terrain_request_selects_its_elevation_source(application, terrain, monk
     assert used == ["usgs3dep", "mapzen"]
     assert set(client.get("/api/config").get_json()["elevation_sources"]) == {"mapzen", "usgs3dep"}
     assert client.get("/api/terrain/example").get_json()["source_id"] == "mapzen"
+
+
+def test_downloads_are_decoded_only_as_their_expected_image_format(tmp_path, monkeypatch):
+    from terrain_app.elevation import ThreeDepClient
+    gif, png = BytesIO(), BytesIO()
+    Image.new("RGB", (256, 256)).save(gif, "GIF")
+    Image.new("F", (100, 100)).save(png, "TIFF")
+    response = lambda content: type("Response", (), {"content": content, "headers": {"Content-Type": "image/tiff"},
+                                                     "raise_for_status": lambda self: None})()
+    monkeypatch.setattr("terrain_app.elevation.requests.get", lambda *_a, **_k: response(gif.getvalue()))
+    with pytest.raises(ValueError, match="Could not download"):
+        ElevationClient(tmp_path / "tiles").tile(11, 344, 792)
+    with pytest.raises(ValueError, match="choose Mapzen"):
+        ThreeDepClient(tmp_path / "3dep").fetch(Bounds(36.09, -82.13, 36.12, -82.09), 96)
+    assert not list(tmp_path.rglob("*.png")) and not list(tmp_path.rglob("*.tif"))
+
+
+def test_feature_jobs_cannot_delay_terrain_jobs(application):
+    pools = application.extensions["terrain"]["executor"]
+    assert pools.terrain is not pools.features

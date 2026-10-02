@@ -224,7 +224,7 @@ class ElevationClient:
         self.tile_url = tile_url
 
     def _read_tile(self, path: Path) -> np.ndarray:
-        with Image.open(path) as image:
+        with Image.open(path, formats=["PNG"]) as image:
             if image.size != (256, 256):
                 raise ValueError("Unexpected elevation tile dimensions.")
             if image.mode == "RGBA" and np.asarray(image.getchannel("A")).min() == 0:
@@ -244,7 +244,7 @@ class ElevationClient:
             response.raise_for_status()
             if len(response.content) > 2_000_000:
                 raise ValueError("Elevation server returned an oversized tile.")
-            with Image.open(BytesIO(response.content)) as image:
+            with Image.open(BytesIO(response.content), formats=["PNG"]) as image:  # never other decoders
                 if image.size != (256, 256):
                     raise ValueError("Elevation server returned an invalid tile.")
                 if image.mode == "RGBA" and np.asarray(image.getchannel("A")).min() == 0:
@@ -305,7 +305,7 @@ class ThreeDepClient:
 
     def _decode(self, content: bytes, width: int, height: int) -> np.ndarray:
         try:
-            with Image.open(BytesIO(content)) as image:
+            with Image.open(BytesIO(content), formats=["TIFF"]) as image:
                 if image.size != (width, height) or image.mode != "F":
                     raise ValueError("USGS 3DEP returned an unexpected image.")
                 return np.asarray(image, dtype=np.float32).copy()

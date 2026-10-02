@@ -34,7 +34,20 @@ def fixture_features(bounds):
     return data
 
 
-app.extensions["terrain"]["features"].fetch = fixture_features
+def fixture_buildings(bounds):
+    data = fixture_features(bounds)
+    data["layers"] = {name: features if name == "buildings" else [] for name, features in data["layers"].items()}
+    return data
+
+
+def fixture_other_features(bounds):
+    data = fixture_features(bounds)
+    data["layers"]["buildings"] = []
+    return data
+
+
+app.extensions["terrain"]["features"].fetch = fixture_other_features
+app.extensions["terrain"]["features"].fetch_buildings = fixture_buildings
 
 if __name__ == "__main__":
     print("TEST FIXTURES ONLY: http://127.0.0.1:8001", flush=True)

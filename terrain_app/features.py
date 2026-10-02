@@ -256,7 +256,7 @@ def prepare_features(data, bounds):
     detail_buildings(buildings, bounds)
     return {"layers": layers, "counts": {name: len(features) for name, features in layers.items()},
             "bounds": bounds.to_dict(), "source": "© OpenStreetMap contributors", "source_url": "https://www.openstreetmap.org/copyright",
-            "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "schema_version": 4}
+            "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "schema_version": 5}
 
 
 def detail_buildings(buildings, bounds):
@@ -284,6 +284,17 @@ def detail_buildings(buildings, bounds):
             feature["mesh"] = mesh
 
 
+def building_query(bounds):
+    """Footprints and 3D parts; by far the largest layer in cities, so it is requested separately."""
+    extent = bounds.geographic_extent
+    bbox = ",".join(f"{v:.8f}" for v in (extent.south, extent.west, extent.north, extent.east))
+    return f'''[out:json][timeout:25][maxsize:67108864];
+(
+ wr["building"]["building"!="no"]({bbox});
+ wr["building:part"]["building:part"!="no"]({bbox});
+); out geom qt;'''
+
+
 def overpass_query(bounds):
     extent = bounds.geographic_extent
     bbox = ",".join(f"{v:.8f}" for v in (extent.south, extent.west, extent.north, extent.east))
@@ -305,8 +316,6 @@ def overpass_query(bounds):
  nwr["natural"="water"]({bbox});
  nwr["landuse"="reservoir"]({bbox});
  nwr["waterway"="riverbank"]({bbox});
- wr["building"]["building"!="no"]({bbox});
- wr["building:part"]["building:part"!="no"]({bbox});
 ); out geom qt;'''
 
 
@@ -315,16 +324,23 @@ class FeatureClient:
         self.cache_dir, self.url = Path(cache_dir), url
 
     def fetch(self, bounds: Bounds):
+        """Every layer except buildings."""
+        return self._fetch(bounds, overpass_query, "")
+
+    def fetch_buildings(self, bounds: Bounds):
+        return self._fetch(bounds, building_query, "-buildings")
+
+    def _fetch(self, bounds: Bounds, query, suffix):
         bounds.validate()
         if max(bounds.dimensions) > 50_000:
             raise ValueError("Map features are available for areas up to 50 km per side. Select a smaller area and generate its terrain.")
         key = hashlib.sha256(json.dumps(bounds.to_dict(), sort_keys=True).encode()).hexdigest()
-        path = self.cache_dir / f"{key}.json"
+        path = self.cache_dir / f"{key}{suffix}.json"
         result = cached_json(path, 7*86400, MAX_RESPONSE_BYTES)
-        if isinstance(result, dict) and result.get("schema_version") == 4 and result.get("bounds") == bounds.to_dict() and set(result.get("layers", {})) == set(LAYER_NAMES):
+        if isinstance(result, dict) and result.get("schema_version") == 5 and result.get("bounds") == bounds.to_dict() and set(result.get("layers", {})) == set(LAYER_NAMES):
             return result
         try:
-            with requests.post(self.url, data={"data": overpass_query(bounds)}, headers={"User-Agent": USER_AGENT},
+            with requests.post(self.url, data={"data": query(bounds)}, headers={"User-Agent": USER_AGENT},
                                timeout=(8, 35), stream=True) as response:
                 data = response_json(response, MAX_RESPONSE_BYTES)
         except requests.RequestException:

@@ -235,15 +235,23 @@ function setupScene() {
   model=new THREE.Group(); scene.add(model);
   new ResizeObserver(resizeScene).observe(container);
   updateSun(); sceneReady=true;
+  // Draw only while something is changing; an idle model costs no GPU time.
+  controls.addEventListener('change',requestRender);
+  for(const type of ['input','change','click','keydown','pointerup'])document.addEventListener(type,requestRender,true);
   let previous=performance.now();
   renderer.setAnimationLoop(now=>{
     const delta=Math.min((now-previous)/1000,.05); previous=now;
-    controls.update(delta); renderer.render(scene,camera);
+    const moved=controls.update(delta);
+    if(moved||controls.autoRotate||now<renderUntil)renderer.render(scene,camera);
   });
 }
 
+let renderUntil=0;
+function requestRender() {renderUntil=performance.now()+400;}
+
 function resizeScene() {
   if(!renderer) return;
+  requestRender();
   const width=$('scene-container').clientWidth,height=$('scene-container').clientHeight;
   if(!width||!height) return;
   renderer.setSize(width,height);
@@ -254,11 +262,13 @@ function resizeScene() {
 }
 
 function updateSun() {
+  requestRender();
   const angle=315*Math.PI/180;
   if(sun) sun.position.set(Math.sin(angle)*6,7,-Math.cos(angle)*6);
 }
 
 function resetCamera() {
+  requestRender();
   if(!sceneReady||!state.data) return;
   const unit=SCALE/Math.max(state.data.width_m,state.data.height_m);
   const peak=(state.data.surface_max_m-state.data.surface_min_m)*Number($('exaggeration').value)*unit;
@@ -292,6 +302,7 @@ function disposeMesh(mesh) {
 }
 
 function buildScene(reset=false) {
+  requestRender();
   if(!state.data) return;
   updateLegend(); drawProfile(); updateStats();
   if(!sceneReady) return;
@@ -509,6 +520,7 @@ function featureStatus() {
   $('feature-retry').hidden=!featureError||!featuresEnabled();
   if(!featuresEnabled())$('feature-status').textContent='Choose layers to show on the current terrain.';
   else if(featureError)$('feature-status').textContent=featureError;
+  else if(featureData&&featureRequest?.buildings&&!featureData.buildingsLoaded)$('feature-status').textContent='Loading buildings…';
   else if(featureData) {
     const count=Object.entries(styles).reduce((total,[name,style])=>total+(style.enabled?filtered.counts[name]:0),0);
     $('feature-status').textContent=count?`${number(count)} mapped features shown.`:'No selected features are mapped in this area.';
@@ -516,6 +528,7 @@ function featureStatus() {
 }
 
 function rebuildFeatures() {
+  requestRender();
   disposeFeatures(featureGroup);featureGroup=null;
   if(sceneReady&&topMesh&&featureData&&featuresEnabled()) {
     try {featureGroup=buildFeatures(featureData,state.data,options(),featureStyles(),topMesh.geometry,SCALE);model.add(featureGroup);syncFeatureVisibility();}
@@ -525,6 +538,7 @@ function rebuildFeatures() {
 }
 
 function syncFeatureVisibility() {
+  requestRender();
   if(!featureGroup)return;
   const styles=featureStyles();
   featureGroup.traverse(object=>{
@@ -533,33 +547,47 @@ function syncFeatureVisibility() {
   });
 }
 
+async function loadFeatureLayers(id,query='') {
+  await api(`/api/features/${id}${query}`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  while(true) {
+    const result=await api(`/api/features/${id}${query}`);
+    if(result.state==='error')throw new Error(result.message);
+    if(result.state==='ready')return result;
+    if(state.id!==id)return null;
+    await new Promise(resolve=>setTimeout(resolve,650));
+  }
+}
+
+// Buildings are the largest layer by far, so they download only once Buildings is checked.
 async function ensureFeatures(force=false) {
   if(!state.id||!featuresEnabled())return null;
-  const id=state.id;
-  if(!force&&featureData)return featureData;
-  if(featureRequest?.id===id)return featureRequest.promise;
-  featureError=null;featureStatus();
-  const request={id,promise:null};
+  const id=state.id,buildings=$('feature-buildings').checked;
+  if(!force&&featureData&&(featureData.buildingsLoaded||!buildings))return featureData;
+  if(featureRequest?.id===id&&(featureRequest.buildings||!buildings))return featureRequest.promise;
+  featureError=null;
+  const request={id,buildings,promise:null};
+  const show=result=>{
+    featureCache.set(id,result);if(featureCache.size>4)featureCache.delete(featureCache.keys().next().value);
+    if(state.id===id&&!(featureData?.buildingsLoaded&&!result.buildingsLoaded)){featureData=result;featureError=null;rebuildFeatures();}
+  };
   request.promise=(async()=>{
     try {
-      await api(`/api/features/${id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-      while(true) {
-        const result=await api(`/api/features/${id}`);
-        if(result.state==='error')throw new Error(result.message);
-        if(result.state==='ready') {
-          featureCache.set(id,result);if(featureCache.size>4)featureCache.delete(featureCache.keys().next().value);
-          if(state.id===id){featureData=result;featureError=null;rebuildFeatures();}
-          return result;
-        }
-        if(state.id!==id)return null;
-        await new Promise(resolve=>setTimeout(resolve,650));
+      let result=!force&&state.id===id&&featureData?featureData:await loadFeatureLayers(id);
+      if(!result)return null;
+      if(buildings&&!result.buildingsLoaded) {
+        show(result);
+        const part=await loadFeatureLayers(id,'?layer=buildings');
+        if(!part)return null;
+        result={...result,layers:{...result.layers,buildings:part.layers.buildings},counts:{...result.counts,buildings:part.counts.buildings},buildingsLoaded:true};
       }
+      show(result);
+      return result;
     } catch(error) {
       if(state.id===id){featureError=error.message;featureStatus();}
       throw error;
-    } finally {if(featureRequest===request)featureRequest=null;}
+    } finally {if(featureRequest===request){featureRequest=null;featureStatus();}}
   })();
-  featureRequest=request;return request.promise;
+  featureRequest=request;featureStatus();return request.promise;
 }
 
 async function generateTerrain() {
@@ -626,6 +654,7 @@ function captureMapTexture() {
 }
 
 function applyMapMaterial() {
+  requestRender();
   if(!topMesh) return;
   topMesh.material.map=mapTexture;
   const colors=topMesh.geometry.getAttribute('color'); colors.array.fill(1); colors.needsUpdate=true;
@@ -633,6 +662,7 @@ function applyMapMaterial() {
 }
 
 async function changeView(view) {
+  requestRender();
   if(view==='map') {
     if(!state.data||!sceneReady) return notify('Generate terrain and enable WebGL before using the map surface.',true);
     try { const texture=captureMapTexture(); if(mapTexture) mapTexture.dispose(); mapTexture=texture; }

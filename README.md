@@ -228,8 +228,10 @@ Locations are representative points for the ZIP area. Lookups cache for 30 days
 in `.cache/zip/`. Click Generate terrain after navigating to create its model.
 
 Features come from [OpenStreetMap](https://www.openstreetmap.org/copyright)
-through the public Overpass API. One request fetches every category for the
-current terrain; toggling layers or changing colors reuses that data. Feature
+through the public Overpass API. One request fetches every category except
+buildings for the current terrain; toggling layers or changing colors reuses
+that data. Buildings and building parts, by far the largest layer in cities,
+are a second request made only when Buildings is first checked. Feature
 requests are limited to **50 km per side**, two simultaneous downloads, 20 MB of
 response data, and 100,000 input points. Results cache for seven days in
 `.cache/features/`. Rotated areas fetch their enclosing geographic extent, then
@@ -325,7 +327,7 @@ python -m pip install -e '.[test]'
 python -m pytest -q
 ```
 
-Tests cover USGS 3DEP raster sampling, missing-coverage errors and source selection, signed/fractional Terrarium decoding, interpolation across tile seams,
+Tests cover image-format restrictions on downloads, on-demand building downloads, USGS 3DEP raster sampling, missing-coverage errors and source selection, signed/fractional Terrarium decoding, interpolation across tile seams,
 cache reuse, input validation, smoothing, watertight geometry and winding,
 millimeter scaling, STL encoding, raw data/heightmap round trips, HTTP endpoints,
 background job success/failure, default presets, place search caching/errors, ZIP validation/caching/errors,

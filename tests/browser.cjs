@@ -185,14 +185,14 @@ async function main() {
   const browser=await chromium.launch({headless:true,args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
   const context=await browser.newContext({viewport:{width:1440,height:1100},acceptDownloads:true});
   await context.route(mapTiles,route=>route.fulfill({status:200,contentType:'image/svg+xml',body:testTile,headers:{'access-control-allow-origin':'*'}}));
-  let featurePosts=0,failFeatures=true;
+  let featurePosts=0,buildingPosts=0,failFeatures=true;
   let failCoverGet=true;
   await context.route('**/api/landcover/*',route=>{
     if(route.request().method()==='GET'&&failCoverGet){failCoverGet=false;return route.fulfill({json:{state:'error',message:'Surface map fixture is busy. Retry.'}});}
     return route.continue();
   });
   await context.route('**/api/features/*',route=>{
-    if(route.request().method()==='POST'){featurePosts++;if(failFeatures)return route.fulfill({status:202,json:{state:'queued'}});return route.continue();}
+    if(route.request().method()==='POST'){if(route.request().url().includes('layer=buildings'))buildingPosts++;else featurePosts++;if(failFeatures)return route.fulfill({status:202,json:{state:'queued'}});return route.continue();}
     if(failFeatures)return route.fulfill({json:{state:'error',message:'Fixture feature service is busy. Retry.'}});
     return route.continue();
   });
@@ -291,6 +291,7 @@ async function main() {
   await page.locator('#feature-retry').click();
   await page.waitForFunction(()=>document.getElementById('feature-status').textContent.includes('mapped features shown'));
   assert.equal(featurePosts,2);
+  assert.equal(buildingPosts,0,'Buildings are not downloaded until Buildings is checked');
   for(const [group,panel,names] of [['boundaries','boundary-options',['borders','cities','parks']],['trails','trail-options',['at','trails']]]) {
     assert.equal(await page.locator('#'+panel).isHidden(),true,'Submenus stay closed until their category is checked');
     await page.locator('#group-'+group).check();
@@ -312,6 +313,7 @@ async function main() {
   await page.locator('#group-trails').check();
   await page.locator('#color-roads').evaluate(element=>{element.value='#ff3300';element.dispatchEvent(new Event('input',{bubbles:true}));});
   assert.equal(featurePosts,2,'Checkboxes and recoloring must reuse loaded data');
+  assert.equal(buildingPosts,1,'Buildings download once, when first checked');
   assert.match(await page.locator('#feature-status').innerText(),/11 mapped features shown/);
   await slider(page,'detail-roads',0);await slider(page,'detail-water',0);
   assert.equal(await page.locator('#feature-count-roads').innerText(),'1 / 2');
