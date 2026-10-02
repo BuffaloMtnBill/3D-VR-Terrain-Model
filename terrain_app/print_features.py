@@ -12,9 +12,9 @@ from shapely.ops import substring, unary_union
 from .features import LAYER_NAMES, parts
 from .mesh import build_mesh
 
-LABELS = dict(zip(LAYER_NAMES, ("Roads", "Train tracks", "Borders", "Water", "City boundaries", "Park boundaries", "Buildings", "AT")))
+LABELS = dict(zip(LAYER_NAMES, ("Roads", "Train tracks", "Borders", "Water", "City boundaries", "Park boundaries", "Buildings", "AT", "Other trails")))
 # Later layers take precedence where features intersect.
-ORDER = ("water", "roads", "railways", "borders", "cities", "parks", "at", "buildings")
+ORDER = ("water", "roads", "railways", "borders", "cities", "parks", "trails", "at", "buildings")
 ROAD_DETAIL = {"motorway": 0, "motorway_link": 0, "trunk": 0, "trunk_link": 0, "primary": 0, "primary_link": 0,
                "secondary": 25, "secondary_link": 25, "tertiary": 50, "tertiary_link": 50, "unclassified": 75, "residential": 75}
 INLAY_DEPTH = .6  # mm: three layers at a typical 0.2 mm layer height
@@ -44,6 +44,9 @@ def selected_features(data, styles, terrain):
                     area = sum(Polygon(p["outer"], p["holes"]).area for p in feature.get("polygons", []))*terrain.width*terrain.height
                 return area >= 20_000*(1-detail/100)**2
             features = [feature for feature in features if visible(feature)]
+        elif name == "buildings":
+            # 3D mode replaces outlines with their mapped parts; block mode ignores parts.
+            features = [feature for feature in features if (not feature.get("has_parts") if style.get("detailed") else not feature.get("part"))]
         result[name] = features
     return result
 
@@ -72,6 +75,18 @@ def extrude(geometry, height):
     if not contours:
         return mf.Manifold()
     return checked(mf.CrossSection(contours).extrude(height))
+
+
+def mesh_solid(feature, ground, scale, width, height):
+    """A mapped 3D building in model millimeters; its base reaches the model floor like block buildings."""
+    positions = np.asarray(feature["mesh"]["positions"], dtype=np.float64).reshape(-1, 3)
+    faces = np.asarray(feature["mesh"]["indices"], dtype=np.uint64).reshape(-1, 3)[:, ::-1]  # y is mirrored below
+    scale = max(scale, .8/max(feature.get("height_m", 6), 1e-6))
+    z = np.where(positions[:, 2] <= 1e-6, 0, ground+positions[:, 2]*scale)
+    solid = from_mesh(np.column_stack(((positions[:, 0]-.5)*width, (.5-positions[:, 1])*height, z)), faces)
+    if solid.is_empty():
+        raise ValueError("Empty building")
+    return solid
 
 
 def footprint(feature, transform):
@@ -180,6 +195,13 @@ def feature_color_parts(terrain, options, palette, base_parts, styles, data):
         rx, ry = x-col, y-row
         a, b, c, d = top[row, col, 2], top[row, col+1, 2], top[row+1, col, 2], top[row+1, col+1, 2]
         return np.where(rx+ry <= 1, a*(1-rx-ry)+b*rx+c*ry, d*(rx+ry-1)+b*(1-ry)+c*(1-rx))
+    def polygon_ground(polygon):
+        # Sample grid vertices plus densely sampled footprint edges for a level base.
+        ring = polygon.exterior
+        spacing = min(width/(columns-1), height/(rows-1))/2
+        points = np.asarray([ring.interpolate(distance).coords[0] for distance in np.linspace(0, ring.length, max(2, math.ceil(ring.length/spacing)+1))])
+        within = contains_xy(polygon, top[:, :, 0], top[:, :, 1])
+        return max(float(surface_height(points).max()), float(top[:, :, 2][within].max()) if within.any() else 0)
     for name in ORDER:
         features = selected.get(name, [])
         counts[name] = len(features) if name in selected else 0
@@ -187,19 +209,26 @@ def feature_color_parts(terrain, options, palette, base_parts, styles, data):
             continue
         if name == "buildings":
             buildings = []
+            outlines = {feature["id"]: feature for feature in data["layers"].get("buildings", [])}
             for feature in features:
                 geometry = footprint(feature, transform).intersection(frame)
+                scale = options.exaggeration*options.size_mm/max(terrain.width, terrain.height)
+                if styles[name].get("detailed") and feature.get("mesh"):
+                    parent = outlines.get(feature.get("parent"), feature)
+                    base = footprint(parent, transform).intersection(frame)
+                    grounds = [polygon_ground(polygon) for polygon in parts(base if not base.is_empty else geometry, "Polygon")]
+                    try:
+                        buildings.append(mesh_solid(feature, max(grounds, default=0), scale, width, height))
+                        continue
+                    except (ValueError, RuntimeError):
+                        pass  # An unusable mapped shape is printed as its flat-roofed footprint.
                 if geometry.is_empty:
                     continue
                 for polygon in parts(geometry, "Polygon"):
-                    # Sample grid vertices plus densely sampled footprint edges for a flat roof.
-                    ring = polygon.exterior
-                    spacing = min(width/(columns-1), height/(rows-1))/2
-                    points = np.asarray([ring.interpolate(distance).coords[0] for distance in np.linspace(0, ring.length, max(2, math.ceil(ring.length/spacing)+1))])
-                    within = contains_xy(polygon, top[:, :, 0], top[:, :, 1])
-                    ground = max(float(surface_height(points).max()), float(top[:, :, 2][within].max()) if within.any() else 0)
-                    roof = ground+max(.8, feature.get("height_m", 6)*options.exaggeration*options.size_mm/max(terrain.width, terrain.height))
+                    roof = polygon_ground(polygon)+max(.8, feature.get("height_m", 6)*scale)
                     buildings.append(extrude(polygon, roof))
+            if not buildings:
+                continue
             feature_solid = union(buildings)
         else:
             geometry = line_footprint(features, name, transform, options.size_mm)

@@ -308,3 +308,31 @@ def test_collinear_boolean_contacts_are_retriangulated_without_holes():
     edges = Counter(tuple(sorted(edge)) for face in cleaned for edge in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])))
     assert set(edges.values()) == {2}
     assert volume(vertices, cleaned) == pytest.approx(volume(vertices, faces))
+
+
+def test_3d_buildings_print_as_closed_parts_with_roofs(terrain):
+    from terrain_app.buildings import building_dimensions, building_mesh
+    from terrain_app.print_features import feature_color_parts, selected_features
+    from shapely.geometry import box
+    options = ModelOptions()
+    palette = dict.fromkeys(COVER_NAMES, "#123456")
+    classes = np.zeros(2*(terrain.elevations.shape[0]-1)*(terrain.elevations.shape[1]-1), dtype=np.uint8)
+    base = color_parts(terrain, options, palette, classes)
+    ring = lambda a, b: {"outer": [[a, a], [b, a], [b, b], [a, b], [a, a]], "holes": []}
+    lower = building_dimensions({"height": "150"})
+    upper = building_dimensions({"height": "450", "min_height": "150", "roof:shape": "pyramidal", "roof:height": "200"})
+    data = {"layers": {"buildings": [
+        {"id": "outline", "polygons": [ring(.4, .6)], "lines": [], "has_parts": True, **building_dimensions({"height": "450"})},
+        {"id": "lower", "polygons": [ring(.4, .6)], "lines": [], "part": True, "parent": "outline", **lower,
+         "mesh": building_mesh(box(.4, .4, .6, .6), lower, terrain.width, terrain.height)},
+        {"id": "upper", "polygons": [ring(.45, .55)], "lines": [], "part": True, "parent": "outline", **upper,
+         "mesh": building_mesh(box(.45, .45, .55, .55), upper, terrain.width, terrain.height)}]}}
+    volumes = {}
+    for detailed in (False, True):
+        styles = {"buildings": {"enabled": True, "color": "#ffffff", "detailed": detailed}}
+        assert [f["id"] for f in selected_features(data, styles, terrain)["buildings"]] == (["lower", "upper"] if detailed else ["outline"])
+        result, counts = feature_color_parts(terrain, options, palette, base, styles, data)
+        assert len(result) == 2
+        assert_closed_parts(result)
+        volumes[detailed] = sum(volume(part["vertices"], part["faces"]) for part in result)
+    assert volume(*build_mesh(terrain, options)) < volumes[True] < volumes[False]  # a spire holds less than its block

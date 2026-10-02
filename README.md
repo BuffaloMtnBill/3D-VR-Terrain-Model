@@ -56,8 +56,11 @@ browser. You can also install with `pip install .` and run `terrain-studio`.
    style and geometry. Click **Done** to collapse it back to its current settings;
    Export model stays in the left sidebar. Orbit with the mouse, scroll to zoom, and
    use the camera reset or auto-rotate buttons. Under **Map features**, check
-   roads, train tracks, borders, water, city boundaries, park boundaries, buildings, or
-   AT (Appalachian Trail).
+   roads, train tracks, water, or buildings. **Boundaries** opens a submenu for
+   borders, city boundaries, and park boundaries; **Trails** opens one for the AT
+   (Appalachian Trail) and other trails. Checking **Buildings** reveals a
+   **3D buildings** option. Submenus appear only while their category is checked;
+   unchecking the category hides all of its layers and keeps your choices.
    Each has its own color selector; changes apply immediately to loaded layers.
    Roads and Water also have detail sliders. Lower detail omits minor roads,
    creeks, and smaller water areas while retaining larger mapped features.
@@ -84,7 +87,6 @@ Mount Fuji, Grand Canyon, and Chamonix.
 | Base thickness | Percentage of the longest horizontal edge |
 | Contour lines | Overlays elevation contours at an automatically chosen interval |
 | Faceted surface | Uses flat shading to emphasize the triangular structure |
-| Ground grid / Light direction | Adjusts the presentation |
 | Relief | Lit, colored 3D terrain |
 | Map | Drapes the currently visible terrain or street map over the 3D surface |
 | Wireframe | Shows terrain triangles |
@@ -107,13 +109,14 @@ uses the original elevations; the smoothing slider has been removed.
   Selected Roads, Train tracks, Borders, Water, City boundaries, Park boundaries,
   AT, and Buildings are included. Linework and water are colored inlays 0.6 mm
   deep; line widths are at least 0.6 mm (rail strokes 0.4 mm). Buildings have
-  flat raised roofs using mapped heights/levels, with a minimum 0.8 mm rise.
+  flat raised roofs using mapped heights/levels, with a minimum 0.8 mm rise;
+  with 3D buildings on, mapped building parts and roof shapes are printed.
   Unchecked layers are omitted and Roads/Water detail settings are honored.
   Choose feature colors from your four surface colors, or share surface colors
   to free a filament slot. Same-color features merge with terrain; mesh booleans
   remove overlapping interiors between different color parts.
   Overlapping layers take precedence in this order: water, roads, train tracks,
-  borders, cities, parks, AT, then buildings. Features follow the saved terrain's
+  borders, cities, parks, other trails, AT, then buildings. Features follow the saved terrain's
   selection and rotation. Assign the color parts to filament slots in your slicer.
 - **STL:** a direct `.stl` download. Millimeter coordinates; X selection right,
   Y selection top, Z up (X east and Y north at zero rotation).
@@ -227,7 +230,7 @@ Locations are representative points for the ZIP area. Lookups cache for 30 days
 in `.cache/zip/`. Click Generate terrain after navigating to create its model.
 
 Features come from [OpenStreetMap](https://www.openstreetmap.org/copyright)
-through the public Overpass API. One request fetches all seven categories for the
+through the public Overpass API. One request fetches every category for the
 current terrain; toggling layers or changing colors reuses that data. Feature
 requests are limited to **50 km per side**, two simultaneous downloads, 20 MB of
 response data, and 100,000 input points. Results cache for seven days in
@@ -327,7 +330,7 @@ Tests cover USGS 3DEP raster sampling, missing-coverage errors and source select
 cache reuse, input validation, smoothing, watertight geometry and winding,
 millimeter scaling, STL encoding, raw data/heightmap round trips, HTTP endpoints,
 background job success/failure, default presets, place search caching/errors, ZIP validation/caching/errors,
-feature clipping against rotated grids, incomplete Overpass responses, water
+feature clipping against rotated grids, 3D building tags, roof solids and building parts, other trails, incomplete Overpass responses, water
 multipolygons with islands, building heights, feature-job deduplication/retry,
 saved colors, mapped surface classes, closed color-part partitions, 3MF
 materials and assemblies, and
@@ -340,7 +343,7 @@ land-cover regions for tests and never alters the production app on port 8000. S
 to the Playwright package directory if it is installed outside this project.
 The test intercepts map, ZIP, and feature requests with fixtures, exercises ZIP
 navigation and errors, two-point alignment with mouse/touch, cancellation,
-all seven feature categories and colors, raised buildings, GLB geometry and
+every feature category and color, the Boundaries and Trails submenus, raised and 3D buildings, GLB geometry and
 water masks, ratio orientation toggles, shared print colors, discrete face
 colors, real 3MF downloads, and fixed
 frame selection, edge resizing, mouse/keyboard/touch rotation, panning and zooming,
@@ -355,6 +358,54 @@ Python modules live in `terrain_app/`; the browser UI lives in
 `terrain_app/data/ATTRIBUTION.txt`, the source-credits download, and embedded in
 OBJ, GLB, PNG, and optional metadata exports.
 
+## 3D buildings
+
+With **Buildings** checked, the **3D buildings** option uses OpenStreetMap's
+[Simple 3D Buildings](https://wiki.openstreetmap.org/wiki/Simple_3D_Buildings)
+tags, fetched in the same Overpass request as the other layers:
+
+- `building:part` volumes replace the outline of the building they belong to,
+  so towers show their setbacks and podiums. `min_height` and
+  `building:min_level` lift a part off the ground.
+- `roof:shape` with `roof:height` or `roof:levels` (three meters when neither
+  is mapped) gives gabled, hipped, pyramidal, and skillion roofs. Gambrel,
+  saltbox, and round roofs are drawn as gabled, mansard and half-hipped as
+  hipped, and domes, onions, and cones as pyramidal. Ridges follow the
+  footprint's longer side unless `roof:orientation=across`; skillion roofs
+  follow `roof:direction` when mapped.
+- Buildings without these tags stay flat-roofed blocks, exactly as when the
+  option is off. Detail depends on OSM: city centers are often richly mapped,
+  while most suburban and rural buildings are footprints with no roof data.
+
+The preview, GLB, preview image, and four-color 3MF all use the same shapes.
+Roof detail is only visible on small selections: on a 180 mm model of a 5 km
+area, a 10 m house is about 0.4 mm tall.
+
+## Trails
+
+**Other trails** are OSM paths, footways, and bridleways, without sidewalks and
+street crossings. Ways that belong to the Appalachian Trail are kept out of
+this layer so the two toggles do not overlap.
+
 The AT feature follows mapped Appalachian Trail hiking-route relations and named
 trail ways from OpenStreetMap, clipped to the selected terrain. Its checkbox and
 color picker work independently of Roads, including at low road detail.
+
+### Interface defaults and favorite landscape parameters
+
+Elevations and the profile chart display unexaggerated feet above sea level.
+Selection dimensions and grid spacing display feet; profile distances use miles.
+Print dimensions stay in millimeters, while raw elevation data and GLB retain
+their documented metric units.
+
+Open **Make it yours**, adjust the palette, terrain controls, and map features,
+then click **Save as default** to remember those selections in this browser.
+This includes feature colors and detail levels, building options, boundary and
+trail selections, and all six Print palette colors. Later edits do not replace
+these defaults until you save again.
+
+Below **Find your frame**, **Current box parameters** shows copyable JSON with
+the current landscape name, unrotated geographic bounds, and clockwise rotation
+in degrees. **Copy parameters** copies the JSON for use in an AI request to
+update the **Famous landscapes** menu. These parameters track the current map
+selection, even before new terrain is generated.

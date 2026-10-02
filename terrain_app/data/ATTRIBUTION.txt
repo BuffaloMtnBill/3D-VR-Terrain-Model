@@ -69,3 +69,5 @@ and building footprints are clipped and classified on terrain triangles.
 Unmapped ground uses the Dirt color; colors do not represent current seasons.
 3MF color parts partition the terrain volume. Buildings in the feature overlay
 use mapped heights or levels; missing heights are illustrated at six meters.
+With 3D buildings selected, mapped building parts and roof shapes (OpenStreetMap
+Simple 3D Buildings tags) are modeled; unsupported roof shapes are approximated.

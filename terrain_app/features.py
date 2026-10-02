@@ -11,17 +11,20 @@ import requests
 from shapely import make_valid
 from shapely.geometry import LineString, Polygon, box
 from shapely.ops import polygonize, unary_union
+from shapely.strtree import STRtree
 
+from .buildings import building_dimensions, building_mesh, is_detailed
 from .elevation import Bounds, pixel_coordinates
 from .services import USER_AGENT, cache_json, cached_json, response_json
 
-LAYER_NAMES = ("roads", "railways", "borders", "water", "cities", "parks", "buildings", "at")
+LAYER_NAMES = ("roads", "railways", "borders", "water", "cities", "parks", "buildings", "at", "trails")
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 MAX_RESPONSE_BYTES = 20_000_000
 MAX_POINTS = 100_000
 ROADS = {"motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential",
          "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link",
          "living_street", "service", "pedestrian", "track", "road"}
+TRAILS = {"path", "footway", "bridleway"}
 RAILS = {"rail", "light_rail", "subway", "tram", "narrow_gauge", "funicular", "monorail", "preserved"}
 CLIP = box(0, 0, 1, 1)
 
@@ -44,6 +47,10 @@ def layer_options(value):
             if name not in {"roads", "water"} or isinstance(detail, bool) or not isinstance(detail, (int, float)) or not math.isfinite(detail) or not 0 <= detail <= 100:
                 raise ValueError("Road and water detail must be between 0 and 100.")
             result[name]["detail"] = detail
+        if "detailed" in options:
+            if name != "buildings" or not isinstance(options["detailed"], bool):
+                raise ValueError("3D buildings can only be switched on or off for the Buildings layer.")
+            result[name]["detailed"] = options["detailed"]
     return result
 
 
@@ -61,6 +68,8 @@ def classify(tags):
     categories = []
     if is_appalachian_trail(tags):
         categories.append("at")
+    elif tags.get("highway") in TRAILS and tags.get("footway") not in {"sidewalk", "crossing"}:
+        categories.append("trails")
     if tags.get("highway") in ROADS:
         categories.append("roads")
     if tags.get("railway") in RAILS:
@@ -79,7 +88,7 @@ def classify(tags):
         categories.append("water")
     if tags.get("leisure") in {"park", "nature_reserve"} or tags.get("boundary") in {"national_park", "protected_area"}:
         categories.append("parks")
-    if tags.get("building") and tags["building"] != "no":
+    if any(tags.get(key) and tags[key] != "no" for key in ("building", "building:part")):
         categories.append("buildings")
     return categories
 
@@ -192,6 +201,10 @@ def prepare_features(data, bounds):
     if len(elements) > 20_000:
         raise ValueError("There are too many map features. Select a smaller area.")
     layers, seen, points = {name: [] for name in LAYER_NAMES}, set(), 0
+    buildings = []
+    # Ways of an Appalachian Trail relation belong to the AT layer, even when unnamed.
+    at_ways = {member.get("ref") for element in elements if isinstance(element, dict) and element.get("type") == "relation"
+               and is_appalachian_trail(element.get("tags") or {}) for member in element.get("members", []) if isinstance(member, dict)}
     for element in reversed(elements):
         if not isinstance(element, dict):
             continue
@@ -200,6 +213,8 @@ def prepare_features(data, bounds):
             continue
         seen.add(identifier)
         categories = classify(element.get("tags", {}))
+        if element.get("type") == "way" and element.get("id") in at_ways:
+            categories = [category for category in categories if category != "trails"]
         if not categories:
             continue
         raw_paths = paths(element.get("geometry")) if element.get("type") == "way" else [
@@ -216,13 +231,18 @@ def prepare_features(data, bounds):
         tags = element["tags"]
         water_area = "water" in categories and (tags.get("natural") == "water" or tags.get("landuse") == "reservoir" or tags.get("waterway") == "riverbank")
         area_geometry = element_geometry(element, bounds) if water_area else None
-        polygons = element_polygons(element, bounds) if "buildings" in categories else encode_polygons(area_geometry) if water_area else []
+        if "buildings" in categories:
+            area_geometry = element_geometry(element, bounds)
+        polygons = encode_polygons(area_geometry) if area_geometry is not None else []
         if not lines and not polygons:
             continue
         feature = {"id": identifier, "name": str(element.get("tags", {}).get("name", ""))[:200],
                    "lines": lines, "polygons": polygons}
         if "buildings" in categories:
-            feature["height_m"], feature["height_source"] = building_height(element["tags"])
+            feature.update(building_dimensions(tags))
+            if not tags.get("building") or tags["building"] == "no":
+                feature["part"] = True
+            buildings.append((feature, area_geometry))
         if "roads" in categories:
             feature["kind"] = tags["highway"]
         elif "water" in categories:
@@ -233,9 +253,35 @@ def prepare_features(data, bounds):
                 feature["area_m2"] = round(area_geometry.area*width*height, 2)
         for category in categories:
             layers[category].append(feature)
+    detail_buildings(buildings, bounds)
     return {"layers": layers, "counts": {name: len(features) for name, features in layers.items()},
             "bounds": bounds.to_dict(), "source": "© OpenStreetMap contributors", "source_url": "https://www.openstreetmap.org/copyright",
-            "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "schema_version": 3}
+            "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "schema_version": 4}
+
+
+def detail_buildings(buildings, bounds):
+    """Link building parts to their outlines and add closed meshes where a flat block would be wrong.
+
+    Outlines containing parts are replaced by those parts in 3D mode; parts are ignored otherwise.
+    """
+    outlines = [(feature, geometry) for feature, geometry in buildings if not feature.get("part") and not geometry.is_empty]
+    tree = STRtree([geometry for _, geometry in outlines]) if outlines else None
+    width, height = bounds.dimensions
+    for feature, geometry in buildings:
+        if geometry.is_empty:
+            continue
+        if feature.get("part") and tree is not None:
+            point = geometry.representative_point()
+            for index in tree.query(point, predicate="within"):
+                outlines[index][0]["has_parts"] = True
+                feature["parent"] = outlines[index][0]["id"]
+                break
+    for feature, geometry in buildings:
+        if geometry.is_empty or feature.get("has_parts") or not is_detailed(feature):
+            continue
+        mesh = building_mesh(geometry, feature, width, height, bounds.rotation_deg)
+        if mesh:
+            feature["mesh"] = mesh
 
 
 def overpass_query(bounds):
@@ -248,6 +294,7 @@ def overpass_query(bounds):
  relation["route"~"^(hiking|foot)$"]["ref"~"^AT$",i]({bbox});
  relation["route"~"^(hiking|foot)$"]["name"~"^Appalachian( National Scenic)? Trail($| *[(])",i]({bbox});
  way["highway"~"^(path|footway|track)$"]["name"~"^Appalachian( National Scenic)? Trail($| *[(])",i]({bbox});
+ way["highway"~"^(path|footway|bridleway)$"]["footway"!~"^(sidewalk|crossing)$"]({bbox});
  way["railway"~"^({rails})$"]({bbox});
  way["waterway"~"^(river|stream|canal|drain|ditch)$"]({bbox});
  nwr["boundary"="administrative"]["admin_level"~"^(2|3|4|5|6|7|8|9|10)$"]({bbox});
@@ -259,6 +306,7 @@ def overpass_query(bounds):
  nwr["landuse"="reservoir"]({bbox});
  nwr["waterway"="riverbank"]({bbox});
  wr["building"]["building"!="no"]({bbox});
+ wr["building:part"]["building:part"!="no"]({bbox});
 ); out geom qt;'''
 
 
@@ -273,7 +321,7 @@ class FeatureClient:
         key = hashlib.sha256(json.dumps(bounds.to_dict(), sort_keys=True).encode()).hexdigest()
         path = self.cache_dir / f"{key}.json"
         result = cached_json(path, 7*86400, MAX_RESPONSE_BYTES)
-        if isinstance(result, dict) and result.get("schema_version") == 3 and result.get("bounds") == bounds.to_dict() and set(result.get("layers", {})) == set(LAYER_NAMES):
+        if isinstance(result, dict) and result.get("schema_version") == 4 and result.get("bounds") == bounds.to_dict() and set(result.get("layers", {})) == set(LAYER_NAMES):
             return result
         try:
             with requests.post(self.url, data={"data": overpass_query(bounds)}, headers={"User-Agent": USER_AGENT},

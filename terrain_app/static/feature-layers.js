@@ -1,7 +1,7 @@
 /* Colored OSM geometry draped on the same triangular surface as the terrain. */
 import * as THREE from 'three';
 
-export const featureLabels={roads:'Roads',railways:'Train tracks',borders:'Borders',water:'Water',cities:'City boundaries',parks:'Park boundaries',buildings:'Buildings',at:'AT (Appalachian Trail)'};
+export const featureLabels={roads:'Roads',railways:'Train tracks',borders:'Borders',water:'Water',cities:'City boundaries',parks:'Park boundaries',buildings:'Buildings',at:'AT (Appalachian Trail)',trails:'Other trails'};
 const clamp=(value,low=0,high=1)=>Math.max(low,Math.min(high,value));
 const MAX_VERTICES=900000;
 
@@ -23,6 +23,8 @@ export function filterFeatures(data,styles,terrain) {
     const area=feature.area_m2??feature.polygons.reduce((sum,polygon)=>sum+ringArea(polygon.outer)-polygon.holes.reduce((total,ring)=>total+ringArea(ring),0),0)*terrain.width_m*terrain.height_m;
     return area>=20000*(1-waterDetail/100)**2;
   });
+  const detailed=styles.buildings?.detailed===true;
+  layers.buildings=layers.buildings.filter(feature=>detailed?!feature.has_parts:!feature.part);
   return {...data,layers,counts:Object.fromEntries(Object.entries(layers).map(([name,features])=>[name,features.length]))};
 }
 
@@ -108,9 +110,28 @@ function waterSurface(features,terrainGeometry,color) {
   return mesh;
 }
 
-function buildingGeometry(features,sampler) {
+function buildingGeometry(features,sampler,detailed,outlines) {
   const positions=[];
-  for(const feature of features)for(const polygon of feature.polygons) {
+  // Parts stand on their whole building's ground so stacked parts meet on slopes.
+  const grounds=new Map(),byId=new Map(outlines.map(feature=>[feature.id,feature]));
+  function ground(feature) {
+    feature=byId.get(feature.parent)||feature;
+    if(!grounds.has(feature.id)) {
+      const rings=feature.polygons.length?feature.polygons.map(polygon=>polygon.outer):[feature.mesh.positions.reduce((ring,value,index,all)=>index%3?ring:[...ring,[value,all[index+1]]],[])];
+      const heights=rings.flat().map(([u,v])=>sampler.point(u,v)[1]);
+      grounds.set(feature.id,[heights.reduce((a,b)=>Math.min(a,b),Infinity),heights.reduce((a,b)=>Math.max(a,b),-Infinity)]);
+    }
+    return grounds.get(feature.id);
+  }
+  for(const feature of features) {
+    if(!detailed||!feature.mesh)continue;
+    const [low,high]=ground(feature),{positions:points,indices}=feature.mesh;
+    if(positions.length/3+indices.length>MAX_VERTICES)throw new Error('Too many building surfaces. Select a smaller area.');
+    // Mesh heights are meters above ground; the base sinks to the lowest ground so no gap shows on slopes.
+    const vertex=index=>{const h=points[index*3+2];positions.push((points[index*3]-.5)*sampler.width,h<=1e-6?low:high+h*sampler.unit,(points[index*3+1]-.5)*sampler.height);};
+    for(let i=0;i<indices.length;i+=3){vertex(indices[i]);vertex(indices[i+2]);vertex(indices[i+1]);}
+  }
+  for(const feature of features)for(const polygon of detailed&&feature.mesh?[]:feature.polygons) {
     const makePath=(ring,Path)=>new Path(ring.map(([u,v])=>new THREE.Vector2((u-.5)*sampler.width,-(v-.5)*sampler.height)));
     const shape=makePath(polygon.outer,THREE.Shape);
     shape.holes=polygon.holes.map(ring=>makePath(ring,THREE.Path));
@@ -130,18 +151,19 @@ function buildingGeometry(features,sampler) {
 }
 
 export function buildFeatures(data,terrain,options,styles,terrainGeometry,scale=6.4) {
+  const outlines=data.layers.buildings||[];
   data=filterFeatures(data,styles,terrain);
   const group=new THREE.Group();group.name='OpenStreetMap feature layers';
   group.userData={source:data.source,source_url:data.source_url,fetched_at:data.fetched_at,layers:styles,counts:data.counts};
   const sampler=terrainSampler(terrain,options,scale);
   try {
-    for(const category of ['water','roads','railways','borders','cities','parks','buildings','at']) {
+    for(const category of ['water','roads','railways','borders','cities','parks','buildings','trails','at']) {
       const style=styles[category],features=data.layers[category]||[];
       if(!style?.enabled||!features.length)continue;
       if(category==='water') {
         const surface=waterSurface(features,terrainGeometry,style.color);if(surface)group.add(surface);
       }
-      const geometry=category==='buildings'?buildingGeometry(features,sampler):ribbonGeometry(features,category,sampler);if(!geometry)continue;
+      const geometry=category==='buildings'?buildingGeometry(features,sampler,style.detailed===true,outlines):ribbonGeometry(features,category,sampler);if(!geometry)continue;
       const material=category==='buildings'?new THREE.MeshStandardMaterial({color:style.color,roughness:.9,side:THREE.DoubleSide}):new THREE.MeshBasicMaterial({color:style.color,side:THREE.DoubleSide});
       const mesh=new THREE.Mesh(geometry,material);
       mesh.name=featureLabels[category];mesh.renderOrder=2;mesh.userData={category,color:style.color,feature_count:features.length};group.add(mesh);

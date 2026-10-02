@@ -13,12 +13,12 @@ const rainier={south:46.775,west:-121.865,north:46.930,east:-121.645};
 const mapTiles=/^https:\/\/tile\.(openstreetmap\.org|opentopomap\.org)\//;
 const testTile = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#e3ebdc"/><path d="M0 128H256M128 0V256" stroke="#c5d2b8"/><text x="128" y="123" text-anchor="middle" fill="#819075" font-family="Arial" font-size="9">MAP TILE FIXTURE</text></svg>');
 const output=path.join(__dirname,'..','test-results');
-const layerNames=['roads','railways','borders','water','cities','parks','buildings','at'];
-const labels={roads:'Roads',railways:'Train tracks',borders:'Borders',water:'Water',cities:'City boundaries',parks:'Park boundaries',buildings:'Buildings',at:'AT (Appalachian Trail)'};
+const layerNames=['roads','railways','borders','water','cities','parks','buildings','at','trails'];
+const labels={roads:'Roads',railways:'Train tracks',borders:'Borders',water:'Water',cities:'City boundaries',parks:'Park boundaries',buildings:'Buildings',at:'AT (Appalachian Trail)',trails:'Other trails'};
 const coverNames=['dark_foliage','light_foliage','dirt','snow','water','buildings'];
 const lake={outer:[[.2,.2],[.6,.2],[.6,.6],[.2,.6],[.2,.2]],holes:[[[.35,.35],[.45,.35],[.45,.45],[.35,.45],[.35,.35]]]};
 function featureFixture() {
-  const lines={at:[[.15,.6],[.5,.25],[.85,.55]],roads:[[.05,.3],[.5,.5],[.95,.7]],railways:[[.1,.85],[.45,.6],[.9,.1]],
+  const lines={at:[[.15,.6],[.5,.25],[.85,.55]],trails:[[.1,.5],[.5,.85],[.9,.45]],roads:[[.05,.3],[.5,.5],[.95,.7]],railways:[[.1,.85],[.45,.6],[.9,.1]],
     borders:[[.1,.1],[.9,.9]],water:[[.1,.2],[.25,.45],[.4,.65]],
     cities:[[.1,.1],[.6,.1],[.6,.8],[.1,.8],[.1,.1]],parks:[[.4,.2],[.9,.2],[.9,.6],[.4,.6],[.4,.2]],buildings:[[.72,.3],[.85,.3],[.85,.4],[.72,.4],[.72,.3]]};
   const data={state:'ready',layers:Object.fromEntries(layerNames.map(name=>[name,[{id:'fixture/'+name,name:'TEST FIXTURE',lines:[lines[name]],height_m:12,
@@ -27,6 +27,11 @@ function featureFixture() {
     source:'© OpenStreetMap contributors',source_url:'https://www.openstreetmap.org/copyright',fetched_at:'2026-10-01T00:00:00Z'};
   data.layers.roads.push({id:'fixture/minor-road',name:'TEST SERVICE ROAD',kind:'service',lines:[[[.1,.7],[.6,.75],[.9,.8]]],polygons:[]});
   data.layers.water.push({id:'fixture/creek',name:'TEST CREEK',kind:'stream',lines:[[[.2,.8],[.6,.4],[.8,.2]]],polygons:[]});
+  // One mapped 3D building: its outline is replaced in 3D mode by a pyramidal-roofed part standing on it.
+  data.layers.buildings[0].has_parts=true;
+  data.layers.buildings.push({id:'fixture/part',name:'TEST PART',lines:[],part:true,parent:'fixture/buildings',height_m:40,min_height_m:0,roof_shape:'pyramidal',roof_height_m:20,
+    polygons:[{outer:lines.buildings,holes:[]}],mesh:{positions:[.72,.3,0,.85,.3,0,.85,.4,0,.72,.4,0,.72,.3,400,.85,.3,400,.85,.4,400,.72,.4,400,.785,.35,900],
+      indices:[0,1,2,0,2,3,0,5,1,0,4,5,1,6,2,1,5,6,2,7,3,2,6,7,3,4,0,3,7,4,4,8,5,5,8,6,6,8,7,7,8,4]}});
   data.counts=Object.fromEntries(layerNames.map(name=>[name,data.layers[name].length]));
   return data;
 }
@@ -203,7 +208,15 @@ async function main() {
   await page.goto(process.env.TERRAIN_TEST_URL||'http://127.0.0.1:8001');
   await page.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('160 × 117'));
   await page.waitForTimeout(350);
-  assert.match(await page.locator('#stat-low').innerText(),/899/);
+  assert.match(await page.locator('#stat-low').innerText(),/2,949.*ft ASL/);
+  assert.equal(await page.locator('.topbar-description').textContent(),'Print the world.');
+  assert.equal(await page.locator('.intro h1').textContent(),'Global settings');
+  assert.equal(await page.locator('label[for=place]').textContent(),'Famous landscapes');
+  assert.equal(await page.locator('.export-section h2').textContent(),'Export to print');
+  assert.equal(await page.locator('.step,.panel-number').count(),0);
+  const parameters=JSON.parse(await page.locator('#selection-parameters').inputValue());
+  assert.equal(parameters.name,'Roan Mountain');
+  assert.equal(parameters.bounds.rotation_deg,0);
   assert.equal(await page.locator('#landscape-title').innerText(),'Roan Mountain');
   assert.equal(await page.locator('#place').inputValue(),'roan');
   assert.equal(await page.locator('#style-editor').isVisible(),false);
@@ -258,8 +271,8 @@ async function main() {
   await page.locator('#zip-code').fill('00501');await page.locator('#zip-form button').click();
   await page.waitForFunction(()=>document.getElementById('zip-status').textContent.includes('00501'));
   await page.locator('#place').selectOption('roan');
-  assert.equal(await page.locator('[data-feature]').count(),8);
-  assert.equal(await page.locator('[data-feature-color]').count(),8);
+  assert.equal(await page.locator('[data-feature]').count(),9);
+  assert.equal(await page.locator('[data-feature-color]').count(),9);
   await page.locator('#feature-roads').check();
   await page.waitForFunction(()=>document.getElementById('feature-retry').hidden===false);
   assert.match(await page.locator('#feature-status').innerText(),/busy/);
@@ -267,14 +280,32 @@ async function main() {
   await page.locator('#feature-retry').click();
   await page.waitForFunction(()=>document.getElementById('feature-status').textContent.includes('mapped features shown'));
   assert.equal(featurePosts,2);
+  for(const [group,panel,names] of [['boundaries','boundary-options',['borders','cities','parks']],['trails','trail-options',['at','trails']]]) {
+    assert.equal(await page.locator('#'+panel).isHidden(),true,'Submenus stay closed until their category is checked');
+    await page.locator('#group-'+group).check();
+    assert.equal(await page.locator('#'+panel).isVisible(),true);
+    for(const name of names)assert.equal(await page.locator('#feature-'+name).isChecked(),true,'Opening a category selects its layers');
+  }
+  assert.equal(await page.locator('#building-options').isHidden(),true);
   for(const name of layerNames)await page.locator('#feature-'+name).check();
+  assert.equal(await page.locator('#building-options').isVisible(),true);
+  assert.equal(await page.locator('#feature-count-buildings').innerText(),'1');
+  const sceneImage=async()=>{await page.waitForTimeout(300);return page.locator('#scene-container canvas').evaluate(canvas=>canvas.toDataURL());};
+  const blockImage=await sceneImage();
+  await page.locator('#buildings-detailed').check();
+  assert.notEqual(await sceneImage(),blockImage,'3D buildings must change the rendered buildings');
+  assert.equal(await page.locator('#feature-count-buildings').innerText(),'1');
+  await page.locator('#group-trails').uncheck();
+  assert.match(await page.locator('#feature-status').innerText(),/9 mapped features shown/);
+  assert.equal(await page.locator('#trail-options').isHidden(),true);
+  await page.locator('#group-trails').check();
   await page.locator('#color-roads').evaluate(element=>{element.value='#ff3300';element.dispatchEvent(new Event('input',{bubbles:true}));});
   assert.equal(featurePosts,2,'Checkboxes and recoloring must reuse loaded data');
-  assert.match(await page.locator('#feature-status').innerText(),/10 mapped features shown/);
+  assert.match(await page.locator('#feature-status').innerText(),/11 mapped features shown/);
   await slider(page,'detail-roads',0);await slider(page,'detail-water',0);
   assert.equal(await page.locator('#feature-count-roads').innerText(),'1 / 2');
   assert.equal(await page.locator('#feature-count-water').innerText(),'1 / 2');
-  assert.match(await page.locator('#feature-status').innerText(),/8 mapped features shown/);
+  assert.match(await page.locator('#feature-status').innerText(),/9 mapped features shown/);
   assert.equal(featurePosts,2,'Detail changes must filter the loaded data without another request');
   await page.locator('#export-button').click();
   const simpleDownloadWaiting=page.waitForEvent('download');await page.locator('[data-export="glb"]').click();
@@ -317,8 +348,7 @@ async function main() {
   assert.equal(await page.locator('[data-palette="slate"]').count(),0);
   await page.locator('#contours').check();
   await page.locator('#faceted').check();
-  await slider(page,'sun',120);
-  assert.equal(await page.locator('#sun-value').innerText(),'120°');
+  assert.equal(await page.locator('#sun').count()+await page.locator('#grid').count(),0);
   await page.locator('[data-view="wireframe"]').click();
   assert.equal(await page.locator('#scene-mode').innerText(),'TERRAIN WIREFRAME');
   await page.locator('[data-view="elevation"]').click();
@@ -348,6 +378,7 @@ async function main() {
   assert.equal(await page.locator('#profile-tooltip').isVisible(),true);
 
   // The screen rectangle stays fixed while geography moves beneath it.
+  await page.evaluate(()=>window.scrollTo(0,0));
   let before=await page.locator('#selection-frame').boundingBox();
   const selectedBefore=await selection(page);
   await page.mouse.move(before.x+before.width/2,before.y+before.height/2);await page.mouse.down();
@@ -391,6 +422,8 @@ async function main() {
   assert.ok(Math.abs(rotated.angle-30)<.2,'Corner dragging must rotate by the pointer angle');
   const rotatedBounds=await selection(page);
   assert.ok(Math.abs(rotatedBounds.rotation_deg-30)<.2);
+  const copiedRotated=JSON.parse(await page.locator('#selection-parameters').inputValue());
+  for(const key of ['north','south','east','west','rotation_deg'])assert.ok(Math.abs(copiedRotated.bounds[key]-rotatedBounds[key])<(key==='rotation_deg'?0.0001:0.000001),'Copyable parameters must track rotated selection');
   for(const key of ['north','south','east','west'])assert.ok(Math.abs(rotatedBounds[key]-unrotatedBounds[key])<.0002,'Rotation must preserve the unrotated area');
   const angle=rotated.angle*Math.PI/180;
   const topLeft=frame=>({x:frame.x-frame.width/2*Math.cos(angle)+frame.height/2*Math.sin(angle),y:frame.y-frame.width/2*Math.sin(angle)-frame.height/2*Math.cos(angle)});
@@ -427,7 +460,7 @@ async function main() {
   await page.locator('#place').selectOption('roan');
   assert.deepEqual(await selection(page),roan);
   assert.equal(await page.locator('#place').inputValue(),'roan');
-  assert.match(await page.locator('#selection-size').innerText(),/km/);
+  assert.match(await page.locator('#selection-size').innerText(),/ft/);
   await page.locator('#edit-bounds').click();
   for(const [key,value] of Object.entries(example)) await page.locator('#bound-'+key).fill(String(value));
   await page.locator('#bound-rotation').fill('30');
@@ -489,7 +522,7 @@ async function main() {
   const snapshot=page.waitForEvent('download');await page.locator('#screenshot').click();
   const download=await snapshot;await download.saveAs(path.join(output,download.suggestedFilename()));
   await page.locator('#feature-roads').uncheck();
-  assert.match(await page.locator('#feature-status').innerText(),/8 mapped features shown/);
+  assert.match(await page.locator('#feature-status').innerText(),/9 mapped features shown/);
   await page.locator('#export-button').click();
   const withoutRoads=page.waitForEvent('download');await page.locator('[data-export="glb"]').click();
   const disabledDownload=await withoutRoads;await disabledDownload.saveAs(path.join(output,'without-roads.glb'));
@@ -615,8 +648,56 @@ async function main() {
   await mobilePage.screenshot({path:path.join(output,'mobile-print-menu.png'),fullPage:true});
   await mobilePage.locator('#apply-print-palette').click();
   assert.deepEqual(errors,[]);
+  const defaultsContext=await browser.newContext({viewport:{width:1440,height:1100},permissions:['clipboard-read','clipboard-write']});
+  await defaultsContext.route(mapTiles,route=>route.fulfill({status:200,contentType:'image/svg+xml',body:testTile,headers:{'access-control-allow-origin':'*'}}));
+  const defaultsPage=await defaultsContext.newPage();
+  defaultsPage.on('pageerror',error=>errors.push(error.message));
+  await defaultsPage.goto(process.env.TERRAIN_TEST_URL||'http://127.0.0.1:8001');
+  await defaultsPage.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('160 × 117'));
+  await defaultsPage.locator('#copy-selection').click();
+  assert.equal(await defaultsPage.evaluate(()=>navigator.clipboard.readText()),await defaultsPage.locator('#selection-parameters').inputValue());
+  await defaultsPage.locator('#edit-style').click();
+  await defaultsPage.locator('[data-palette="earth"]').click();
+  await defaultsPage.evaluate(()=>{
+    for(const [id,value] of [['exaggeration','4.2'],['base','5'],['detail-roads','27'],['color-roads','#123456'],['print-water','#123456']])document.getElementById(id).value=value;
+    document.getElementById('solid').checked=false;
+    document.getElementById('faceted').checked=true;
+    document.getElementById('group-boundaries').checked=true;
+    document.getElementById('feature-parks').checked=true;
+    document.getElementById('group-trails').checked=false;
+    document.getElementById('feature-at').checked=true;
+    document.getElementById('feature-buildings').checked=true;
+    document.getElementById('buildings-detailed').checked=true;
+  });
+  await defaultsPage.locator('#save-style-defaults').click();
+  assert.match(await defaultsPage.locator('#style-defaults-status').textContent(),/Saved as defaults/);
+  await defaultsPage.reload();
+  await defaultsPage.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('160 × 117'));
+  assert.equal(await defaultsPage.locator('#style-status-palette').textContent(),'Earth');
+  await defaultsPage.locator('#edit-style').click();
+  assert.equal(await defaultsPage.locator('#exaggeration').inputValue(),'4.2');
+  assert.equal(await defaultsPage.locator('#exaggeration-value').textContent(),'4.2×');
+  assert.equal(await defaultsPage.locator('#base').isDisabled(),true);
+  assert.equal(await defaultsPage.locator('#solid').isChecked(),false);
+  assert.equal(await defaultsPage.locator('#faceted').isChecked(),true);
+  assert.equal(await defaultsPage.locator('#detail-roads-value').textContent(),'27%');
+  assert.equal(await defaultsPage.locator('#color-roads').inputValue(),'#123456');
+  assert.equal(await defaultsPage.locator('#print-water').inputValue(),'#123456');
+  assert.equal(await defaultsPage.locator('#boundary-options').isVisible(),true);
+  assert.equal(await defaultsPage.locator('#feature-parks').isChecked(),true);
+  assert.equal(await defaultsPage.locator('#trail-options').isVisible(),false);
+  assert.equal(await defaultsPage.locator('#feature-at').isChecked(),true);
+  assert.equal(await defaultsPage.locator('#building-options').isVisible(),true);
+  assert.equal(await defaultsPage.locator('#buildings-detailed').isChecked(),true);
+  assert.doesNotMatch(await defaultsPage.locator('#style-status-features').textContent(),/AT/);
+  await defaultsPage.locator('[data-palette="desert"]').click();
+  await defaultsPage.reload();
+  await defaultsPage.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('160 × 117'));
+  assert.equal(await defaultsPage.locator('#style-status-palette').textContent(),'Earth','Unsaved edits must not replace saved defaults');
+  assert.deepEqual(errors,[]);
+  await defaultsContext.close();
   await browser.close();
-  console.log('Browser checks passed: two-point alignment, ZIP navigation, eight feature layers including raised buildings, water islands, ratio orientation toggles, Print palette and shared colors, discrete GLB colors, native four-part 3MF, removal of smoothing, rotated extraction, downloads, and desktop/mobile layout.');
+  console.log('Browser checks passed: two-point alignment, ZIP navigation, nine feature layers in Boundaries and Trails submenus, raised and 3D buildings, water islands, ratio orientation toggles, Print palette and shared colors, discrete GLB colors, native four-part 3MF, removal of smoothing, rotated extraction, downloads, and desktop/mobile layout.');
 }
 
 main().catch(error=>{console.error(error);process.exit(1);});

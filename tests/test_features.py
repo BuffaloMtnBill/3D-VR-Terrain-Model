@@ -181,7 +181,7 @@ def test_road_and_water_classification_supports_detail_filtering():
     result = prepare_features({"elements": features}, bounds)
     assert result["layers"]["roads"][0]["kind"] == "primary"
     assert {feature["kind"] for feature in result["layers"]["water"]} == {"stream", "river"}
-    assert result["schema_version"] == 3
+    assert result["schema_version"] == 4
 
 
 @pytest.mark.parametrize("detail", [-1, 101, True, "50", float("nan")])
@@ -310,7 +310,7 @@ def test_appalachian_trail_relations_and_named_ways_are_clipped():
     assert classify({"type": "route", "route": "hiking", "ref": "AT"}) == ["at"]
     assert classify({"route": "hiking", "name": "Appalachian National Scenic Trail (Tennessee)"}) == ["at"]
     assert classify({"highway": "path", "name": "Appalachian Trail"}) == ["at"]
-    assert classify({"highway": "path", "name": "Appalachian Trail Approach"}) == []
+    assert classify({"highway": "path", "name": "Appalachian Trail Approach"}) == ["trails"]
     assert classify({"route": "hiking", "ref": "OTHER"}) == []
     assert classify({"route": "bus", "ref": "AT"}) == []
     relation = {"type": "relation", "id": 123, "tags": {"type": "route", "route": "hiking", "ref": "AT"},
@@ -357,3 +357,66 @@ def test_place_search_errors_are_explicit(tmp_path, monkeypatch, application):
     monkeypatch.setattr(application.extensions["terrain"]["places"], "lookup", lambda query: {"query": query, "name": "Asheville"})
     http = application.test_client()
     assert http.get("/api/location/search?q=Asheville%2C%20NC").get_json() == {"query": "Asheville, NC", "name": "Asheville"}
+
+
+def test_other_trails_exclude_sidewalks_and_appalachian_trail_members():
+    bounds = Bounds(0, 0, .01, .01)
+    assert classify({"highway": "bridleway"}) == ["trails"]
+    assert classify({"highway": "footway", "footway": "sidewalk"}) == []
+    assert classify({"highway": "track"}) == ["roads"]
+    line = [(0, .004), (.01, .004)]
+    relation = {"type": "relation", "id": 9, "tags": {"route": "hiking", "ref": "AT"},
+                "members": [{"type": "way", "ref": 1, "geometry": [{"lon": x, "lat": y} for x, y in line]}]}
+    result = prepare_features({"elements": [osm_way(1, {"highway": "path"}, line), relation,
+                                            osm_way(2, {"highway": "path", "name": "Ridge Loop"}, [(0, .006), (.01, .006)])]}, bounds)
+    assert [feature["id"] for feature in result["layers"]["trails"]] == ["way/2"]
+    assert [feature["id"] for feature in result["layers"]["at"]] == ["relation/9"]
+    assert 'way["highway"~"^(path|footway|bridleway)$"]' in overpass_query(bounds)
+
+
+def test_building_dimensions_follow_simple_3d_building_tags():
+    from terrain_app.buildings import building_dimensions
+    plain = building_dimensions({"building": "yes"})
+    assert (plain["height_m"], plain["height_source"], plain["roof_shape"], plain["roof_height_m"]) == (6, "assumed", "flat", 0)
+    tower = building_dimensions({"building:levels": "4", "roof:levels": "1", "building:min_level": "2", "roof:shape": "Hipped", "roof:orientation": "across"})
+    assert tower == {"height_m": 15, "height_source": "building:levels", "min_height_m": 6, "roof_shape": "hipped", "roof_height_m": 3, "roof_across": True}
+    assert building_dimensions({"height": "10", "roof:shape": "gabled", "roof:height": "40"})["roof_height_m"] == 10
+    assert building_dimensions({"height": "10", "min_height": "12"})["min_height_m"] == 0
+    assert building_dimensions({"roof:shape": "skillion", "roof:direction": "SW"})["roof_direction_deg"] == 225
+    assert building_dimensions({"roof:shape": "zigzag"})["roof_shape"] == "flat"
+
+
+@pytest.mark.parametrize("shape,roof_volume", [("flat", 600), ("gabled", 300), ("pyramidal", 200), ("hipped", 250), ("skillion", 300)])
+def test_roof_shapes_are_closed_solids_with_exact_volumes(shape, roof_volume):
+    import manifold3d as mf
+    from shapely.geometry import box
+    from terrain_app.buildings import building_dimensions, polygon_solid
+    dimensions = building_dimensions({"height": "9", "roof:shape": shape, "roof:height": "3"})
+    solid = polygon_solid(box(0, 0, 20, 10), dimensions)
+    assert solid.status() == mf.Error.NoError
+    assert solid.volume() == pytest.approx(200*6+roof_volume)
+    concave = polygon_solid(Polygon([(0, 0), (20, 0), (20, 8), (8, 8), (8, 20), (0, 20)]), dimensions)
+    assert concave.status() == mf.Error.NoError and 256*6 < concave.volume() <= 256*9+1e-6
+
+
+def test_building_parts_replace_their_outline_in_3d_mode():
+    bounds = Bounds(0, 0, .01, .01)
+    square = lambda a, b: [(a, a), (b, a), (b, b), (a, b), (a, a)]
+    elements = [osm_way(1, {"building": "yes", "height": "30"}, square(.002, .008)),
+                osm_way(2, {"building:part": "yes", "height": "10"}, square(.002, .005)),
+                osm_way(3, {"building:part": "yes", "height": "30", "min_height": "10", "roof:shape": "pyramidal", "roof:height": "5"}, square(.003, .004)),
+                osm_way(4, {"building": "house", "roof:shape": "gabled", "height": "8"}, [(.0085, .0085), (.011, .0085), (.011, .0095), (.0085, .0095), (.0085, .0085)]),
+                osm_way(5, {"building": "garage"}, square(.0001, .0005))]
+    buildings = {feature["id"]: feature for feature in prepare_features({"elements": elements}, bounds)["layers"]["buildings"]}
+    assert buildings["way/1"]["has_parts"] and "mesh" not in buildings["way/1"]
+    assert buildings["way/2"]["part"] and buildings["way/2"]["parent"] == "way/1"
+    assert "mesh" not in buildings["way/5"] and "part" not in buildings["way/5"]
+    spire = np.asarray(buildings["way/3"]["mesh"]["positions"]).reshape(-1, 3)
+    assert spire[:, 2].min() == 10 and spire[:, 2].max() == 30
+    house = np.asarray(buildings["way/4"]["mesh"]["positions"]).reshape(-1, 3)
+    assert np.isfinite(house).all() and house[:, :2].min() >= 0 and house[:, 0].max() == 1  # clipped at the frame
+    assert max(buildings["way/4"]["mesh"]["indices"]) == len(house)-1
+    assert layer_options({"buildings": {"enabled": True, "color": "#FFFFFF", "detailed": True}})["buildings"]["detailed"] is True
+    for bad in ({"roads": {"enabled": True, "color": "#ffffff", "detailed": True}}, {"buildings": {"enabled": True, "color": "#ffffff", "detailed": 1}}):
+        with pytest.raises(ValueError):
+            layer_options(bad)

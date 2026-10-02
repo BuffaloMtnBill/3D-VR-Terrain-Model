@@ -24,6 +24,8 @@ let coverData=null,coverRequest=null,coverError=null;
 const coverCache=new Map();
 const tileImages = new Map();
 const SCALE = 6.4;
+const FEET_PER_METER = 1 / 0.3048;
+const METERS_PER_MILE = 1609.344;
 const number = (value, decimals=0) => Number(value).toLocaleString(undefined,{maximumFractionDigits:decimals});
 const boundsArray = bounds => [[bounds.south,bounds.west],[bounds.north,bounds.east]];
 const sameBounds = (first,second) => ['north','south','east','west'].every(key=>Math.abs(first[key]-second[key])<1e-9)&&Math.abs(rotationAngle(first)-rotationAngle(second))<1e-9;
@@ -69,6 +71,7 @@ function updateSelection(bounds, fit=false, custom=true) {
     validateBounds(bounds);
     selectionFrame.fitBounds(bounds);
     if(custom){$('place').value='custom';state.name='Custom landscape';}
+    updateSelectionParameters();
     return;
   }
   let error=null;
@@ -76,7 +79,7 @@ function updateSelection(bounds, fit=false, custom=true) {
   state.selection = {...bounds};
   state.selectionError=error;
   const {width,height} = dimensions(bounds);
-  $('selection-size').textContent = `${number(width/1000,2)} × ${number(height/1000,2)} km`;
+  $('selection-size').textContent = `${number(width*FEET_PER_METER)} × ${number(height*FEET_PER_METER)} ft`;
   $('selection-state').textContent = 'Area selected';
   if (custom) { $('place').value='custom'; state.name='Custom landscape'; }
   $('generate').disabled = state.loading||Boolean(error);
@@ -85,6 +88,7 @@ function updateSelection(bounds, fit=false, custom=true) {
   $('selection-frame').classList.toggle('invalid',Boolean(error));
   if (state.data && !sameBounds(bounds,state.data.bounds)) $('selection-state').textContent='Generate to update';
   if(error)$('selection-state').textContent='Adjust the area';
+  updateSelectionParameters();
 }
 
 function setupMap(config) {
@@ -245,8 +249,7 @@ function resizeScene() {
 }
 
 function updateSun() {
-  const angle=Number($('sun').value)*Math.PI/180;
-  $('sun-value').textContent=`${$('sun').value}°`;
+  const angle=315*Math.PI/180;
   if(sun) sun.position.set(Math.sin(angle)*6,7,-Math.cos(angle)*6);
 }
 
@@ -357,7 +360,7 @@ function buildScene(reset=false) {
   if(state.view==='map'&&mapTexture) applyMapMaterial();
   if(baseMesh) baseMesh.visible=state.view!=='elevation';
   rebuildFeatures();
-  grid.visible=$('grid').checked&&state.view!=='elevation';
+  grid.visible=state.view!=='elevation';
   updateProfileMapLine();
   if(reset) resetCamera();
   $('scene-detail').textContent=`${columns} × ${rows} points · ${number((rows-1)*(columns-1)*2)} surface faces${rotationAngle(data.bounds)?` · ${number(rotationAngle(data.bounds),1)}° selection`:''}`;
@@ -371,8 +374,8 @@ function contourInterval(range) {
 function updateLegend() {
   const data=state.data;
   const palette=state.view==='elevation'?'elevation':state.palette;
-  $('legend-low').textContent=`${number(data.surface_min_m)} m`;
-  $('legend-high').textContent=`${number(data.surface_max_m)} m`;
+  $('legend-low').textContent=`${number(data.surface_min_m*FEET_PER_METER)} ft ASL`;
+  $('legend-high').textContent=`${number(data.surface_max_m*FEET_PER_METER)} ft ASL`;
   const mapped=palette==='print';
   document.querySelector('.elevation-legend').hidden=mapped;
   $('print-legend').hidden=!mapped;
@@ -396,7 +399,7 @@ function updateLegend() {
 function updateStats() {
   const data=state.data;
   // Source statistics remain comparable while the rendered geometry changes.
-  for(const [id,value] of [['stat-low',data.min_m],['stat-high',data.max_m],['stat-range',data.max_m-data.min_m],['stat-spacing',data.grid_spacing_m]]) $(id).innerHTML=`${number(value)}<small> m</small>`;
+  for(const [id,value] of [['stat-low',data.min_m],['stat-high',data.max_m],['stat-range',data.max_m-data.min_m],['stat-spacing',data.grid_spacing_m]]) $(id).innerHTML=`${number(value*FEET_PER_METER)}<small> ft${['stat-low','stat-high'].includes(id)?' ASL':''}</small>`;
   $('landscape-title').textContent=state.loadedName||state.name;
 }
 
@@ -491,9 +494,13 @@ async function ensureCover(force=false) {
   coverRequest=request;return request.promise;
 }
 
+const featureGroups={boundaries:['borders','cities','parks'],trails:['at','trails']};
+
 function featureStyles() {
-  return Object.fromEntries(Object.keys(featureLabels).map(name=>[name,{enabled:$(`feature-${name}`).checked,color:$(`color-${name}`).value,
-    ...(['roads','water'].includes(name)?{detail:Number($(`detail-${name}`).value)}:{})}]));
+  const closed=Object.entries(featureGroups).flatMap(([group,names])=>$(`group-${group}`).checked?[]:names);
+  return Object.fromEntries(Object.keys(featureLabels).map(name=>[name,{enabled:$(`feature-${name}`).checked&&!closed.includes(name),color:$(`color-${name}`).value,
+    ...(['roads','water'].includes(name)?{detail:Number($(`detail-${name}`).value)}:{}),
+    ...(name==='buildings'?{detailed:$('buildings-detailed').checked}:{})}]));
 }
 
 function featuresEnabled() {return Object.values(featureStyles()).some(style=>style.enabled);}
@@ -504,7 +511,7 @@ function featureStatus() {
   const filtered=featureData?filterFeatures(featureData,styles,state.data):null;
   for(const name of Object.keys(featureLabels)) {
     const count=$(`feature-count-${name}`);
-    count.textContent=filtered?(filtered.counts[name]===featureData.counts[name]?number(filtered.counts[name]):`${number(filtered.counts[name])} / ${number(featureData.counts[name])}`):'';
+    count.textContent=filtered?(filtered.counts[name]===featureData.counts[name]||!['roads','water'].includes(name)?number(filtered.counts[name]):`${number(filtered.counts[name])} / ${number(featureData.counts[name])}`):'';
   }
   $('feature-status').classList.toggle('error',Boolean(featureError));
   $('feature-retry').hidden=!featureError||!featuresEnabled();
@@ -692,7 +699,7 @@ function drawProfile(pointer=null) {
   for(let index=0;index<=3;index++) {
     const py=top+index/3*chartHeight,value=high-index/3*(high-low);
     ctx.strokeStyle='#3b4835';ctx.setLineDash([3,4]);ctx.beginPath();ctx.moveTo(left,py);ctx.lineTo(width-right,py);ctx.stroke();
-    ctx.setLineDash([]);ctx.fillStyle='#b4b39a';ctx.textAlign='right';ctx.fillText(number(value),left-10,py+3);
+    ctx.setLineDash([]);ctx.fillStyle='#b4b39a';ctx.textAlign='right';ctx.fillText(number(value*FEET_PER_METER),left-10,py+3);
   }
   const gradient=ctx.createLinearGradient(0,top,0,height-bottom);gradient.addColorStop(0,'#c3c87d70');gradient.addColorStop(1,'#58704715');
   ctx.beginPath();ctx.moveTo(left,height-bottom);
@@ -701,16 +708,16 @@ function drawProfile(pointer=null) {
   ctx.beginPath();values.forEach((value,index)=>{const px=left+index/(values.length-1)*chartWidth;index?ctx.lineTo(px,y(value)):ctx.moveTo(px,y(value));});
   ctx.strokeStyle='#e6d29b';ctx.lineWidth=1.8;ctx.stroke();
   const rotated=Boolean(rotationAngle(state.data.bounds)),start=horizontal?(rotated?'Left':'W'):(rotated?'Top':'N'),end=horizontal?(rotated?'Right':'E'):(rotated?'Bottom':'S');
-  ctx.fillStyle='#b4b39a';ctx.textAlign='left';ctx.fillText(`${start} · 0 km`,left,height-6);
-  ctx.textAlign='center';ctx.fillText(`${number(distance/2000,1)} km`,left+chartWidth/2,height-6);
-  ctx.textAlign='right';ctx.fillText(`${number(distance/1000,1)} km · ${end}`,width-right,height-6);
-  $('profile-distance').textContent=`${number(distance/1000,2)} km across`;
+  ctx.fillStyle='#b4b39a';ctx.textAlign='left';ctx.fillText(`${start} · 0 mi`,left,height-6);
+  ctx.textAlign='center';ctx.fillText(`${number(distance/(2*METERS_PER_MILE),1)} mi`,left+chartWidth/2,height-6);
+  ctx.textAlign='right';ctx.fillText(`${number(distance/METERS_PER_MILE,1)} mi · ${end}`,width-right,height-6);
+  $('profile-distance').textContent=`${number(distance/METERS_PER_MILE,2)} mi across`;
   if(pointer!==null) {
     const fraction=clamp((pointer-left)/chartWidth,0,1),index=fraction*(values.length-1),a=Math.floor(index),b=Math.min(a+1,values.length-1);
     const value=values[a]*(1-(index-a))+values[b]*(index-a),px=left+fraction*chartWidth,py=y(value);
     ctx.strokeStyle='#d4b47d';ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(px,top);ctx.lineTo(px,height-bottom);ctx.stroke();ctx.setLineDash([]);
     ctx.fillStyle='#ffedb9';ctx.beginPath();ctx.arc(px,py,3,0,Math.PI*2);ctx.fill();
-    $('profile-tooltip').textContent=`${number(value,1)} m · ${number(fraction*distance/1000,2)} km`;
+    $('profile-tooltip').textContent=`${number(value*FEET_PER_METER,1)} ft ASL · ${number(fraction*distance/METERS_PER_MILE,2)} mi`;
     $('profile-tooltip').style.left=`${clamp(px-60,2,width-145)}px`;$('profile-tooltip').hidden=false;
   }
 }
@@ -803,7 +810,59 @@ async function screenshot() {
   canvas.toBlob(blob=>download(blob,'terrain-preview.png'),'image/png');
 }
 
+function updateSelectionParameters() {
+  if(!state.selection)return;
+  const bounds={...state.selection,rotation_deg:rotationAngle(state.selection)};
+  $('selection-parameters').value=JSON.stringify({name:state.name,label:state.name,bounds},null,2);
+  $('copy-selection-status').textContent='';
+}
+
+const styleDefaultsKey='terrain-style-defaults';
+function styleInputs() {
+  return [...document.querySelectorAll('#style-editor input[id], [data-print-color]')];
+}
+function restoreStyleDefaults() {
+  try {
+    const saved=JSON.parse(localStorage.getItem(styleDefaultsKey)||'null');
+    if(saved?.version!==1)return;
+    if(['alpine','earth','desert','print'].includes(saved.palette))state.palette=saved.palette;
+    for(const input of styleInputs()) {
+      const value=saved.controls?.[input.id];
+      if(input.type==='checkbox'&&typeof value==='boolean')input.checked=value;
+      else if(input.type==='color'&&/^#[0-9a-f]{6}$/i.test(value))input.value=value;
+      else if(input.type==='range'&&typeof value==='number'&&Number.isFinite(value)&&value>=Number(input.min)&&value<=Number(input.max))input.value=value;
+    }
+    $('style-defaults-status').textContent='Your saved defaults are loaded.';
+  } catch { /* Invalid or unavailable local storage falls back to built-in defaults. */ }
+  document.querySelectorAll('[data-palette]').forEach(button=>{
+    const active=button.dataset.palette===state.palette;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
+  });
+  $('exaggeration-value').textContent=`${Number($('exaggeration').value).toFixed(1)}×`;
+  $('base-value').textContent=`${$('base').value}%`;
+  $('base').disabled=!$('solid').checked;
+  for(const name of ['roads','water'])$(`detail-${name}-value`).textContent=`${$(`detail-${name}`).value}%`;
+}
+
 function wireControls() {
+  $('copy-selection').addEventListener('click',async()=>{
+    const field=$('selection-parameters');
+    try {
+      await navigator.clipboard.writeText(field.value);
+      $('copy-selection-status').textContent='Parameters copied.';
+    } catch {
+      field.focus();field.select();
+      $('copy-selection-status').textContent='Select and copy the highlighted parameters.';
+    }
+  });
+  $('save-style-defaults').addEventListener('click',()=>{
+    const controls=Object.fromEntries(styleInputs().map(input=>[input.id,input.type==='checkbox'?input.checked:input.type==='range'?Number(input.value):input.value]));
+    try {
+      localStorage.setItem(styleDefaultsKey,JSON.stringify({version:1,palette:state.palette,controls}));
+      $('style-defaults-status').textContent='Saved as defaults for this browser.';
+    } catch {
+      $('style-defaults-status').textContent='Unable to save defaults. Allow browser storage and try again.';
+    }
+  });
   $('edit-style').addEventListener('click',()=>{
     const bounds=state.selection?{...state.selection}:null;
     const expanded=$('edit-style').getAttribute('aria-expanded')!=='true';
@@ -833,6 +892,7 @@ function wireControls() {
     const saved=JSON.parse(localStorage.getItem('terrain-print-palette')||'null');
     for(const name of Object.keys(coverLabels))if(/^#[0-9a-f]{6}$/i.test(saved?.[name]))$(`print-${name}`).value=saved[name];
   } catch { /* Saved colors are optional. */ }
+  restoreStyleDefaults();
   updatePrintPalette();
   $('edit-print-palette').addEventListener('click',()=>$('print-palette-dialog').showModal());
   $('apply-print-palette').addEventListener('click',()=>$('print-palette-dialog').close());
@@ -841,12 +901,24 @@ function wireControls() {
     try{localStorage.setItem('terrain-print-palette',JSON.stringify(printColors()));}catch{/* Optional persistence. */}
     updatePrintPalette();if(state.palette==='print')buildScene();
   }));
-  document.querySelectorAll('[data-feature]').forEach(input=>input.addEventListener('change',()=>{
+  const featuresChanged=()=>{
+    $('building-options').hidden=!$('feature-buildings').checked;
+    for(const [group,panel] of [['boundaries','boundary-options'],['trails','trail-options']]) {
+      $(panel).hidden=!$(`group-${group}`).checked;$(`group-${group}`).setAttribute('aria-expanded',String($(`group-${group}`).checked));
+    }
     syncFeatureVisibility();featureError=null;rebuildFeatures();updatePrintPalette();
     if(featuresEnabled())ensureFeatures().catch(()=>{});
-  }));
+  };
+  document.querySelectorAll('[data-feature]').forEach(input=>input.addEventListener('change',featuresChanged));
+  for(const [group,names] of Object.entries(featureGroups))$(`group-${group}`).addEventListener('change',event=>{
+    // Opening a submenu with nothing chosen would show no change on the model.
+    if(event.target.checked&&!names.some(name=>$(`feature-${name}`).checked))names.forEach(name=>{$(`feature-${name}`).checked=true;});
+    featuresChanged();
+  });
+  $('buildings-detailed').addEventListener('change',featuresChanged);
   document.querySelectorAll('[data-feature-color]').forEach(input=>input.addEventListener('input',()=>{rebuildFeatures();updatePrintPalette();}));
   $('feature-retry').addEventListener('click',()=>ensureFeatures(true).catch(()=>{}));
+  featuresChanged();
   featureStatus();
   $('generate').addEventListener('click',generateTerrain);
   $('help-button').addEventListener('click',()=>$('help-dialog').showModal());
@@ -865,10 +937,9 @@ function wireControls() {
   document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>changeView(button.dataset.view)));
   $('exaggeration').addEventListener('input',()=>{$('exaggeration-value').textContent=`${Number($('exaggeration').value).toFixed(1)}×`;buildScene();updateExportDimensions();});
   $('base').addEventListener('input',()=>{$('base-value').textContent=`${$('base').value}%`;buildScene();updateExportDimensions();});
-  for(const id of ['solid','faceted','grid']) $(id).addEventListener('change',()=>{buildScene();updateExportDimensions();});
+  for(const id of ['solid','faceted']) $(id).addEventListener('change',()=>{buildScene();updateExportDimensions();});
   $('solid').addEventListener('change',()=>{$('base').disabled=!$('solid').checked;updatePrintPalette();});
   $('contours').addEventListener('change',()=>{if(topMesh?.material.userData.shader)topMesh.material.userData.shader.uniforms.showContours.value=$('contours').checked?1:0;});
-  $('sun').addEventListener('input',updateSun);
   $('reset-camera').addEventListener('click',resetCamera);
   $('rotate').addEventListener('click',()=>{if(!sceneReady)return;controls.autoRotate=!controls.autoRotate;$('rotate').setAttribute('aria-pressed',String(controls.autoRotate));});
   $('screenshot').addEventListener('click',screenshot);
