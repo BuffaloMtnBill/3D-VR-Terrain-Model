@@ -29,7 +29,8 @@ def cover(terrain):
         return {"outer": [[left, 0], [right, 0], [right, 1], [left, 1], [left, 0]], "holes": []}
     return {"regions": {name: [region(index/6, (index+1)/6)] for index, name in enumerate(COVER_NAMES)},
             "counts": dict.fromkeys(COVER_NAMES, 1), "bounds": terrain.bounds.to_dict(),
-            "source": "© OpenStreetMap contributors", "source_url": "https://www.openstreetmap.org/copyright"}
+            "source": "© OpenStreetMap contributors", "source_url": "https://www.openstreetmap.org/copyright",
+            "schema_version": 2}
 
 
 @pytest.mark.parametrize("tags,name", [({"natural": "wood"}, "dark_foliage"), ({"landuse": "forest"}, "dark_foliage"),

@@ -72,10 +72,10 @@ function updateSelectionSize() {
   $('selection-size').textContent = `${number(width*units().height)} × ${number(height*units().height)} ${units().label}`;
 }
 
-function updateSelection(bounds, fit=false, custom=true) {
+function updateSelection(bounds, fit=false, custom=true, zoom=null) {
   if(fit) {
     validateBounds(bounds);
-    selectionFrame.fitBounds(bounds);
+    selectionFrame.fitBounds(bounds,zoom);
     if(custom){$('place').value='custom';state.name='Custom landscape';}
     updateSelectionParameters();
     return;
@@ -141,7 +141,7 @@ function setupMap(config) {
   $('reset-frame').addEventListener('click',()=>selectionFrame.reset());
   $('place').addEventListener('change',event=>{
     const preset=presets[event.target.value];
-    if(preset) { state.name=preset.name; updateSelection(preset.bounds,true,false); }
+    if(preset) { state.name=preset.name; updateSelection(preset.bounds,true,false,preset.zoom); applyRenderingSettings(preset.settings); }
   });
   $('place-form').addEventListener('submit',async event=>{
     event.preventDefault();
@@ -838,7 +838,8 @@ async function screenshot() {
 function updateSelectionParameters() {
   if(!state.selection)return;
   const bounds={...state.selection,rotation_deg:rotationAngle(state.selection)};
-  $('selection-parameters').value=JSON.stringify(bounds,null,2);
+  // A complete Famous landscapes entry apart from its name: area, map zoom, and right-hand rendering settings.
+  $('selection-parameters').value=JSON.stringify({bounds,zoom:map?Number(map.getZoom().toFixed(2)):undefined,settings:renderingSettings()},null,2);
   $('copy-selection-status').textContent='';
 }
 
@@ -846,27 +847,51 @@ const styleDefaultsKey='terrain-style-defaults';
 function styleInputs() {
   return [...document.querySelectorAll('#terrain-controls input[id], #terrain-controls select[id], #style-editor input[id], [data-print-color]')];
 }
-function restoreStyleDefaults() {
-  try {
-    const saved=JSON.parse(localStorage.getItem(styleDefaultsKey)||'null');
-    if(saved?.version!==1)return;
-    if(['alpine','earth','desert','print'].includes(saved.palette))state.palette=saved.palette;
-    for(const input of styleInputs()) {
-      const value=saved.controls?.[input.id];
-      if(input.tagName==='SELECT'){if([...input.options].some(option=>option.value===value))input.value=value;}
-      else if(input.type==='checkbox'&&typeof value==='boolean')input.checked=value;
-      else if(input.type==='color'&&/^#[0-9a-f]{6}$/i.test(value))input.value=value;
-      else if(input.type==='range'&&typeof value==='number'&&Number.isFinite(value)&&value>=Number(input.min)&&value<=Number(input.max))input.value=value;
-    }
-    $('style-defaults-status').textContent='Your saved defaults are loaded.';
-  } catch { /* Invalid or unavailable local storage falls back to built-in defaults. */ }
+const controlValues=inputs=>Object.fromEntries(inputs.map(input=>[input.id,input.type==='checkbox'?input.checked:input.type==='range'?Number(input.value):input.value]));
+// Only well-formed values for existing controls are applied; anything else keeps its current setting.
+function applyControls(inputs,saved) {
+  if(['alpine','earth','desert','print'].includes(saved?.palette))state.palette=saved.palette;
+  for(const input of inputs) {
+    const value=saved?.controls?.[input.id];
+    if(input.tagName==='SELECT'){if([...input.options].some(option=>option.value===value))input.value=value;}
+    else if(input.type==='checkbox'&&typeof value==='boolean')input.checked=value;
+    else if(input.type==='color'&&/^#[0-9a-f]{6}$/i.test(value))input.value=value;
+    else if(input.type==='range'&&typeof value==='number'&&Number.isFinite(value)&&value>=Number(input.min)&&value<=Number(input.max))input.value=value;
+  }
   document.querySelectorAll('[data-palette]').forEach(button=>{
     const active=button.dataset.palette===state.palette;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
   });
+  for(const name of ['roads','water'])$(`detail-${name}-value`).textContent=`${$(`detail-${name}`).value}%`;
+}
+
+// The right-hand column: palette, map features, their colors and detail, and the print palette.
+function renderingInputs() {
+  return [...document.querySelectorAll('#style-editor input[id], [data-print-color]')];
+}
+function renderingSettings() {
+  return {palette:state.palette,controls:controlValues(renderingInputs())};
+}
+function applyRenderingSettings(settings) {
+  if(!settings||typeof settings!=='object')return;
+  applyControls(renderingInputs(),settings);
+  // The feature checkboxes' own handler opens submenus, rebuilds layers, and fetches what is newly needed.
+  $('feature-roads').dispatchEvent(new Event('change',{bubbles:true}));
+  if(state.palette==='print'){if(state.view==='map')changeView('relief');ensureCover().catch(()=>{});}
+  updatePrintPalette();buildScene();updateSelectionParameters();
+}
+
+function restoreStyleDefaults() {
+  try {
+    const saved=JSON.parse(localStorage.getItem(styleDefaultsKey)||'null');
+    if(saved?.version===1) {
+      applyControls(styleInputs(),saved);
+      $('style-defaults-status').textContent='Your saved defaults are loaded.';
+    }
+  } catch { /* Invalid or unavailable local storage falls back to built-in defaults. */ }
   $('exaggeration-value').textContent=`${Number($('exaggeration').value).toFixed(1)}×`;
   $('base-value').textContent=`${$('base').value}%`;
   updateReliefControls();
-  for(const name of ['roads','water'])$(`detail-${name}-value`).textContent=`${$(`detail-${name}`).value}%`;
+  updateSelectionParameters();
 }
 
 function setUnits(value) {
@@ -893,6 +918,8 @@ function reloadSurface() {
 }
 
 function wireControls() {
+  // Keep the copyable parameters in step with the rendering settings.
+  for(const type of ['input','change','click'])for(const id of ['style-sidebar','print-palette-dialog'])$(id).addEventListener(type,updateSelectionParameters);
   $('relief-method').addEventListener('change',reloadSurface);
   $('relief-strength').addEventListener('input',updateReliefControls);
   $('relief-strength').addEventListener('change',reloadSurface);
@@ -901,18 +928,30 @@ function wireControls() {
     setUnits(button.dataset.units);
   }));
   try{setUnits(localStorage.getItem('terrain-units'));}catch{setUnits('ft');}
-  $('copy-selection').addEventListener('click',async()=>{
+  $('copy-selection').addEventListener('click',async event=>{
+    event.preventDefault();  // the button sits in the summary; copying must not open or close the panel
     const field=$('selection-parameters');
-    try {
-      await navigator.clipboard.writeText(field.value);
-      $('copy-selection-status').textContent='Parameters copied.';
-    } catch {
-      field.focus();field.select();
-      $('copy-selection-status').textContent='Select and copy the highlighted parameters.';
+    let copied=false;
+    try { await navigator.clipboard.writeText(field.value); copied=true; }
+    catch {
+      // Clipboard access is unavailable on plain-HTTP LAN addresses; copy through a temporary field instead.
+      const helper=document.createElement('textarea');
+      helper.value=field.value;helper.setAttribute('readonly','');helper.style.cssText='position:fixed;top:0;left:0;opacity:0';
+      document.body.append(helper);helper.select();
+      try{copied=document.execCommand('copy');}catch{copied=false;}
+      helper.remove();
+    }
+    if(copied) {
+      $('copy-selection-label').textContent='Copied ✓';
+      setTimeout(()=>{$('copy-selection-label').textContent='Copy';},1800);
+      $('copy-selection-status').textContent='Parameters copied to the clipboard.';
+    } else {
+      $('copy-selection').closest('details').open=true;field.focus();field.select();
+      $('copy-selection-status').textContent='Copying was blocked. The parameters are selected; press Ctrl+C.';
     }
   });
   $('save-style-defaults').addEventListener('click',()=>{
-    const controls=Object.fromEntries(styleInputs().map(input=>[input.id,input.type==='checkbox'?input.checked:input.type==='range'?Number(input.value):input.value]));
+    const controls=controlValues(styleInputs());
     try {
       localStorage.setItem(styleDefaultsKey,JSON.stringify({version:1,palette:state.palette,controls}));
       $('style-defaults-status').textContent='Saved as defaults for this browser.';

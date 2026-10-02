@@ -19,7 +19,7 @@ ROAD_DETAIL = {"motorway": 0, "motorway_link": 0, "trunk": 0, "trunk_link": 0, "
                "secondary": 25, "secondary_link": 25, "tertiary": 50, "tertiary_link": 50, "unclassified": 75, "residential": 75}
 INLAY_DEPTH = .6  # mm: three layers at a typical 0.2 mm layer height
 MIN_LINE_WIDTH = .6
-MAX_PRINT_SEGMENTS = 100_000
+MAX_PRINT_SEGMENTS = 200_000
 
 
 def selected_features(data, styles, terrain):
@@ -35,7 +35,7 @@ def selected_features(data, styles, terrain):
         elif name == "water" and detail < 100:
             def visible(feature):
                 kind = feature.get("kind")
-                if kind in {"river", "riverbank"}:
+                if kind in {"river", "riverbank", "sea"}:
                     return True
                 if kind in {"canal", "stream", "ditch", "drain"}:
                     return detail >= {"canal": 25, "stream": 80, "ditch": 100, "drain": 100}[kind]

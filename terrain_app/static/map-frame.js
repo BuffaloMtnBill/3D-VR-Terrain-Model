@@ -121,15 +121,17 @@ export class SelectionFrame {
     this.onChange(this.bounds(),false);
   }
 
-  fitBounds(bounds) {
+  // An optional map zoom shows the area smaller, with more surroundings, than the closest fit.
+  fitBounds(bounds,preferredZoom=null) {
     this.cancelAlignment();
     if(this.pending!==null){cancelAnimationFrame(this.pending);this.pending=null;}
     const northwest=this.map.project([bounds.north,bounds.west],0),southeast=this.map.project([bounds.south,bounds.east],0);
     const span=southeast.subtract(northwest),size=this.map.getSize(),angle=rotationAngle(bounds),radians=angle*Math.PI/180;
     const rotatedWidth=Math.abs(Math.cos(radians))*span.x+Math.abs(Math.sin(radians))*span.y;
     const rotatedHeight=Math.abs(Math.sin(radians))*span.x+Math.abs(Math.cos(radians))*span.y;
-    const zoom=Math.max(this.map.getMinZoom(),Math.min(this.map.getMaxZoom(),
+    const fitted=Math.max(this.map.getMinZoom(),Math.min(this.map.getMaxZoom(),
       Math.log2(Math.min((size.x-78)/rotatedWidth,(size.y-86)/rotatedHeight))));
+    const zoom=Number.isFinite(preferredZoom)?Math.max(this.map.getMinZoom(),Math.min(fitted,preferredZoom)):fitted;
     const scale=2**zoom,width=span.x*scale,height=span.y*scale;
     const frameCenter={x:54+rotatedWidth*scale/2,y:24+rotatedHeight*scale/2};
     this.frame={left:frameCenter.x-width/2,top:frameCenter.y-height/2,width,height,angle};

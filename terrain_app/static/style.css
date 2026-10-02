@@ -114,6 +114,11 @@ dialog li strong{color:var(--tan)}
 
 .view-panes { align-items: start; }
 .selection-parameters { padding: 12px 18px 16px; border-top: 1px solid var(--line); }
-.selection-parameters summary { cursor: pointer; font-size: 12px; }
+.selection-parameters summary { cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 10px; }
+.selection-parameters summary>span { flex: 1; }
+.selection-parameters summary>span::before { content: "▸"; display: inline-block; width: 14px; }
+.selection-parameters[open] summary>span::before { content: "▾"; }
+.selection-parameters summary::-webkit-details-marker { display: none; }
+.copy-button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 11px; }
 .selection-parameters textarea { width: 100%; box-sizing: border-box; resize: vertical; font: 11px/1.5 monospace; margin: 8px 0; color: inherit; background: #18251c; border: 1px solid #4a513d; border-radius: 6px; padding: 10px; }
 #save-style-defaults { margin-top: 18px; }

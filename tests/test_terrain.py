@@ -516,3 +516,16 @@ def test_terrain_endpoint_returns_shaped_and_true_heights(application):
     assert client.get("/api/terrain/example?relief=local&relief_strength=500").status_code == 400
     response = client.post("/api/export/example", json={"format": "metadata", "relief": "local", "relief_strength": 75})
     assert response.get_json()["model_options"]["relief"] == "local"
+
+
+def test_famous_landscapes_have_valid_areas_and_optional_rendering_settings(application):
+    config = application.test_client().get("/api/config").get_json()
+    for key, place in PRESETS.items():
+        assert place["name"] and place["label"]
+        Bounds.from_dict(place["bounds"])
+        assert config["presets"][key] == place  # zoom and settings reach the browser unchanged
+        if "zoom" in place:
+            assert 2 <= place["zoom"] <= 18
+        if "settings" in place:
+            assert place["settings"]["palette"] in {"alpine", "earth", "desert", "print"}
+            assert all(isinstance(value, (bool, int, float, str)) for value in place["settings"]["controls"].values())

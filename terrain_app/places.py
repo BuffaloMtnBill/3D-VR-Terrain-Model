@@ -1,4 +1,14 @@
-"""Named selection areas shared by the map UI and bundled terrain loader."""
+"""Named selection areas shared by the map UI and bundled terrain loader.
+
+Each entry needs a name, a label for the Famous landscapes list, and bounds. It may also
+carry what Current box parameters > Copy parameters produces in the app:
+
+    "zoom": the map zoom to show the area at (never closer than the area fits), and
+    "settings": {"palette": ..., "controls": {...}}, the right-hand rendering settings
+        (map features, colors, detail, 3D buildings, print palette) applied on selection.
+
+Entries without settings leave the current rendering settings unchanged.
+"""
 
 DEFAULT_PLACE = "roan"
 PRESETS = {

@@ -10,7 +10,7 @@ import requests
 from shapely import contains_xy
 from shapely.geometry import Polygon
 
-from .features import MAX_POINTS, MAX_RESPONSE_BYTES, OVERPASS_URL, element_polygons, paths
+from .features import MAX_ELEMENTS, MAX_POINTS, MAX_RESPONSE_BYTES, OVERPASS_URL, QUERY_SETTINGS, REQUEST_TIMEOUT, coastline_paths, encode_polygons, sea_geometry, element_polygons, paths
 from .services import USER_AGENT, cache_json, cached_json, response_json
 
 COVER_NAMES = ("dark_foliage", "light_foliage", "dirt", "snow", "water", "buildings")
@@ -52,11 +52,18 @@ def prepare_cover(data, bounds):
     elements = data.get("elements")
     if not isinstance(elements, list) or data.get("remark"):
         raise ValueError("The surface map did not finish. Retry or select a smaller area.")
-    if len(elements) > 20_000:
+    if len(elements) > MAX_ELEMENTS:
         raise ValueError("There are too many mapped surfaces. Select a smaller area.")
     regions, seen, points = {name: [] for name in COVER_NAMES}, set(), 0
+    coastlines = []
     for element in elements:
         if not isinstance(element, dict):
+            continue
+        coast = coastline_paths(element, bounds)
+        if coast and ("way", element.get("id")) not in seen:
+            seen.add(("way", element.get("id")))
+            points += sum(len(path) for path in coast)
+            coastlines.extend(coast)
             continue
         category = cover_class(element.get("tags"))
         identifier = (element.get("type"), element.get("id"))
@@ -69,9 +76,10 @@ def prepare_cover(data, bounds):
         if points > MAX_POINTS:
             raise ValueError("The surface map is too detailed. Select a smaller area.")
         regions[category].extend(element_polygons(element, bounds))
+    regions["water"].extend(encode_polygons(sea_geometry(coastlines)))  # open sea is bounded by coastlines
     return {"regions": regions, "counts": {name: len(regions[name]) for name in COVER_NAMES}, "bounds": bounds.to_dict(),
             "source": "© OpenStreetMap contributors", "source_url": "https://www.openstreetmap.org/copyright",
-            "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+            "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "schema_version": 2}
 
 
 def face_classes(cover, rows, columns):
@@ -96,13 +104,14 @@ def face_classes(cover, rows, columns):
 def cover_query(bounds):
     extent = bounds.geographic_extent
     bbox = ",".join(f"{v:.8f}" for v in (extent.south, extent.west, extent.north, extent.east))
-    return f'''[out:json][timeout:25][maxsize:67108864];
+    return f'''{QUERY_SETTINGS};
 (
  wr["natural"~"^(wood|grassland|scrub|heath|wetland|bare_rock|scree|shingle|sand|beach|mud|glacier|water)$"]({bbox});
  wr["landuse"~"^(forest|grass|meadow|orchard|vineyard|farmland|reservoir|quarry|brownfield|construction)$"]({bbox});
  wr["landcover"~"^(trees|grass|snow)$"]({bbox});
  wr["leisure"~"^(park|garden|golf_course)$"]({bbox});
  wr["waterway"="riverbank"]({bbox});
+ way["natural"="coastline"]({bbox});
  wr["building"]["building"!="no"]({bbox});
 ); out geom qt;'''
 
@@ -118,11 +127,11 @@ class LandCoverClient:
         key = hashlib.sha256(json.dumps(bounds.to_dict(), sort_keys=True).encode()).hexdigest()
         path = self.cache_dir / f"{key}.json"
         result = cached_json(path, 7*86400, MAX_RESPONSE_BYTES)
-        if isinstance(result, dict) and result.get("bounds") == bounds.to_dict() and set(result.get("regions", {})) == set(COVER_NAMES):
+        if isinstance(result, dict) and result.get("schema_version") == 2 and result.get("bounds") == bounds.to_dict() and set(result.get("regions", {})) == set(COVER_NAMES):
             return result
         try:
             with requests.post(self.url, data={"data": cover_query(bounds)}, headers={"User-Agent": USER_AGENT},
-                               timeout=(8, 35), stream=True) as response:
+                               timeout=REQUEST_TIMEOUT, stream=True) as response:
                 data = response_json(response, MAX_RESPONSE_BYTES)
         except requests.RequestException:
             raise ValueError("The surface map could not load. The service may be busy; retry or check your connection.") from None

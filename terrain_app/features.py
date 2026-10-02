@@ -8,7 +8,7 @@ import time
 
 import numpy as np
 import requests
-from shapely import make_valid
+from shapely import contains_xy, make_valid
 from shapely.geometry import LineString, Polygon, box
 from shapely.ops import polygonize, unary_union
 from shapely.strtree import STRtree
@@ -19,8 +19,11 @@ from .services import USER_AGENT, cache_json, cached_json, response_json
 
 LAYER_NAMES = ("roads", "railways", "borders", "water", "cities", "parks", "buildings", "at", "trails")
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-MAX_RESPONSE_BYTES = 20_000_000
-MAX_POINTS = 100_000
+MAX_RESPONSE_BYTES = 40_000_000
+MAX_POINTS = 200_000
+MAX_ELEMENTS = 40_000
+QUERY_SETTINGS = "[out:json][timeout:60][maxsize:134217728]"  # seconds and bytes allowed on the Overpass server
+REQUEST_TIMEOUT = (8, 75)  # connect, read: longer than the server-side query timeout
 ROADS = {"motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential",
          "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link",
          "living_street", "service", "pedestrian", "track", "road"}
@@ -187,6 +190,44 @@ def element_polygons(element, bounds):
     return encode_polygons(element_geometry(element, bounds))
 
 
+def coastline_paths(element, bounds):
+    """Selection-space coastline ways, kept whole so they can divide the selection into land and sea."""
+    if element.get("type") != "way" or (element.get("tags") or {}).get("natural") != "coastline":
+        return []
+    return [to_selection(bounds, path) for path in paths(element.get("geometry"))]
+
+
+def sea_geometry(coastlines):
+    """The part of the selection that is sea, from OSM coastlines.
+
+    Open sea is not mapped as water areas: coastline ways run with land on their left and
+    water on their right. The coastlines cut the selection into pieces; each piece is sea
+    when more coastline length has it on the water side than on the land side. With no
+    coastline crossing the selection, nothing can be decided and it is left as land.
+    """
+    lines = [LineString(path) for path in coastlines if len(path) >= 2]
+    if not lines:
+        return Polygon()
+    inside = unary_union(lines).intersection(CLIP)
+    segments = [np.asarray(line.coords) for line in parts(inside, "LineString")]
+    if not segments:
+        return Polygon()
+    starts = np.concatenate([segment[:-1] for segment in segments])
+    steps = np.concatenate([np.diff(segment, axis=0) for segment in segments])
+    lengths = np.hypot(steps[:, 0], steps[:, 1])
+    starts, steps, lengths = starts[lengths > 0], steps[lengths > 0], lengths[lengths > 0]
+    # Rows run north to south here, so the water (right-hand) side of a step (du, dv) is (-dv, du).
+    offsets = np.column_stack((-steps[:, 1], steps[:, 0]))/lengths[:, None]*1e-6
+    water_side, land_side = starts+steps/2+offsets, starts+steps/2-offsets
+    sea = []
+    for piece in polygonize(unary_union([CLIP.boundary, inside])):
+        water = lengths[contains_xy(piece, water_side[:, 0], water_side[:, 1])].sum()
+        land = lengths[contains_xy(piece, land_side[:, 0], land_side[:, 1])].sum()
+        if water > land:
+            sea.append(piece)
+    return make_valid(unary_union(sea)) if sea else Polygon()
+
+
 def water_polygons(element, bounds):
     tags = element.get("tags", {})
     if tags.get("natural") == "water" or tags.get("landuse") == "reservoir" or tags.get("waterway") == "riverbank":
@@ -198,10 +239,10 @@ def prepare_features(data, bounds):
     elements = data.get("elements")
     if not isinstance(elements, list) or data.get("remark"):
         raise ValueError("Map feature lookup did not finish. Try again or select a smaller area.")
-    if len(elements) > 20_000:
+    if len(elements) > MAX_ELEMENTS:
         raise ValueError("There are too many map features. Select a smaller area.")
     layers, seen, points = {name: [] for name in LAYER_NAMES}, set(), 0
-    buildings = []
+    buildings, coastlines = [], []
     # Ways of an Appalachian Trail relation belong to the AT layer, even when unnamed.
     at_ways = {member.get("ref") for element in elements if isinstance(element, dict) and element.get("type") == "relation"
                and is_appalachian_trail(element.get("tags") or {}) for member in element.get("members", []) if isinstance(member, dict)}
@@ -212,6 +253,12 @@ def prepare_features(data, bounds):
         if identifier in seen:
             continue
         seen.add(identifier)
+        coast = coastline_paths(element, bounds)
+        if coast:
+            points += sum(len(path) for path in coast)
+            if points > MAX_POINTS:
+                raise ValueError("The map features are too detailed for this area. Select a smaller area.")
+            coastlines.extend(coast)
         categories = classify(element.get("tags", {}))
         if element.get("type") == "way" and element.get("id") in at_ways:
             categories = [category for category in categories if category != "trails"]
@@ -254,9 +301,15 @@ def prepare_features(data, bounds):
         for category in categories:
             layers[category].append(feature)
     detail_buildings(buildings, bounds)
+    sea = encode_polygons(sea_geometry(coastlines))
+    if sea:
+        width, height = bounds.dimensions
+        area = sum(Polygon(polygon["outer"], polygon["holes"]).area for polygon in sea)
+        layers["water"].append({"id": "coastline/sea", "name": "", "lines": [], "polygons": sea, "kind": "sea",
+                                "area_m2": round(area*width*height, 2)})
     return {"layers": layers, "counts": {name: len(features) for name, features in layers.items()},
             "bounds": bounds.to_dict(), "source": "© OpenStreetMap contributors", "source_url": "https://www.openstreetmap.org/copyright",
-            "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "schema_version": 5}
+            "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "schema_version": 6}
 
 
 def detail_buildings(buildings, bounds):
@@ -288,7 +341,7 @@ def building_query(bounds):
     """Footprints and 3D parts; by far the largest layer in cities, so it is requested separately."""
     extent = bounds.geographic_extent
     bbox = ",".join(f"{v:.8f}" for v in (extent.south, extent.west, extent.north, extent.east))
-    return f'''[out:json][timeout:25][maxsize:67108864];
+    return f'''{QUERY_SETTINGS};
 (
  wr["building"]["building"!="no"]({bbox});
  wr["building:part"]["building:part"!="no"]({bbox});
@@ -299,7 +352,7 @@ def overpass_query(bounds):
     extent = bounds.geographic_extent
     bbox = ",".join(f"{v:.8f}" for v in (extent.south, extent.west, extent.north, extent.east))
     roads, rails = "|".join(sorted(ROADS)), "|".join(sorted(RAILS))
-    return f'''[out:json][timeout:25][maxsize:67108864];
+    return f'''{QUERY_SETTINGS};
 (
  way["highway"~"^({roads})$"]({bbox});
  relation["route"~"^(hiking|foot)$"]["ref"~"^AT$",i]({bbox});
@@ -316,6 +369,7 @@ def overpass_query(bounds):
  nwr["natural"="water"]({bbox});
  nwr["landuse"="reservoir"]({bbox});
  nwr["waterway"="riverbank"]({bbox});
+ way["natural"="coastline"]({bbox});
 ); out geom qt;'''
 
 
@@ -337,14 +391,17 @@ class FeatureClient:
         key = hashlib.sha256(json.dumps(bounds.to_dict(), sort_keys=True).encode()).hexdigest()
         path = self.cache_dir / f"{key}{suffix}.json"
         result = cached_json(path, 7*86400, MAX_RESPONSE_BYTES)
-        if isinstance(result, dict) and result.get("schema_version") == 5 and result.get("bounds") == bounds.to_dict() and set(result.get("layers", {})) == set(LAYER_NAMES):
+        if isinstance(result, dict) and result.get("schema_version") == 6 and result.get("bounds") == bounds.to_dict() and set(result.get("layers", {})) == set(LAYER_NAMES):
             return result
         try:
             with requests.post(self.url, data={"data": query(bounds)}, headers={"User-Agent": USER_AGENT},
-                               timeout=(8, 35), stream=True) as response:
+                               timeout=REQUEST_TIMEOUT, stream=True) as response:
                 data = response_json(response, MAX_RESPONSE_BYTES)
         except requests.RequestException:
             raise ValueError("Map features could not load. The service may be busy; retry in a moment or check your connection.") from None
         result = prepare_features(data, bounds)
+        if not suffix:
+            # A park or water area can also be tagged as a building; buildings come only from their own request.
+            result["layers"]["buildings"], result["counts"]["buildings"] = [], 0
         cache_json(path, result)
         return result

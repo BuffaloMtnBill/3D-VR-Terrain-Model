@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 import pytest
 import requests
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 
 from terrain_app.elevation import Bounds, selection_coordinates
 from terrain_app.features import FeatureClient, LAYER_NAMES, building_height, classify, layer_options, overpass_query, paths, prepare_features, to_selection
@@ -181,7 +181,7 @@ def test_road_and_water_classification_supports_detail_filtering():
     result = prepare_features({"elements": features}, bounds)
     assert result["layers"]["roads"][0]["kind"] == "primary"
     assert {feature["kind"] for feature in result["layers"]["water"]} == {"stream", "river"}
-    assert result["schema_version"] == 5
+    assert result["schema_version"] == 6
 
 
 @pytest.mark.parametrize("detail", [-1, 101, True, "50", float("nan")])
@@ -210,7 +210,7 @@ def test_feature_fetch_uses_rotated_envelope_and_reuses_cache(tmp_path, monkeypa
     calls = []
     def post(url, **options):
         calls.append(options["data"]["data"])
-        assert options["stream"] and options["timeout"] == (8, 35)
+        assert options["stream"] and options["timeout"] == (8, 75)
         return JsonResponse({"elements": []})
     monkeypatch.setattr("terrain_app.features.requests.post", post)
     client = FeatureClient(tmp_path)
@@ -452,3 +452,47 @@ def test_buildings_download_separately_from_other_layers(tmp_path, monkeypatch, 
         time.sleep(.01)
     assert calls == ["other", "buildings"]
     assert http.post("/api/features/example?layer=roads", json={}).status_code == 400
+
+
+def test_feature_limits_allow_forty_thousand_elements_and_two_hundred_thousand_points():
+    from terrain_app.features import building_query
+    bounds = Bounds(0, 0, .01, .01)
+    assert prepare_features({"elements": [{}]*40_000}, bounds)["counts"]["roads"] == 0
+    with pytest.raises(ValueError, match="too many map features"):
+        prepare_features({"elements": [{}]*40_001}, bounds)
+    line = [(.001+.008*index/99_999, .005) for index in range(100_000)]
+    roads = [osm_way(1, {"highway": "primary"}, line), osm_way(2, {"highway": "primary"}, line)]
+    assert prepare_features({"elements": roads}, bounds)["counts"]["roads"] == 2
+    with pytest.raises(ValueError, match="too detailed"):
+        prepare_features({"elements": roads+[osm_way(3, {"highway": "primary"}, line[:2])]}, bounds)
+    for query in (overpass_query(bounds), building_query(bounds)):
+        assert query.startswith("[out:json][timeout:60][maxsize:134217728];")
+
+
+def test_coastlines_turn_open_sea_into_water():
+    from terrain_app.features import sea_geometry
+    from terrain_app.landcover import prepare_cover
+    bounds = Bounds(0, 0, .01, .01)
+    # A coastline running north through the middle: land on its left (west), sea on its right (east).
+    coast = osm_way(1, {"natural": "coastline"}, [(.005, -.002), (.005, .012)])
+    island = osm_way(2, {"natural": "coastline"}, [(.007, .004), (.008, .004), (.008, .006), (.007, .006), (.007, .004)])
+    result = prepare_features({"elements": [coast, island]}, bounds)
+    sea = result["layers"]["water"][0]
+    assert (sea["id"], sea["kind"]) == ("coastline/sea", "sea") and result["counts"]["water"] == 1
+    shape = Polygon(sea["polygons"][0]["outer"], sea["polygons"][0]["holes"])
+    assert shape.area == pytest.approx(.5-.1*.2, abs=1e-6)  # the eastern half, minus the island
+    assert shape.contains(Point(.9, .9)) and not shape.contains(Point(.1, .5)) and not shape.contains(Point(.75, .5))
+    assert sea["area_m2"] == pytest.approx(shape.area*np.prod(bounds.dimensions), rel=1e-6)
+    rotated = Bounds(0, 0, .01, .01, 90)
+    turned = prepare_features({"elements": [coast]}, rotated)["layers"]["water"][0]
+    quarter = Polygon(turned["polygons"][0]["outer"])
+    assert quarter.area == pytest.approx(.5, abs=1e-6) and quarter.contains(Point(.5, .1)) and not quarter.contains(Point(.5, .9))  # east is the top edge at 90°
+    reversed_coast = osm_way(1, {"natural": "coastline"}, [(.005, .012), (.005, -.002)])
+    west = Polygon(prepare_features({"elements": [reversed_coast]}, bounds)["layers"]["water"][0]["polygons"][0]["outer"])
+    assert west.contains(Point(.1, .5)) and not west.contains(Point(.9, .5))
+    assert sea_geometry([]).is_empty
+    outside = osm_way(3, {"natural": "coastline"}, [(.02, 0), (.02, .01)])
+    assert prepare_features({"elements": [outside]}, bounds)["counts"]["water"] == 0  # undecidable: left as land
+    cover = prepare_cover({"elements": [coast, island]}, bounds)
+    assert Polygon(cover["regions"]["water"][0]["outer"], cover["regions"]["water"][0]["holes"]).area == pytest.approx(.48, abs=1e-6)
+    assert 'way["natural"="coastline"]' in overpass_query(bounds)

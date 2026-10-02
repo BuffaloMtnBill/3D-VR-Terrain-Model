@@ -3,7 +3,7 @@ import * as THREE from 'three';
 
 export const featureLabels={roads:'Roads',railways:'Train tracks',borders:'Borders',water:'Water',cities:'City boundaries',parks:'Park boundaries',buildings:'Buildings',at:'AT (Appalachian Trail)',trails:'Other trails'};
 const clamp=(value,low=0,high=1)=>Math.max(low,Math.min(high,value));
-const MAX_VERTICES=900000;
+const MAX_VERTICES=1800000;
 
 export function filterFeatures(data,styles,terrain) {
   const roadDetail=styles.roads?.detail??100,waterDetail=styles.water?.detail??100;
@@ -16,7 +16,7 @@ export function filterFeatures(data,styles,terrain) {
   layers.roads=layers.roads.filter(feature=>roadDetail>=(importance[feature.kind]??100));
   layers.water=layers.water.filter(feature=>{
     if(waterDetail===100)return true;
-    if(feature.kind==='river'||feature.kind==='riverbank')return true;
+    if(feature.kind==='river'||feature.kind==='riverbank'||feature.kind==='sea')return true;
     if(feature.kind==='canal')return waterDetail>=25;
     if(feature.kind==='stream')return waterDetail>=80;
     if(feature.kind==='ditch'||feature.kind==='drain')return waterDetail>=100;

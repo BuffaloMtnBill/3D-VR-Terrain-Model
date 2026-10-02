@@ -255,8 +255,10 @@ through the public Overpass API. One request fetches every category except
 buildings for the current terrain; toggling layers or changing colors reuses
 that data. Buildings and building parts, by far the largest layer in cities,
 are a second request made only when Buildings is first checked. Feature
-requests are limited to **50 km per side**, two simultaneous downloads, 20 MB of
-response data, and 100,000 input points. Results cache for seven days in
+requests are limited to **50 km per side**, two simultaneous downloads, and, per request,
+40 MB of response data, 40,000 OSM elements, and 200,000 input points. Buildings
+are a separate request with their own allowance. Queries may run for 60 seconds
+on the Overpass server; the app waits up to 75 seconds for the response. Results cache for seven days in
 `.cache/features/`. Rotated areas fetch their enclosing geographic extent, then
 clip linework and polygons to the actual selected rectangle. Elevation exaggeration moves the overlays with the surface.
 
@@ -264,7 +266,10 @@ Borders represent OSM administrative levels 2–6 (country, state, and county);
 city boundaries use levels 7–10. These categories have separate switches,
 so disabling Borders leaves selected city or park boundaries intact. Definitions vary by country. Parks include
 mapped parks, nature reserves, national parks, and protected areas. Water
-includes mapped waterways and water areas. Coverage depends on OSM: missing
+includes mapped waterways and water areas, plus open sea: OSM marks the sea
+with coastlines instead of water areas, so the app divides the selection along
+them and treats the seaward side as water. A selection lying entirely at sea,
+with no coastline crossing it, cannot be told apart from land and stays land. Coverage depends on OSM: missing
 layers are reported as empty, and service failures offer a Retry button.
 Buildings use OSM footprints, courtyards, and mapped height/level tags;
 missing heights use an illustrative six meters. Roads and Water are selected on a
@@ -433,6 +438,23 @@ trail selections, and all six Print palette colors. Later edits do not replace
 these defaults until you save again.
 
 Below **Find your frame**, **Current box parameters** is collapsed by default.
-Open it for copyable JSON with the unrotated geographic bounds and clockwise
-rotation in degrees; **Copy parameters** copies it. These parameters track the current map
-selection, even before new terrain is generated.
+Open it for copyable JSON describing the current view: the unrotated geographic
+bounds and clockwise rotation, the map zoom, and the right-hand rendering
+settings (surface palette, map-feature checkboxes, colors, detail levels, 3D
+buildings, and print palette). It follows the map and every setting change,
+even before new terrain is generated. The **Copy** button in the panel's
+header copies it to the clipboard, whether or not the panel is open.
+
+That JSON is a complete **Famous landscapes** entry apart from its name. To add
+one, put it in `PRESETS` in `terrain_app/places.py` with a `name` and `label`:
+
+```python
+"asheville": {"name": "Asheville", "label": "Asheville, USA",
+              "bounds": {...}, "zoom": 12.5, "settings": {"palette": "earth", "controls": {...}}},
+```
+
+Selecting a landscape from the list frames its area at the stored zoom (never
+closer than the area fits the map) and applies its stored rendering settings.
+Landscapes without `settings` leave the current settings unchanged. Unknown or
+out-of-range values in an entry are ignored. Restart the app after editing the
+file.

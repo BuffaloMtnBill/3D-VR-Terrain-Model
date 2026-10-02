@@ -102,6 +102,8 @@ async function snapRatios(page) {
 }
 
 async function alignTwoPoints(page,first=[110,100],second=[250,175],touch=false) {
+  // On a phone the map sits below the taller settings column; taps outside the viewport are lost.
+  await page.locator('#map').evaluate(element=>element.scrollIntoView({block:'center'}));await page.waitForTimeout(100);
   const before=await frameGeometry(page),map=await page.locator('#map').boundingBox();
   const click=point=>touch?page.touchscreen.tap(map.x+point[0],map.y+point[1]):page.mouse.click(map.x+point[0],map.y+point[1]);
   await page.locator('#align-selection').click();
@@ -217,8 +219,12 @@ async function main() {
   assert.equal(await page.locator('.export-section h2').textContent(),'Export to print');
   assert.equal(await page.locator('.step,.panel-number').count(),0);
   const parameters=JSON.parse(await page.locator('#selection-parameters').inputValue());
-  assert.deepEqual(Object.keys(parameters).sort(),['east','north','rotation_deg','south','west']);
-  assert.equal(parameters.rotation_deg,0);
+  assert.deepEqual(Object.keys(parameters).sort(),['bounds','settings','zoom']);
+  assert.deepEqual(Object.keys(parameters.bounds).sort(),['east','north','rotation_deg','south','west']);
+  assert.equal(parameters.bounds.rotation_deg,0);
+  assert.equal(parameters.settings.palette,'alpine');
+  assert.equal(parameters.settings.controls['feature-roads'],false);
+  assert.ok(Number.isFinite(parameters.zoom));
   assert.equal(await page.locator('details.selection-parameters').getAttribute('open'),null,'Box parameters start collapsed');
   assert.equal(await page.locator('#solid').count()+await page.locator('#faceted').count(),0);
   assert.equal(await page.locator('.sidebar #exaggeration').count()+await page.locator('.sidebar #base').count()+await page.locator('.sidebar #contours').count(),3);
@@ -461,7 +467,7 @@ async function main() {
   const rotatedBounds=await selection(page);
   assert.ok(Math.abs(rotatedBounds.rotation_deg-30)<.2);
   const copiedRotated=JSON.parse(await page.locator('#selection-parameters').inputValue());
-  for(const key of ['north','south','east','west','rotation_deg'])assert.ok(Math.abs(copiedRotated[key]-rotatedBounds[key])<(key==='rotation_deg'?0.0001:0.000001),'Copyable parameters must track rotated selection');
+  for(const key of ['north','south','east','west','rotation_deg'])assert.ok(Math.abs(copiedRotated.bounds[key]-rotatedBounds[key])<(key==='rotation_deg'?0.0001:0.000001),'Copyable parameters must track rotated selection');
   for(const key of ['north','south','east','west'])assert.ok(Math.abs(rotatedBounds[key]-unrotatedBounds[key])<.0002,'Rotation must preserve the unrotated area');
   const angle=rotated.angle*Math.PI/180;
   const topLeft=frame=>({x:frame.x-frame.width/2*Math.cos(angle)+frame.height/2*Math.sin(angle),y:frame.y-frame.width/2*Math.sin(angle)-frame.height/2*Math.cos(angle)});
@@ -683,8 +689,9 @@ async function main() {
   defaultsPage.on('pageerror',error=>errors.push(error.message));
   await defaultsPage.goto(process.env.TERRAIN_TEST_URL||'http://127.0.0.1:8001');
   await defaultsPage.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('160 × 117'));
-  await defaultsPage.locator('.selection-parameters summary').click();
   await defaultsPage.locator('#copy-selection').click();
+  assert.equal(await defaultsPage.locator('details.selection-parameters').getAttribute('open'),null,'Copying works without opening the panel');
+  await defaultsPage.waitForFunction(()=>document.getElementById('copy-selection-label').textContent==='Copied ✓');
   assert.equal(await defaultsPage.evaluate(()=>navigator.clipboard.readText()),await defaultsPage.locator('#selection-parameters').inputValue());
   for(const id of ['feature-roads','feature-water','contours'])assert.equal(await defaultsPage.locator('#'+id).isChecked(),true,id+' is selected on a first start');
   assert.equal(await defaultsPage.locator('#feature-buildings').isChecked(),false);
@@ -723,6 +730,44 @@ async function main() {
   await defaultsPage.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('160 × 117'));
   assert.equal(await defaultsPage.locator('[data-palette="earth"]').getAttribute('aria-pressed'),'true','Unsaved edits must not replace saved defaults');
   assert.deepEqual(errors,[]);
+  // A famous landscape can carry its own map zoom and right-hand rendering settings.
+  const presetContext=await browser.newContext({viewport:{width:1440,height:1100}});
+  await presetContext.route(mapTiles,route=>route.fulfill({status:200,contentType:'image/svg+xml',body:testTile,headers:{'access-control-allow-origin':'*'}}));
+  await presetContext.route('**/api/config',async route=>{
+    const response=await route.fetch(),config=await response.json();
+    Object.assign(config.presets.rainier,{zoom:9,settings:{palette:'desert',controls:{'feature-roads':false,'feature-water':true,'color-water':'#112233','detail-water':40,
+      'feature-buildings':true,'buildings-detailed':true,'group-trails':true,'feature-trails':true,'feature-at':false,'detail-roads':500,'color-roads':'red','unknown-control':true}}});
+    await route.fulfill({response,json:config});
+  });
+  const presetPage=await presetContext.newPage();
+  presetPage.on('pageerror',error=>errors.push(error.message));
+  await presetPage.goto(process.env.TERRAIN_TEST_URL||'http://127.0.0.1:8001');
+  await presetPage.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('160 × 117'));
+  const roadColor=await presetPage.locator('#color-roads').inputValue();
+  await presetPage.locator('#place').selectOption('fuji');
+  assert.equal(await presetPage.locator('#feature-roads').isChecked(),true,'A landscape without settings keeps the current ones');
+  const fittedZoom=JSON.parse(await presetPage.locator('#selection-parameters').inputValue()).zoom;
+  await presetPage.locator('#place').selectOption('rainier');
+  assert.equal(await presetPage.locator('[data-palette="desert"]').getAttribute('aria-pressed'),'true');
+  assert.equal(await presetPage.locator('#feature-roads').isChecked(),false);
+  assert.equal(await presetPage.locator('#feature-buildings').isChecked(),true);
+  assert.equal(await presetPage.locator('#buildings-detailed').isChecked(),true);
+  assert.equal(await presetPage.locator('#building-options').isVisible(),true);
+  assert.equal(await presetPage.locator('#trail-options').isVisible(),true);
+  assert.equal(await presetPage.locator('#feature-trails').isChecked(),true);
+  assert.equal(await presetPage.locator('#color-water').inputValue(),'#112233');
+  assert.equal(await presetPage.locator('#detail-water-value').textContent(),'40%');
+  assert.equal(await presetPage.locator('#detail-roads').inputValue(),'100','Out-of-range settings are ignored');
+  assert.equal(await presetPage.locator('#color-roads').inputValue(),roadColor,'Malformed colors are ignored');
+  const loaded=JSON.parse(await presetPage.locator('#selection-parameters').inputValue());
+  assert.equal(loaded.zoom,9);assert.ok(fittedZoom>9,'The stored zoom shows more surroundings than the closest fit');
+  assert.equal(loaded.settings.palette,'desert');
+  assert.equal(loaded.settings.controls['buildings-detailed'],true);
+  assert.ok(Math.abs(loaded.bounds.north-46.930)<1e-6&&Math.abs(loaded.bounds.west+121.865)<1e-6);
+  await presetPage.locator('#feature-water').uncheck();
+  assert.equal(JSON.parse(await presetPage.locator('#selection-parameters').inputValue()).settings.controls['feature-water'],false,'Copyable parameters follow later edits');
+  assert.deepEqual(errors,[]);
+  await presetContext.close();
   await defaultsContext.close();
   await browser.close();
   console.log('Browser checks passed: two-point alignment, ZIP navigation, nine feature layers in Boundaries and Trails submenus, raised and 3D buildings, water islands, ratio orientation toggles, Print palette and shared colors, discrete GLB colors, native four-part 3MF, removal of smoothing, rotated extraction, downloads, and desktop/mobile layout.');
