@@ -1,0 +1,62 @@
+Terrain Studio / 3D Map Extractor
+
+Elevation data: Mapzen / Tilezen Terrain Tiles, accessed from AWS Open Data.
+https://registry.opendata.aws/terrain-tiles/
+Full source attribution and license details:
+https://github.com/tilezen/joerd/blob/master/docs/attribution.md
+
+Regional terrain source credits (as applicable to the selected area):
+* ArcticDEM terrain data DEM(s) were created from DigitalGlobe, Inc., imagery and
+  funded under National Science Foundation awards 1043681, 1559691, and 1542736;
+* Australia terrain data © Commonwealth of Australia (Geoscience Australia) 2017;
+* Austria terrain data © offene Daten Österreichs – Digitales Geländemodell (DGM)
+  Österreich;
+* Canada terrain data contains information licensed under the Open Government
+  Licence – Canada;
+* Europe terrain data produced using Copernicus data and information funded by the
+  European Union - EU-DEM layers;
+* Global ETOPO1 terrain data U.S. National Oceanic and Atmospheric Administration;
+* Mexico terrain data source: INEGI, Continental relief, 2016;
+* New Zealand terrain data Copyright 2011 Crown copyright (c) Land Information New
+  Zealand and the New Zealand Government (All rights reserved);
+* Norway terrain data © Kartverket;
+* United Kingdom terrain data © Environment Agency copyright and/or database right
+  2015. All rights reserved;
+* United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data
+  courtesy of the U.S. Geological Survey.
+
+Default topographic map: map data © OpenStreetMap contributors, SRTM;
+map style © OpenTopoMap (CC-BY-SA 3.0).
+https://opentopomap.org/about
+https://creativecommons.org/licenses/by-sa/3.0/
+Street map: © OpenStreetMap contributors.
+https://www.openstreetmap.org/copyright
+OpenStreetMap data is available under the Open Database License (ODbL).
+Standard raster map tiles are for interactive viewing, not offline distribution.
+Terrain model exports do not include raster map textures. Preview image exports
+include the active map's credit line when the map surface is shown.
+
+Data sampling, Gaussian smoothing, model scaling, and elevation exaggeration are
+performed by Terrain Studio. These modifications do not imply endorsement by
+the original data providers. Processing options and geographic bounds can be
+downloaded separately as terrain-metadata.json. OBJ, GLB, and PNG files also
+contain embedded metadata; STL models do not require a JSON sidecar to open.
+
+Optional map-feature overlays: © OpenStreetMap contributors, available under
+the Open Database License (ODbL). Obtained through the configured Overpass API.
+https://www.openstreetmap.org/copyright
+GLB exports and preview images include selected feature layers and colors.
+These features are clipped and draped over the terrain by Terrain Studio.
+
+US ZIP navigation: Zippopotam.us / GeoNames.
+https://www.zippopotam.us/
+https://www.geonames.org/
+GeoNames data is available under Creative Commons Attribution (CC BY).
+https://creativecommons.org/licenses/by/4.0/
+
+Optional mapped print surface colors: © OpenStreetMap contributors (ODbL).
+Forests/woods, open vegetation, bare ground, mapped snow/glaciers, water areas,
+and building footprints are clipped and classified on terrain triangles.
+Unmapped ground uses the Dirt color; colors do not represent current seasons.
+3MF color parts partition the terrain volume. Buildings in the feature overlay
+use mapped heights or levels; missing heights are illustrated at six meters.

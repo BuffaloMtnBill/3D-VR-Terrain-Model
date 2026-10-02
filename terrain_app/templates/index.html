@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#17271d">
+  <meta name="description" content="Select a place on OpenStreetMap and turn real elevation data into a customizable 3D landscape.">
+  <title>Terrain Studio · 3D Map Extractor</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23234a3b'/%3E%3Cpath d='M5 24 14 8 20 18 23 13 28 24Z' fill='none' stroke='%23e7eedb' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script type="importmap">{"imports":{"three":"/static/vendor/three.module.js"}}</script>
+  <script src="{{ url_for('static', filename='vendor/leaflet.js') }}" defer></script>
+  <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a href="/" class="brand" aria-label="Terrain Studio home">
+      <svg viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="10" fill="#36563b"/><g fill="none" stroke="#e0cda6" stroke-width="1.3"><path d="M6 29 16 10 25 23 29 17 35 29Z"/><path d="m10 29 7-13 8 13m-11 0 4-8 5 8"/><path d="m24 29 5-8 4 8"/></g></svg>
+      <span>terrain<span class="brand-studio">STUDIO</span></span>
+    </a>
+    <div class="topbar-description">A little perspective on your world.</div>
+    <div class="topbar-right"><span class="local-badge"><i></i> LOCAL WORKSPACE</span><button id="help-button" class="button quiet">How it works <span aria-hidden="true">↗</span></button></div>
+  </header>
+
+  <main class="workspace">
+    <aside class="sidebar" aria-label="Terrain settings">
+      <div class="intro"><span class="eyebrow">FROM MAP TO MODEL</span><h1>Shape a <br>new perspective.</h1><p>Find a place. Frame it. <br>Make the landscape your own.</p></div>
+      <section class="control-section">
+        <div class="section-label"><span class="step">01</span><h2>Your landscape</h2></div>
+        <label for="place">Explore a place</label>
+        <select id="place">{% for key, place in presets.items() %}<option value="{{ key }}"{% if key == default_place %} selected{% endif %}>{{ place.label }}</option>{% endfor %}<option value="custom">Custom selection</option></select>
+        <form id="coordinate-form" class="coordinate-search"><label class="sr-only" for="coordinates">Go to latitude, longitude</label><input id="coordinates" placeholder="Go to latitude, longitude" aria-describedby="coordinate-hint"><button type="submit" title="Go to coordinates" aria-label="Go to coordinates">↗</button></form>
+        <form id="zip-form" class="coordinate-search"><label class="sr-only" for="zip-code">Go to US ZIP code</label><input id="zip-code" type="text" inputmode="numeric" autocomplete="postal-code" placeholder="Go to US ZIP code" pattern="[0-9]{5}(-[0-9]{4})?" maxlength="10" required aria-describedby="zip-status"><button type="submit" title="Go to ZIP code" aria-label="Go to ZIP code">↗</button></form>
+        <span id="zip-status" class="small-hint" role="status" hidden></span>
+        <span id="coordinate-hint" class="small-hint">Pan or zoom the map beneath the fixed frame.</span>
+        <label for="resolution" class="space-top">Terrain detail</label>
+        <select id="resolution"><option value="96">Quick · 96 points per side</option><option value="160" selected>Balanced · 160 points per side</option><option value="256">Fine · 256 points per side</option><option value="384">Maximum · 384 points per side</option></select>
+        <button id="generate" class="button primary full">Generate terrain <span aria-hidden="true">↗</span></button>
+        <div id="job-progress" hidden><progress id="progress" max="1" value="0"></progress><span id="job-message" class="small-hint" role="status"></span></div>
+      </section>
+
+
+
+      <section class="export-section"><div class="section-label"><span class="step">03</span><h2>Take it with you</h2></div><p>A landscape for your next project.</p><button id="export-button" class="button secondary full">Export model <span aria-hidden="true">↓</span></button><div class="export-formats">STL &nbsp; / &nbsp; OBJ &nbsp; / &nbsp; GLB &nbsp; / &nbsp; HEIGHTMAP</div></section>
+      <div class="sidebar-foot">Real places. Real elevation.<br><a href="https://www.openstreetmap.org/fixthemap" target="_blank" rel="noopener">Report a map issue ↗</a></div>
+    </aside>
+
+    <div class="main-content">
+      <div class="workspace-heading"><div><span class="eyebrow">THE EXPLORER</span><h2 id="landscape-title">{{ presets[default_place].name }}</h2></div><span id="terrain-badge" class="data-badge"><i></i> REAL ELEVATION DATA</span></div>
+      <div class="view-panes">
+        <section class="map-panel panel" aria-label="Area selection">
+          <div class="panel-heading"><div><span class="panel-number">A</span><h3>Find your frame</h3></div><button id="edit-bounds" class="text-button" title="Edit bounding coordinates">Coordinates ↗</button></div>
+          <div class="map-wrapper">
+            <div id="map" role="region" aria-label="OpenStreetMap area selector"></div>
+            <div class="map-style-control"><label class="sr-only" for="map-style">Map style</label><select id="map-style"><option value="terrain" selected>Terrain & contours</option><option value="streets">Street map</option></select></div>
+            <div class="selection-overlay">
+              <div id="selection-frame" class="selection-frame" role="group" aria-label="Fixed terrain selection frame">
+                <span class="frame-label">SELECTED AREA</span>
+                <button type="button" class="frame-resize frame-resize-width" data-resize="width" aria-label="Resize area width" title="Drag horizontally to resize width"></button>
+                <button type="button" class="frame-resize frame-resize-height" data-resize="height" aria-label="Resize area height" title="Drag vertically to resize height"></button>
+              </div>
+            </div>
+            <button type="button" class="frame-rotate" data-rotate aria-label="Rotate selected area" title="Drag to rotate the selected area">⟳</button>
+            <div class="map-tools"><button id="reset-frame" class="button map-button"><span aria-hidden="true">▣</span> Reset frame</button><button id="align-selection" type="button" class="icon-button" title="Align frame through two map points" aria-label="Align frame through two map points" aria-pressed="false"><svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true"><path d="M3 17 21 7" stroke="currentColor" stroke-width="1.5"/><circle cx="6" cy="15.3" r="2.5" fill="currentColor"/><circle cx="18" cy="8.7" r="2.5" fill="currentColor"/></svg></button><div class="map-ratios" role="group" aria-label="Selection aspect ratio"><button type="button" data-aspect="1:1" aria-pressed="false" aria-label="Set selection aspect ratio to 1:1, square" title="Snap to 1:1 (square)">1:1</button><button type="button" data-aspect="3:4" aria-pressed="false" aria-label="Set selection aspect ratio to 3:4, portrait" title="Snap to 3:4 (portrait)">3:4</button><button type="button" data-aspect="16:9" aria-pressed="false" aria-label="Set selection aspect ratio to 16:9, landscape" title="Snap to 16:9 (landscape)">16:9</button></div></div>
+            <div id="alignment-status" class="alignment-status" role="status" hidden></div>
+            <div id="map-notice" class="map-notice" hidden></div>
+          </div>
+          <div class="map-footer"><span class="selection-dot"></span><span id="selection-size">Selected area</span><span id="selection-rotation" aria-label="Selection rotation"></span><span id="selection-state">Ready to explore</span></div>
+          <div class="map-frame-hint">Pan to position · scroll to zoom · edges resize · corner rotates · two points align</div>
+          <div id="selection-validation" class="selection-validation" role="status" hidden></div>
+        </section>
+
+        <section class="terrain-panel panel" aria-label="3D terrain preview">
+          <div class="panel-heading"><div><span class="panel-number">B</span><h3>A different perspective</h3></div><button id="reset-camera" class="icon-button" aria-label="Reset camera" title="Reset camera">⌖</button></div>
+          <div class="view-tabs" role="group" aria-label="Visualization mode"><button class="active" data-view="relief" aria-pressed="true">Relief</button><button data-view="map" aria-pressed="false">Map</button><button data-view="wireframe" aria-pressed="false">Wireframe</button><button data-view="elevation" aria-pressed="false">Elevation</button></div>
+          <div id="scene-container"><div id="scene-empty" hidden>Select an area and generate its terrain to begin.</div><div class="scene-label"><span id="scene-mode">ALPINE RELIEF</span><span id="scene-detail">Preparing terrain…</span></div><div class="north-arrow" aria-label="North direction relative to the selected area"><span>N</span><span>↑</span></div><div class="scene-tools"><button id="rotate" class="icon-button" title="Auto rotate" aria-label="Auto rotate" aria-pressed="false">⟳</button><button id="screenshot" class="icon-button" title="Save preview image" aria-label="Save preview image">▧</button></div><div class="scene-instructions" id="scene-instructions">Drag to orbit · scroll to zoom</div><div id="map-attribution" hidden>© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a></div></div>
+          <div id="print-legend" class="print-legend" hidden></div><div class="elevation-legend"><span id="legend-low">— m</span><span id="legend-gradient"></span><span id="legend-high">— m</span></div>
+        </section>
+      </div>
+
+      <section class="stats-strip" aria-label="Terrain statistics"><div><span class="stat-label">LOWEST POINT</span><strong id="stat-low">—<small> m</small></strong></div><div><span class="stat-label">HIGHEST POINT</span><strong id="stat-high">—<small> m</small></strong></div><div><span class="stat-label">ELEVATION RANGE</span><strong id="stat-range">—<small> m</small></strong></div><div><span class="stat-label">GRID SPACING</span><strong id="stat-spacing">—<small> m</small></strong></div></section>
+
+      <section class="profile-panel panel"><div class="profile-heading"><div><span class="panel-number">C</span><h3>Follow the ridgeline</h3><span class="profile-caption">Elevation profile</span></div><select id="profile-direction" aria-label="Cross section direction"><option value="ew">West → East</option><option value="ns">North → South</option></select></div><div class="profile-controls"><label for="profile-position">Cross-section position</label><input id="profile-position" type="range" min="0" max="100" step="1" value="50"><output id="profile-position-value">50%</output></div><div class="profile-canvas-wrap"><canvas id="profile" aria-label="Elevation cross section in meters above sea level"></canvas><span id="profile-tooltip" hidden></span></div><div class="profile-foot"><span>Heights in meters above sea level</span><span id="profile-distance">— km across</span></div></section>
+      <footer class="data-footer"><span>Elevation: <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Mapzen / Tilezen · AWS Open Data ↗</a></span><a href="/api/attribution" target="_blank" rel="noopener">Source credits & licenses ↗</a><span>Terrain detail varies by region.</span></footer>
+    </div>
+    <aside id="style-sidebar" class="style-sidebar" aria-label="Make it yours">
+      <section class="style-panel">
+        <div class="style-panel-heading"><div class="section-label"><span class="step">02</span><h2>Make it yours</h2></div><button id="edit-style" type="button" class="button quiet" aria-expanded="false" aria-controls="style-editor">Edit ↗</button></div>
+        <div id="style-summary" class="style-summary" aria-label="Current model style">
+          <dl><div><dt>Palette</dt><dd id="style-status-palette">Alpine</dd></div><div><dt>Elevation</dt><dd id="style-status-elevation">2.0×</dd></div><div><dt>Base</dt><dd id="style-status-base">Solid · 3%</dd></div><div><dt>Map features</dt><dd id="style-status-features">None selected</dd></div><div id="style-status-colors-row" hidden><dt>Filaments</dt><dd id="style-status-colors"></dd></div></dl>
+          <p class="small-hint">Edit the palette, terrain, and map features.</p>
+        </div>
+        <div id="style-editor" class="style-editor" hidden>
+        <label>Surface palette</label>
+        <div class="palettes" role="group" aria-label="Surface palette">
+          <button class="palette active" data-palette="alpine" aria-pressed="true"><span class="swatch alpine"></span><span>Alpine</span></button>
+          <button class="palette" data-palette="earth" aria-pressed="false"><span class="swatch earth"></span><span>Earth</span></button>
+          <button class="palette" data-palette="desert" aria-pressed="false"><span class="swatch desert"></span><span>Desert</span></button>
+          <button class="palette" data-palette="print" aria-pressed="false" aria-haspopup="dialog" aria-controls="print-palette-dialog"><span class="swatch print"></span><span>Print</span></button>
+        </div>
+        <div id="print-controls" hidden><button id="edit-print-palette" class="text-button">Edit print palette ↗</button><span id="print-summary" class="small-hint"></span><span id="cover-status" class="small-hint" role="status"></span><button id="cover-retry" class="text-button" hidden>Retry surface map ↗</button></div>
+        <div class="slider-label"><label for="exaggeration">Elevation multiplier</label><output id="exaggeration-value">2.0×</output></div>
+        <input id="exaggeration" type="range" min="0.1" max="12" step="0.1" value="2">
+        <div class="range-endpoints"><span>True scale 1×</span><span>Dramatic 12×</span></div>
+        <div class="slider-label"><label for="base">Base thickness</label><output id="base-value">3%</output></div>
+        <input id="base" type="range" min="0.5" max="10" step="0.5" value="3">
+        <div class="toggles"><label class="toggle"><span>Solid base</span><input type="checkbox" id="solid" checked><span class="switch"></span></label><label class="toggle"><span>Contour lines</span><input type="checkbox" id="contours" checked><span class="switch"></span></label><label class="toggle"><span>Faceted surface</span><input type="checkbox" id="faceted"><span class="switch"></span></label><label class="toggle"><span>Ground grid</span><input type="checkbox" id="grid" checked><span class="switch"></span></label></div>
+        <div class="slider-label"><label for="sun">Light direction</label><output id="sun-value">315°</output></div>
+        <input id="sun" type="range" min="0" max="360" step="5" value="315">
+        <fieldset class="feature-controls"><legend>Map features</legend>
+          <div class="feature-block"><div class="feature-option"><label for="feature-roads"><input id="feature-roads" type="checkbox" data-feature="roads">Roads</label><span id="feature-count-roads" class="feature-count"></span><input id="color-roads" type="color" value="#fee0b0" data-feature-color="roads" aria-label="Roads color" title="Roads color"></div><div class="feature-detail"><div class="slider-label"><label for="detail-roads">Roads detail</label><output id="detail-roads-value">100%</output></div><input id="detail-roads" type="range" min="0" max="100" step="1" value="100" data-feature-detail="roads" aria-label="Roads level of detail"><div class="range-endpoints"><span>Major roads</span><span>All roads</span></div></div></div>
+          <div class="feature-option"><label for="feature-railways"><input id="feature-railways" type="checkbox" data-feature="railways">Train tracks</label><span id="feature-count-railways" class="feature-count"></span><input id="color-railways" type="color" value="#e9a16b" data-feature-color="railways" aria-label="Train tracks color" title="Train tracks color"></div>
+          <div class="feature-option"><label for="feature-borders"><input id="feature-borders" type="checkbox" data-feature="borders" title="Country, state, and county boundaries. City and park boundaries have separate switches.">Borders</label><span id="feature-count-borders" class="feature-count"></span><input id="color-borders" type="color" value="#ce9678" data-feature-color="borders" aria-label="Borders color" title="Country, state, and county borders"></div>
+          <div class="feature-block"><div class="feature-option"><label for="feature-water"><input id="feature-water" type="checkbox" data-feature="water">Water</label><span id="feature-count-water" class="feature-count"></span><input id="color-water" type="color" value="#619ea5" data-feature-color="water" aria-label="Water color" title="Water color"></div><div class="feature-detail"><div class="slider-label"><label for="detail-water">Water detail</label><output id="detail-water-value">100%</output></div><input id="detail-water" type="range" min="0" max="100" step="1" value="100" data-feature-detail="water" aria-label="Water level of detail"><div class="range-endpoints"><span>Large water areas</span><span>Creeks & ponds</span></div></div></div>
+          <div class="feature-option"><label for="feature-cities"><input id="feature-cities" type="checkbox" data-feature="cities">City boundaries</label><span id="feature-count-cities" class="feature-count"></span><input id="color-cities" type="color" value="#dbaecf" data-feature-color="cities" aria-label="City boundaries color" title="City boundaries color"></div>
+          <div class="feature-option"><label for="feature-parks"><input id="feature-parks" type="checkbox" data-feature="parks">Park boundaries</label><span id="feature-count-parks" class="feature-count"></span><input id="color-parks" type="color" value="#a8c586" data-feature-color="parks" aria-label="Park boundaries color" title="Park boundaries color"></div>
+          <div class="feature-option"><label for="feature-buildings"><input id="feature-buildings" type="checkbox" data-feature="buildings">Buildings</label><span id="feature-count-buildings" class="feature-count"></span><input id="color-buildings" type="color" value="#e2c4a4" data-feature-color="buildings" aria-label="Buildings color" title="Buildings color"></div>
+          <div class="feature-option"><label for="feature-at"><input id="feature-at" type="checkbox" data-feature="at" title="Appalachian Trail route from OpenStreetMap">AT</label><span id="feature-count-at" class="feature-count"></span><input id="color-at" type="color" value="#f0ead6" data-feature-color="at" aria-label="Appalachian Trail color" title="Appalachian Trail color"></div>
+          <span id="map-feature-image-note" class="small-hint" hidden>The Map image already contains roads and boundaries. These checkboxes control added features; Relief and Print show only the selected feature layers.</span>
+          <span id="print-feature-color-count" class="small-hint" role="status" hidden></span>
+          <span id="feature-status" class="small-hint" role="status">Choose layers to show on the current terrain.</span><button id="feature-retry" type="button" class="text-button" hidden>Retry map features ↗</button>
+          <span class="small-hint feature-source">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> · 3MF, GLB & preview images include layers.</span>
+        </fieldset>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <div id="toast" role="status" hidden></div>
+  <dialog id="export-dialog">
+    <form method="dialog" class="dialog-header"><div><span class="eyebrow">YOUR LANDSCAPE, ANYWHERE</span><h2>Export your terrain</h2></div><button class="icon-button" aria-label="Close export dialog">×</button></form>
+    <p>Models use the current elevation multiplier and base. Choose a size for the longest horizontal edge.</p>
+    <label for="export-size">Model size (millimeters)</label><input id="export-size" type="number" min="10" max="2000" step="1" value="180"><div id="export-dimensions" class="small-hint"></div>
+    <div class="export-choices">
+      <button data-export="stl"><strong>STL <span>↓</span></strong><span>Solid geometry for 3D printing</span></button>
+      <button data-export="obj"><strong>OBJ <span>↓</span></strong><span>Geometry for CAD and 3D tools</span></button>
+      <button data-export="3mf"><strong>Four-color 3MF <span>↓</span></strong><span>Print palette · separate solid color parts</span></button>
+      <button data-export="glb"><strong>GLB <span>↓</span></strong><span>Colored model with selected map features</span></button>
+      <button data-export="png"><strong>Heightmap PNG <span>↓</span></strong><span>16-bit heightmap with embedded bounds</span></button>
+      <button data-export="csv"><strong>Elevation CSV <span>↓</span></strong><span>Original heights in meters</span></button>
+      <button data-export="npy"><strong>Elevation NumPy <span>↓</span></strong><span>Original elevation array (.npy)</span></button>
+    </div>
+    <p class="dialog-note">Each button downloads one file. 3MF requires the Print palette, Solid base, and at most four distinct colors across surfaces and enabled features; assign its color parts to your filaments in the slicer. 3MF includes selected features as surface inlays and raised buildings. GLB includes selected map features and their colors. STL and OBJ contain terrain geometry. Heightmaps and arrays preserve original elevations. GLB uses meters. OBJ, GLB, and PNG embed metadata.</p>
+    <div class="export-extras"><button type="button" data-export="metadata" class="text-button">Optional settings & coordinates (JSON) ↓</button><a id="export-credits" class="text-button" href="/api/attribution?download=1" download="terrain-credits.txt">Source credits (TXT) ↓</a></div>
+    <div id="export-status" role="status"></div>
+  </dialog>
+
+  <dialog id="print-palette-dialog"><form method="dialog" class="dialog-header"><div><span class="eyebrow">FOUR FILAMENTS · SIX SURFACES</span><h2>Print palette</h2></div><button class="icon-button" aria-label="Close print palette">×</button></form>
+    <p class="dialog-note">Choose a color for each mapped surface. Share colors between surfaces to use four filaments. Buildings color their footprints; snow uses mapped glaciers and permanent snow. Unmapped ground uses Dirt.</p>
+    <div class="print-color-options">
+      <label for="print-dark_foliage">Dark foliage <input id="print-dark_foliage" type="color" data-print-color="dark_foliage" value="#234e40"></label>
+      <label for="print-light_foliage">Light foliage <input id="print-light_foliage" type="color" data-print-color="light_foliage" value="#94b578"></label>
+      <label for="print-dirt">Dirt <input id="print-dirt" type="color" data-print-color="dirt" value="#b99570"></label>
+      <label for="print-snow">Snow <input id="print-snow" type="color" data-print-color="snow" value="#f0ead6"></label>
+      <label for="print-water">Water <input id="print-water" type="color" data-print-color="water" value="#234e40"></label>
+      <label for="print-buildings">Buildings <input id="print-buildings" type="color" data-print-color="buildings" value="#b99570"></label>
+    </div>
+    <p id="print-color-count" role="status"></p>
+    <p class="dialog-note">OSM land cover supplies discrete surface colors. Terrain detail controls the smallest colored region. Enabled map features use their chosen colors in 3MF, GLB, and preview images. Their colors count toward the four-filament limit. Use 3MF for separate color parts and assign those parts to your filaments in the slicer; GLB and preview images also retain these colors.</p>
+    <button id="apply-print-palette" type="button" class="button primary full">Use these colors ↗</button>
+  </dialog>
+
+  <dialog id="bounds-dialog"><form id="bounds-form"><div class="dialog-header"><div><span class="eyebrow">FRAME YOUR LANDSCAPE</span><h2>Bounding coordinates</h2></div><button type="button" id="close-bounds" class="icon-button" aria-label="Close coordinates dialog">×</button></div><div class="bounds-fields"><label>North<input id="bound-north" type="number" step="any" min="-85.0511" max="85.0511" required></label><label>West<input id="bound-west" type="number" step="any" min="-180" max="180" required></label><label>East<input id="bound-east" type="number" step="any" min="-180" max="180" required></label><label>South<input id="bound-south" type="number" step="any" min="-85.0511" max="85.0511" required></label></div><label class="space-top">Rotation (clockwise degrees)<input id="bound-rotation" type="number" min="-180" max="180" step="any" value="0" required></label><p class="small-hint">Coordinates describe the rectangle before rotation. Each side must be between 50 meters and 250 kilometers. Selections cannot cross the date line.</p><button type="submit" class="button primary full">Use this area ↗</button></form></dialog>
+
+  <dialog id="help-dialog"><form method="dialog" class="dialog-header"><h2>A world of possibilities.</h2><button class="icon-button" aria-label="Close help dialog">×</button></form><ol><li><strong>Frame a place.</strong> The selection frame stays fixed on screen. Pan the map beneath it, and use the +/− buttons or mouse wheel to zoom. Drag the right edge horizontally, bottom edge vertically to resize. Drag the lower-right corner to rotate the box around its center. The 1:1, 3:4, and 16:9 buttons snap its width-to-height ratio while keeping its center and rotation. Click a selected ratio again to swap portrait and landscape (3:4 ↔ 4:3 or 16:9 ↔ 9:16). Use the two-point button to click two locations: the box centers on their midpoint and rotates its horizontal axis through them, preserving its size. Presets, coordinates, and US ZIP codes (five digits or ZIP+4) also work.</li><li><strong>Generate the landscape.</strong> Python fetches real elevation tiles and samples a terrain grid. Smaller areas reveal more detail; a denser grid cannot add detail absent from the source.</li><li><strong>Make it yours.</strong> Change the palette, raise the elevation multiplier, choose mapped colors in the Print palette, or explore map, wireframe, contour, and elevation views. Check the map-feature layers you want and choose their colors: roads, train tracks, borders, water, city boundaries, park boundaries, and AT (Appalachian Trail) follow the terrain surface. Buildings use OSM footprints and mapped heights or levels; missing heights default to an illustrative six meters. These layers are included in 3MF, GLB models, and preview images.</li><li><strong>Follow a section.</strong> Move the profile slider to inspect any slice along the frame's axes. The chart always shows unexaggerated heights above sea level.</li><li><strong>Export.</strong> Download a closed STL or OBJ model, a colored GLB, or the original elevation grid. Disable Solid base for an open terrain surface.</li></ol><p>The starter {{ presets[default_place].name }} model uses bundled real elevation data. New terrain, ZIP lookup, map tiles, and feature layers need an internet connection. Features reflect OpenStreetMap coverage; administrative border definitions vary by country. Feature layers support areas up to 50 km per side. Terrain starts as a ground surface. Enable Buildings for approximate structures from OSM; trees are not modeled. ZIP locations come from Zippopotam.us / GeoNames.</p><p class="small-hint">Reset frame restores its default size and zero rotation. The two-point button toggles alignment mode. Escape cancels it without changing the frame; selecting a preset or resetting the frame also exits this mode. You can also focus a resize handle and use arrow keys; hold Shift for larger steps. The corner rotates in 1° steps, or 15° with Shift; Home resets its angle. Hold Shift while dragging the corner to snap to 15°. Escape cancels an active resize or rotation.</p><p class="small-hint">The ground grid is for perspective. The north indicator accounts for selection rotation. Profiles follow the box’s edges; orbiting changes the model’s apparent direction. Base thickness is a percentage of the longest horizontal side.</p></dialog>
+  <noscript>This application needs JavaScript for interactive map selection and 3D rendering.</noscript>
+</body>
+</html>
