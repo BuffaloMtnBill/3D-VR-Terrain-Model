@@ -52,9 +52,10 @@ browser. You can also install with `pip install .` and run `terrain-studio`.
 3. Choose an **Elevation source** (Mapzen worldwide, or USGS 3DEP for the United
    States) and a terrain detail level, then click **Generate terrain**. Downloads show
    progress; your previous model stays available while the new one is built.
-4. Click **Edit** in the right-hand **Make it yours** status panel to adjust the
-   style and geometry. Click **Done** to collapse it back to its current settings;
-   Export model stays in the left sidebar. Orbit with the mouse, scroll to zoom, and
+   The **Elevation multiplier**, **Base thickness**, and **Contour lines**
+   controls sit below Terrain detail and update the model immediately.
+4. Use the right-hand **Make it yours** panel, which is always open, to adjust the
+   palette and map features. Export model stays in the left sidebar. Orbit with the mouse, scroll to zoom, and
    use the camera reset or auto-rotate buttons. Under **Map features**, check
    roads, train tracks, water, or buildings. **Boundaries** opens a submenu for
    borders, city boundaries, and park boundaries; **Trails** opens one for the AT
@@ -83,10 +84,8 @@ Mount Fuji, Grand Canyon, and Chamonix.
 | Alpine / Earth / Desert | Three elevation-based color palettes |
 | Print | Mapped surface colors for four-filament printing; opens a six-surface color menu |
 | Elevation multiplier | 1× preserves the horizontal-to-vertical ratio; values above 1× emphasize relief |
-| Solid base | Connects the terrain rim to a flat bottom for a closed mesh |
-| Base thickness | Percentage of the longest horizontal edge |
+| Base thickness | Height of the solid base beneath the terrain, as a percentage of the longest horizontal edge |
 | Contour lines | Overlays elevation contours at an automatically chosen interval |
-| Faceted surface | Uses flat shading to emphasize the triangular structure |
 | Relief | Lit, colored 3D terrain |
 | Map | Drapes the currently visible terrain or street map over the 3D surface |
 | Wireframe | Shows terrain triangles |
@@ -97,10 +96,10 @@ Mount Fuji, Grand Canyon, and Chamonix.
 ## Exports
 
 Choose the **longest horizontal edge in millimeters** (default: 180 mm).
-Geometry exports use the current multiplier and solid-base settings. The UI
+Geometry exports use the current multiplier and base thickness; models always have a solid base. The UI
 uses the original elevations; the smoothing slider has been removed.
 
-- **Four-color 3MF:** select Print, enable Solid base, and use at most four
+- **Four-color 3MF:** select Print and use at most four
   distinct colors across surfaces and enabled map features. Downloads a native `terrain-print.3mf` file with
   millimeter geometry, shared materials, and a multi-part assembly. Each color
   has a closed solid part; identical colors merge into one part. Open it in
@@ -120,8 +119,7 @@ uses the original elevations; the smoothing slider has been removed.
   selection and rotation. Assign the color parts to filament slots in your slicer.
 - **STL:** a direct `.stl` download. Millimeter coordinates; X selection right,
   Y selection top, Z up (X east and Y north at zero rotation).
-  Closed meshes are suited
-  to slicers; disable Solid base to export only the open terrain surface.
+  Meshes are closed solids, suited to slicers.
 - **OBJ:** a direct `.obj` download with metadata and source credits in comments.
   Millimeter coordinates; X selection right, Y selection top, Z up. This export contains geometry.
 - **GLB:** a self-contained colored model, with palette and source credits in
@@ -244,8 +242,9 @@ mapped parks, nature reserves, national parks, and protected areas. Water
 includes mapped waterways and water areas. Coverage depends on OSM: missing
 layers are reported as empty, and service failures offer a Retry button.
 Buildings use OSM footprints, courtyards, and mapped height/level tags;
-missing heights use an illustrative six meters. Layers are off by default
-and are fetched when selected. This app is intended
+missing heights use an illustrative six meters. Roads and Water are selected on a
+first start, along with contour lines; other layers are off until you check
+them. Feature data is fetched once a selected layer needs it. This app is intended
 for occasional local requests; use your own Overpass endpoint for larger usage.
 
 Road detail uses OSM highway classes: 0% retains motorways, trunk roads, primary
@@ -393,19 +392,22 @@ color picker work independently of Roads, including at low road detail.
 
 ### Interface defaults and favorite landscape parameters
 
-Elevations and the profile chart display unexaggerated feet above sea level.
-Selection dimensions and grid spacing display feet; profile distances use miles.
+The **ft / m** switch in **Follow the ridgeline** sets the display units for the
+whole page and is remembered in this browser. Feet is the default: elevations,
+selection dimensions, and grid spacing show feet, and profile distances miles.
+In meters, the same readouts show meters and kilometers. Profile heights are
+always unexaggerated heights above sea level.
 Print dimensions stay in millimeters, while raw elevation data and GLB retain
 their documented metric units.
 
-Open **Make it yours**, adjust the palette, terrain controls, and map features,
-then click **Save as default** to remember those selections in this browser.
-This includes feature colors and detail levels, building options, boundary and
+Adjust the terrain controls in the left sidebar and the palette and map features
+in **Make it yours**, then click **Save as default** to remember those
+selections in this browser. This includes the elevation multiplier, base
+thickness, contour lines, feature colors and detail levels, building options, boundary and
 trail selections, and all six Print palette colors. Later edits do not replace
 these defaults until you save again.
 
-Below **Find your frame**, **Current box parameters** shows copyable JSON with
-the current landscape name, unrotated geographic bounds, and clockwise rotation
-in degrees. **Copy parameters** copies the JSON for use in an AI request to
-update the **Famous landscapes** menu. These parameters track the current map
+Below **Find your frame**, **Current box parameters** is collapsed by default.
+Open it for copyable JSON with the unrotated geographic bounds and clockwise
+rotation in degrees; **Copy parameters** copies it. These parameters track the current map
 selection, even before new terrain is generated.

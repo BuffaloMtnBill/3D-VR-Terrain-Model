@@ -26,6 +26,7 @@ const tileImages = new Map();
 const SCALE = 6.4;
 const FEET_PER_METER = 1 / 0.3048;
 const METERS_PER_MILE = 1609.344;
+const units=()=>state.units==='m'?{height:1,label:'m',name:'meters',distance:1000,distanceLabel:'km'}:{height:FEET_PER_METER,label:'ft',name:'feet',distance:METERS_PER_MILE,distanceLabel:'mi'};
 const number = (value, decimals=0) => Number(value).toLocaleString(undefined,{maximumFractionDigits:decimals});
 const boundsArray = bounds => [[bounds.south,bounds.west],[bounds.north,bounds.east]];
 const sameBounds = (first,second) => ['north','south','east','west'].every(key=>Math.abs(first[key]-second[key])<1e-9)&&Math.abs(rotationAngle(first)-rotationAngle(second))<1e-9;
@@ -66,6 +67,11 @@ function validateBounds(bounds) {
   if (Math.max(width,height)>250000) throw new Error('Each side must be under 250 kilometers. Zoom in or resize the frame.');
 }
 
+function updateSelectionSize() {
+  const {width,height} = dimensions(state.selection);
+  $('selection-size').textContent = `${number(width*units().height)} × ${number(height*units().height)} ${units().label}`;
+}
+
 function updateSelection(bounds, fit=false, custom=true) {
   if(fit) {
     validateBounds(bounds);
@@ -78,8 +84,7 @@ function updateSelection(bounds, fit=false, custom=true) {
   try{validateBounds(bounds);}catch(problem){error=problem.message;}
   state.selection = {...bounds};
   state.selectionError=error;
-  const {width,height} = dimensions(bounds);
-  $('selection-size').textContent = `${number(width*FEET_PER_METER)} × ${number(height*FEET_PER_METER)} ft`;
+  updateSelectionSize();
   $('selection-state').textContent = 'Area selected';
   if (custom) { $('place').value='custom'; state.name='Custom landscape'; }
   $('generate').disabled = state.loading||Boolean(error);
@@ -257,7 +262,7 @@ function resetCamera() {
   if(!sceneReady||!state.data) return;
   const unit=SCALE/Math.max(state.data.width_m,state.data.height_m);
   const peak=(state.data.surface_max_m-state.data.surface_min_m)*Number($('exaggeration').value)*unit;
-  const base=$('solid').checked?SCALE*Number($('base').value)/100:0;
+  const base=SCALE*Number($('base').value)/100;
   const center=base+peak*.38;
   if(state.view==='elevation') {
     orthographic.zoom=1; orthographic.position.set(0,25,0); orthographic.lookAt(0,0,0);
@@ -277,7 +282,7 @@ function colorAt(value, palette, target=new THREE.Color()) {
 }
 
 function options() {
-  return {exaggeration:Number($('exaggeration').value),smoothing:0,base_percent:Number($('base').value),solid:$('solid').checked,size_mm:Number($('export-size').value)};
+  return {exaggeration:Number($('exaggeration').value),smoothing:0,base_percent:Number($('base').value),solid:true,size_mm:Number($('export-size').value)};
 }
 
 function disposeMesh(mesh) {
@@ -321,7 +326,7 @@ function buildScene(reset=false) {
   geometry.setAttribute('elevation',new THREE.Float32BufferAttribute(elevations,1));
   geometry.setIndex(new THREE.BufferAttribute(indices,1)); geometry.computeVertexNormals();
   if(palette==='print')geometry=paintSurface(geometry,surfaceColors,coverData);
-  const material=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.93,metalness:0,flatShading:$('faceted').checked,wireframe:state.view==='wireframe'});
+  const material=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.93,metalness:0,wireframe:state.view==='wireframe'});
   material.onBeforeCompile=shader=>{
     shader.uniforms.showContours={value:$('contours').checked&&palette!=='print'?1:0};
     shader.uniforms.contourInterval={value:contourInterval(range)};
@@ -332,11 +337,11 @@ function buildScene(reset=false) {
       float contourValue = vTerrainElevation / contourInterval;
       float contourDistance = abs(fract(contourValue + 0.5) - 0.5);
       float contourWidth = max(fwidth(contourValue), 0.005);
-      float contourLine = 1.0 - smoothstep(contourWidth * 0.6, contourWidth * 1.4, contourDistance);
-      diffuseColor.rgb *= 1.0 - contourLine * showContours * 0.42;`);
+      float contourLine = 1.0 - smoothstep(contourWidth * 0.35, contourWidth * 0.95, contourDistance);
+      diffuseColor.rgb *= 1.0 - contourLine * showContours * 0.2;`);
     material.userData.shader=shader;
   };
-  material.customProgramCacheKey=()=> 'terrain-contours-v1';
+  material.customProgramCacheKey=()=> 'terrain-contours-v2';
   topMesh=new THREE.Mesh(geometry,material); topMesh.name='Terrain surface'; model.add(topMesh);
   if(opts.solid) {
     const rim=[];
@@ -374,8 +379,8 @@ function contourInterval(range) {
 function updateLegend() {
   const data=state.data;
   const palette=state.view==='elevation'?'elevation':state.palette;
-  $('legend-low').textContent=`${number(data.surface_min_m*FEET_PER_METER)} ft ASL`;
-  $('legend-high').textContent=`${number(data.surface_max_m*FEET_PER_METER)} ft ASL`;
+  $('legend-low').textContent=`${number(data.surface_min_m*units().height)} ${units().label} ASL`;
+  $('legend-high').textContent=`${number(data.surface_max_m*units().height)} ${units().label} ASL`;
   const mapped=palette==='print';
   document.querySelector('.elevation-legend').hidden=mapped;
   $('print-legend').hidden=!mapped;
@@ -399,7 +404,7 @@ function updateLegend() {
 function updateStats() {
   const data=state.data;
   // Source statistics remain comparable while the rendered geometry changes.
-  for(const [id,value] of [['stat-low',data.min_m],['stat-high',data.max_m],['stat-range',data.max_m-data.min_m],['stat-spacing',data.grid_spacing_m]]) $(id).innerHTML=`${number(value*FEET_PER_METER)}<small> ft${['stat-low','stat-high'].includes(id)?' ASL':''}</small>`;
+  for(const [id,value] of [['stat-low',data.min_m],['stat-high',data.max_m],['stat-range',data.max_m-data.min_m],['stat-spacing',data.grid_spacing_m]]) $(id).innerHTML=`${number(value*units().height)}<small> ${units().label}${['stat-low','stat-high'].includes(id)?' ASL':''}</small>`;
   $('landscape-title').textContent=state.loadedName||state.name;
 }
 
@@ -431,23 +436,10 @@ async function loadSurface(id, reset=false, loadedName=null) {
   if(state.palette==='print')ensureCover().catch(()=>{});
 }
 
-function updateStyleSummary() {
-  const labels={alpine:'Alpine',earth:'Earth',desert:'Desert',print:'Print'};
-  $('style-status-palette').textContent=labels[state.palette]||state.palette;
-  $('style-status-elevation').textContent=`${Number($('exaggeration').value).toFixed(1)}×`;
-  $('style-status-base').textContent=$('solid').checked?`Solid · ${$('base').value}%`:'Open surface';
-  const styles=featureStyles(),selected=Object.entries(styles).filter(([,style])=>style.enabled);
-  $('style-status-features').textContent=selected.length?selected.map(([name])=>featureLabels[name]).join(', '):'None selected';
-  $('style-status-colors-row').hidden=state.palette!=='print';
-  const count=new Set([...Object.values(printColors()),...selected.map(([,style])=>style.color)]).size;
-  $('style-status-colors').textContent=`${count} / 4 colors${count>4?' · share colors to print':''}`;
-  $('style-status-colors').classList.toggle('error',count>4);
-}
-
 function printColors() {return Object.fromEntries(Object.keys(coverLabels).map(name=>[name,$(`print-${name}`).value]));}
 
 function updatePrintPalette() {
-  updateStyleSummary();
+  
   const surfaceCount=new Set(Object.values(printColors())).size;
   const count=new Set([...Object.values(printColors()),...Object.values(featureStyles()).filter(style=>style.enabled).map(style=>style.color)]).size;
   $('print-color-count').textContent=count<=4?`${count} distinct colors including enabled features · ready for a four-color printer.`:`${count} distinct colors including enabled features · share palette and feature colors to fit four filaments.`;
@@ -458,7 +450,7 @@ function updatePrintPalette() {
   $('print-feature-color-count').textContent=`3MF: ${count} / 4 filament colors across surfaces and enabled features.`;
   $('print-feature-color-count').classList.toggle('error',count>4);
   $('contours').disabled=state.palette==='print';
-  document.querySelector('[data-export="3mf"]').disabled=state.palette!=='print'||!$('solid').checked||count>4;
+  document.querySelector('[data-export="3mf"]').disabled=state.palette!=='print'||count>4;
   $('cover-status').classList.toggle('error',Boolean(coverError));
   $('cover-retry').hidden=!coverError;
   $('cover-status').textContent=coverError||(coverData?(Object.values(coverData.counts).some(count=>count>0)?'Mapped surface colors loaded.':'No mapped surface areas; using Dirt.'):(state.id?'Loading surface map…':'Generate terrain to load mapped surface colors.'));
@@ -506,7 +498,7 @@ function featureStyles() {
 function featuresEnabled() {return Object.values(featureStyles()).some(style=>style.enabled);}
 
 function featureStatus() {
-  updateStyleSummary();
+  
   const styles=featureStyles();
   const filtered=featureData?filterFeatures(featureData,styles,state.data):null;
   for(const name of Object.keys(featureLabels)) {
@@ -699,7 +691,7 @@ function drawProfile(pointer=null) {
   for(let index=0;index<=3;index++) {
     const py=top+index/3*chartHeight,value=high-index/3*(high-low);
     ctx.strokeStyle='#3b4835';ctx.setLineDash([3,4]);ctx.beginPath();ctx.moveTo(left,py);ctx.lineTo(width-right,py);ctx.stroke();
-    ctx.setLineDash([]);ctx.fillStyle='#b4b39a';ctx.textAlign='right';ctx.fillText(number(value*FEET_PER_METER),left-10,py+3);
+    ctx.setLineDash([]);ctx.fillStyle='#b4b39a';ctx.textAlign='right';ctx.fillText(number(value*units().height),left-10,py+3);
   }
   const gradient=ctx.createLinearGradient(0,top,0,height-bottom);gradient.addColorStop(0,'#c3c87d70');gradient.addColorStop(1,'#58704715');
   ctx.beginPath();ctx.moveTo(left,height-bottom);
@@ -708,16 +700,16 @@ function drawProfile(pointer=null) {
   ctx.beginPath();values.forEach((value,index)=>{const px=left+index/(values.length-1)*chartWidth;index?ctx.lineTo(px,y(value)):ctx.moveTo(px,y(value));});
   ctx.strokeStyle='#e6d29b';ctx.lineWidth=1.8;ctx.stroke();
   const rotated=Boolean(rotationAngle(state.data.bounds)),start=horizontal?(rotated?'Left':'W'):(rotated?'Top':'N'),end=horizontal?(rotated?'Right':'E'):(rotated?'Bottom':'S');
-  ctx.fillStyle='#b4b39a';ctx.textAlign='left';ctx.fillText(`${start} · 0 mi`,left,height-6);
-  ctx.textAlign='center';ctx.fillText(`${number(distance/(2*METERS_PER_MILE),1)} mi`,left+chartWidth/2,height-6);
-  ctx.textAlign='right';ctx.fillText(`${number(distance/METERS_PER_MILE,1)} mi · ${end}`,width-right,height-6);
-  $('profile-distance').textContent=`${number(distance/METERS_PER_MILE,2)} mi across`;
+  ctx.fillStyle='#b4b39a';ctx.textAlign='left';ctx.fillText(`${start} · 0 ${units().distanceLabel}`,left,height-6);
+  ctx.textAlign='center';ctx.fillText(`${number(distance/(2*units().distance),1)} ${units().distanceLabel}`,left+chartWidth/2,height-6);
+  ctx.textAlign='right';ctx.fillText(`${number(distance/units().distance,1)} ${units().distanceLabel} · ${end}`,width-right,height-6);
+  $('profile-distance').textContent=`${number(distance/units().distance,2)} ${units().distanceLabel} across`;
   if(pointer!==null) {
     const fraction=clamp((pointer-left)/chartWidth,0,1),index=fraction*(values.length-1),a=Math.floor(index),b=Math.min(a+1,values.length-1);
     const value=values[a]*(1-(index-a))+values[b]*(index-a),px=left+fraction*chartWidth,py=y(value);
     ctx.strokeStyle='#d4b47d';ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(px,top);ctx.lineTo(px,height-bottom);ctx.stroke();ctx.setLineDash([]);
     ctx.fillStyle='#ffedb9';ctx.beginPath();ctx.arc(px,py,3,0,Math.PI*2);ctx.fill();
-    $('profile-tooltip').textContent=`${number(value*FEET_PER_METER,1)} ft ASL · ${number(fraction*distance/METERS_PER_MILE,2)} mi`;
+    $('profile-tooltip').textContent=`${number(value*units().height,1)} ${units().label} ASL · ${number(fraction*distance/units().distance,2)} ${units().distanceLabel}`;
     $('profile-tooltip').style.left=`${clamp(px-60,2,width-145)}px`;$('profile-tooltip').hidden=false;
   }
 }
@@ -725,8 +717,8 @@ function drawProfile(pointer=null) {
 function updateExportDimensions() {
   if(!state.data) return;
   const size=Number($('export-size').value),data=state.data,ratio=size/Math.max(data.width_m,data.height_m);
-  const height=(data.surface_max_m-data.surface_min_m)*Number($('exaggeration').value)*ratio+($('solid').checked?size*Number($('base').value)/100:0);
-  $('export-dimensions').textContent=`${number(data.width_m*ratio,1)} × ${number(data.height_m*ratio,1)} × ${number(height,1)} mm · ${$('solid').checked?'closed solid':'open surface'}`;
+  const height=(data.surface_max_m-data.surface_min_m)*Number($('exaggeration').value)*ratio+size*Number($('base').value)/100;
+  $('export-dimensions').textContent=`${number(data.width_m*ratio,1)} × ${number(data.height_m*ratio,1)} × ${number(height,1)} mm · closed solid`;
 }
 
 function download(blob,name) {
@@ -745,7 +737,7 @@ async function exportGLB() {
     for(let index=0;index<data.elevations.length;index++) colorAt((data.elevations[index]-data.surface_min_m)/Math.max(data.surface_max_m-data.surface_min_m,1e-9),state.palette,color).toArray(colors.array,index*3);
     colors.needsUpdate=true;
   }
-  const ownedMeshes=[new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({vertexColors:true,roughness:.93,flatShading:$('faceted').checked}))];
+  const ownedMeshes=[new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({vertexColors:true,roughness:.93}))];
   ownedMeshes[0].name='Terrain surface';
   if(baseMesh&&opts.solid) {
     const base=new THREE.Mesh(baseMesh.geometry.clone(),new THREE.MeshStandardMaterial({color:baseMesh.material.color,roughness:1}));
@@ -813,13 +805,13 @@ async function screenshot() {
 function updateSelectionParameters() {
   if(!state.selection)return;
   const bounds={...state.selection,rotation_deg:rotationAngle(state.selection)};
-  $('selection-parameters').value=JSON.stringify({name:state.name,label:state.name,bounds},null,2);
+  $('selection-parameters').value=JSON.stringify(bounds,null,2);
   $('copy-selection-status').textContent='';
 }
 
 const styleDefaultsKey='terrain-style-defaults';
 function styleInputs() {
-  return [...document.querySelectorAll('#style-editor input[id], [data-print-color]')];
+  return [...document.querySelectorAll('#terrain-controls input[id], #style-editor input[id], [data-print-color]')];
 }
 function restoreStyleDefaults() {
   try {
@@ -839,11 +831,26 @@ function restoreStyleDefaults() {
   });
   $('exaggeration-value').textContent=`${Number($('exaggeration').value).toFixed(1)}×`;
   $('base-value').textContent=`${$('base').value}%`;
-  $('base').disabled=!$('solid').checked;
   for(const name of ['roads','water'])$(`detail-${name}-value`).textContent=`${$(`detail-${name}`).value}%`;
 }
 
+function setUnits(value) {
+  state.units=value==='m'?'m':'ft';
+  document.querySelectorAll('[data-units]').forEach(button=>{
+    const active=button.dataset.units===state.units;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
+  });
+  $('profile-units-note').textContent=`Heights in ${units().name} above sea level`;
+  $('profile').setAttribute('aria-label',`Elevation cross section in ${units().name} above sea level`);
+  if(state.selection)updateSelectionSize();
+  if(state.data){updateLegend();updateStats();drawProfile();}
+}
+
 function wireControls() {
+  document.querySelectorAll('[data-units]').forEach(button=>button.addEventListener('click',()=>{
+    try{localStorage.setItem('terrain-units',button.dataset.units);}catch{/* Optional persistence. */}
+    setUnits(button.dataset.units);
+  }));
+  try{setUnits(localStorage.getItem('terrain-units'));}catch{setUnits('ft');}
   $('copy-selection').addEventListener('click',async()=>{
     const field=$('selection-parameters');
     try {
@@ -863,17 +870,6 @@ function wireControls() {
       $('style-defaults-status').textContent='Unable to save defaults. Allow browser storage and try again.';
     }
   });
-  $('edit-style').addEventListener('click',()=>{
-    const bounds=state.selection?{...state.selection}:null;
-    const expanded=$('edit-style').getAttribute('aria-expanded')!=='true';
-    $('edit-style').setAttribute('aria-expanded',String(expanded));
-    $('edit-style').textContent=expanded?'Done ✓':'Edit ↗';
-    $('style-editor').hidden=!expanded;$('style-summary').hidden=expanded;
-    $('style-sidebar').classList.toggle('editing',expanded);updateStyleSummary();
-    if(selectionFrame&&bounds)selectionFrame.resizeViewport(bounds);
-  });
-  $('style-editor').addEventListener('input',updateStyleSummary);
-  $('style-editor').addEventListener('change',updateStyleSummary);
   document.querySelectorAll('[data-feature-detail]').forEach(input=>input.addEventListener('input',()=>{
     $(`detail-${input.dataset.featureDetail}-value`).textContent=`${input.value}%`;
     featureError=null;rebuildFeatures();
@@ -937,8 +933,6 @@ function wireControls() {
   document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>changeView(button.dataset.view)));
   $('exaggeration').addEventListener('input',()=>{$('exaggeration-value').textContent=`${Number($('exaggeration').value).toFixed(1)}×`;buildScene();updateExportDimensions();});
   $('base').addEventListener('input',()=>{$('base-value').textContent=`${$('base').value}%`;buildScene();updateExportDimensions();});
-  for(const id of ['solid','faceted']) $(id).addEventListener('change',()=>{buildScene();updateExportDimensions();});
-  $('solid').addEventListener('change',()=>{$('base').disabled=!$('solid').checked;updatePrintPalette();});
   $('contours').addEventListener('change',()=>{if(topMesh?.material.userData.shader)topMesh.material.userData.shader.uniforms.showContours.value=$('contours').checked?1:0;});
   $('reset-camera').addEventListener('click',resetCamera);
   $('rotate').addEventListener('click',()=>{if(!sceneReady)return;controls.autoRotate=!controls.autoRotate;$('rotate').setAttribute('aria-pressed',String(controls.autoRotate));});
