@@ -13,7 +13,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from terrain_app.landcover import COVER_NAMES
 from terrain_app.server import create_app
 
-app = create_app({"TESTING": True})
+ROOT = Path(__file__).resolve().parents[1]
+# Fixed landscapes and terrain, so editing the app's own list never changes what the browser test sees.
+LANDSCAPES = {
+    "roan": {"name": "Roan Mountain", "label": "Roan Mountain, USA",
+             "bounds": {"south": 36.080, "west": -82.165, "north": 36.145, "east": -82.055}},
+    "rainier": {"name": "Mount Rainier", "label": "Mount Rainier, USA",
+                "bounds": {"south": 46.775, "west": -121.865, "north": 46.930, "east": -121.645}},
+    "fuji": {"name": "Mount Fuji", "label": "Mount Fuji, Japan",
+             "bounds": {"south": 35.29, "west": 138.66, "north": 35.43, "east": 138.81}},
+}
+app = create_app({"TESTING": True, "LANDSCAPES": LANDSCAPES, "DEFAULT_LANDSCAPE": "roan",
+                  "EXAMPLE_PATH": ROOT / "tests" / "fixtures" / "roan.npz"})
 
 
 def fixture_cover(bounds):
@@ -29,7 +40,7 @@ app.extensions["terrain"]["landcover"].fetch = fixture_cover
 
 
 def fixture_features(bounds):
-    data = json.loads((Path(__file__).resolve().parents[1] / "tests/fixtures/features.json").read_text())
+    data = json.loads((Path(__file__).resolve().parents[1] / "tests/fixtures/features.json").read_text(encoding="utf-8"))
     data["bounds"] = bounds.to_dict()
     return data
 

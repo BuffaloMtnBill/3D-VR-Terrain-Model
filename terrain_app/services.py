@@ -3,7 +3,9 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import os
 import re
+import sys
 from threading import Lock
 import time
 import uuid
@@ -11,6 +13,15 @@ import uuid
 import requests
 
 USER_AGENT = "Terrain-Studio/1.0 (local 3D-Map-Extractor)"
+
+
+def default_cache_dir() -> Path:
+    """The per-user cache folder for this operating system, independent of where the app is launched."""
+    if sys.platform == "win32":
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "TerrainStudio" / "Cache"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "TerrainStudio"
+    return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "terrain-studio"
 
 
 def response_json(response, max_bytes, kind=dict):

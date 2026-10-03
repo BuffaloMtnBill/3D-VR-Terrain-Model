@@ -1,27 +1,56 @@
-"""Named selection areas shared by the map UI and bundled terrain loader.
+"""Famous landscapes: the named areas in the map UI's list, read from data/DefaultProfiles.txt.
 
-Each entry needs a name, a label for the Famous landscapes list, and bounds. It may also
-carry what Current box parameters > Copy parameters produces in the app:
+The file holds one entry after another. Each is a line with the name shown in the list,
+followed by the JSON that Current box parameters > Copy produces in the app:
 
-    "zoom": the map zoom to show the area at (never closer than the area fits), and
-    "settings": {"palette": ..., "controls": {...}}, the right-hand rendering settings
-        (map features, colors, detail, 3D buildings, print palette) applied on selection.
+    Roan Mountain, TN
+    {"bounds": {...}, "zoom": 12.71, "settings": {"palette": "alpine", "controls": {...}}}
 
-Entries without settings leave the current rendering settings unchanged.
+"bounds" is required. "zoom" is the map zoom to show the area at (never closer than the
+area fits). "settings" are the right-hand rendering settings applied when the entry is
+selected; entries without them leave the current settings unchanged. The first entry is
+the one shown when the app starts.
 """
+import json
+from pathlib import Path
+import re
 
-DEFAULT_PLACE = "roan"
-PRESETS = {
-    "roan": {"name": "Roan Mountain", "label": "Roan Mountain, USA",
-             "bounds": {"south": 36.080, "west": -82.165, "north": 36.145, "east": -82.055}},
-    "rainier": {"name": "Mount Rainier", "label": "Mount Rainier, USA",
-                "bounds": {"south": 46.775, "west": -121.865, "north": 46.930, "east": -121.645}},
-    "yosemite": {"name": "Yosemite Valley", "label": "Yosemite Valley, USA",
-                 "bounds": {"south": 37.695, "west": -119.665, "north": 37.785, "east": -119.525}},
-    "fuji": {"name": "Mount Fuji", "label": "Mount Fuji, Japan",
-             "bounds": {"south": 35.29, "west": 138.66, "north": 35.43, "east": 138.81}},
-    "canyon": {"name": "Grand Canyon", "label": "Grand Canyon, USA",
-               "bounds": {"south": 36.015, "west": -112.23, "north": 36.15, "east": -112.045}},
-    "alps": {"name": "Chamonix", "label": "Chamonix, French Alps",
-             "bounds": {"south": 45.82, "west": 6.76, "north": 45.965, "east": 6.995}},
-}
+from .elevation import Bounds
+
+LANDSCAPES_FILE = Path(__file__).parent / "data" / "DefaultProfiles.txt"
+
+
+def parse_landscapes(text: str) -> dict:
+    """Entries keyed by a URL-safe form of their name, in file order."""
+    decoder, position, places = json.JSONDecoder(), 0, {}
+    while True:
+        start = text.find("{", position)
+        label = " ".join(text[position:start if start >= 0 else None].split())
+        if start < 0:
+            if label:
+                raise ValueError(f"Famous landscape '{label}' has no parameters after its name.")
+            break
+        if not label:
+            raise ValueError("Every famous landscape needs a name on the line above its parameters.")
+        try:
+            entry, position = decoder.raw_decode(text, start)
+            # Validated here so a bad entry is reported by name at startup, not as a broken map.
+            bounds = Bounds.from_dict(entry["bounds"]).to_dict()
+        except (ValueError, KeyError, TypeError) as error:
+            raise ValueError(f"Famous landscape '{label}' is not valid: {error}") from None
+        key = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+        if not key or key in places or key == "custom":
+            raise ValueError(f"Famous landscape '{label}' needs a different name; each must be unique.")
+        places[key] = {"name": label.split(",")[0].strip(), "label": label, "bounds": bounds}
+        zoom, settings = entry.get("zoom"), entry.get("settings")
+        if isinstance(zoom, (int, float)) and not isinstance(zoom, bool) and 0 <= zoom <= 22:
+            places[key]["zoom"] = zoom
+        if isinstance(settings, dict) and isinstance(settings.get("controls"), dict):
+            places[key]["settings"] = {"palette": settings.get("palette"), "controls": settings["controls"]}
+    if not places:
+        raise ValueError("The famous landscapes file lists no landscapes.")
+    return places
+
+
+PRESETS = parse_landscapes(LANDSCAPES_FILE.read_text(encoding="utf-8"))
+DEFAULT_PLACE = next(iter(PRESETS))

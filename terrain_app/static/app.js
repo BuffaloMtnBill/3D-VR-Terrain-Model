@@ -137,7 +137,7 @@ function setupMap(config) {
   selectMapStyle('terrain');
   $('map-style').addEventListener('change',event=>selectMapStyle(event.target.value));
   selectionFrame=new SelectionFrame(map,(bounds,custom=true)=>updateSelection(bounds,false,custom));
-  updateSelection(state.selection,true,false);
+  updateSelection(state.selection,true,false,presets[$('place').value]?.zoom);
   $('reset-frame').addEventListener('click',()=>selectionFrame.reset());
   $('place').addEventListener('change',event=>{
     const preset=presets[event.target.value];
@@ -1047,6 +1047,10 @@ async function init() {
       await loadSurface('example',true);
       $('selection-state').textContent='Bundled real terrain';
     } else { $('scene-empty').hidden=false; $('scene-detail').textContent='Select an area to begin'; }
+    // The opening landscape brings its own rendering settings unless this browser has saved defaults.
+    let savedDefaults=false;
+    try{savedDefaults=localStorage.getItem(styleDefaultsKey)!==null;}catch{/* Storage is optional. */}
+    if(!savedDefaults)applyRenderingSettings(initialPlace.settings);
   } catch(error) { notify(`Could not initialize Terrain Studio: ${error.message}`,true);console.error(error); }
 }
 

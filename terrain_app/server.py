@@ -14,7 +14,7 @@ from .elevation import Bounds, DEFAULT_SOURCE, SOURCES, THREE_DEP_URL, Elevation
 from .mesh import ModelOptions, export_file, relief_method, shape_elevations, smooth_elevations
 from .places import DEFAULT_PLACE, PRESETS
 from .features import FeatureClient, OVERPASS_URL, layer_options
-from .services import GEOCODER_URL, PlaceClient, ZipClient, ZipLookupError
+from .services import GEOCODER_URL, PlaceClient, ZipClient, ZipLookupError, default_cache_dir
 from .landcover import LandCoverClient, print_colors, face_classes
 from .printing import export_3mf
 
@@ -25,8 +25,9 @@ STREET_ATTRIBUTION = '© <a href="https://www.openstreetmap.org/copyright" targe
 TERRAIN_ATTRIBUTION = STREET_ATTRIBUTION + ' · SRTM · <a href="https://opentopomap.org/about" target="_blank" rel="noopener">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener">CC-BY-SA</a>)'
 
 
-def load_example():
-    path = ROOT / "data" / f"{DEFAULT_PLACE}.npz"
+def load_example(path=None):
+    """The bundled terrain for the landscape shown at startup, if one has been captured for it."""
+    path = Path(path or ROOT / "data" / f"{DEFAULT_PLACE}.npz")
     if not path.exists():
         return None
     with np.load(path, allow_pickle=False) as data:
@@ -50,7 +51,8 @@ def create_app(test_config=None):
                       MAP_TILE_URL=os.environ.get("TERRAIN_MAP_TILE_URL", "https://tile.opentopomap.org/{z}/{x}/{y}.png"),
                       MAP_ATTRIBUTION=os.environ.get("TERRAIN_MAP_ATTRIBUTION", TERRAIN_ATTRIBUTION),
                       MAP_MAX_NATIVE_ZOOM=int(os.environ.get("TERRAIN_MAP_MAX_NATIVE_ZOOM", "17")),
-                      CACHE_DIR=os.environ.get("TERRAIN_CACHE_DIR", str(Path.cwd() / ".cache" / "elevation")))
+                      CACHE_DIR=os.environ.get("TERRAIN_CACHE_DIR", str(default_cache_dir() / "elevation")),
+                      LANDSCAPES=PRESETS, DEFAULT_LANDSCAPE=DEFAULT_PLACE, EXAMPLE_PATH=None)
     if test_config:
         app.config.update(test_config)
     client = ElevationClient(Path(app.config["CACHE_DIR"]))
@@ -69,7 +71,10 @@ def create_app(test_config=None):
     feature_jobs = {}
     building_jobs = {}
     cover_jobs = {}
-    example = load_example()
+    presets, default_place = app.config["LANDSCAPES"], app.config["DEFAULT_LANDSCAPE"]
+    example = load_example(app.config["EXAMPLE_PATH"])
+    if example is not None and example.bounds != Bounds.from_dict(presets[default_place]["bounds"]):
+        example = None  # captured for a different area than the first landscape now describes
     app.extensions["terrain"] = {"client": client, "clients": clients, "jobs": jobs, "lock": lock, "executor": executor,
                                  "features": feature_client, "feature_jobs": feature_jobs, "building_jobs": building_jobs, "zip": zip_client, "places": place_client,
                                  "landcover": cover_client, "cover_jobs": cover_jobs}
@@ -171,14 +176,14 @@ def create_app(test_config=None):
 
     @app.get("/")
     def index():
-        return render_template("index.html", presets=PRESETS, default_place=DEFAULT_PLACE)
+        return render_template("index.html", presets=presets, default_place=default_place)
 
     @app.get("/api/config")
     def config():
         return jsonify(map_tile_url=app.config["MAP_TILE_URL"], map_attribution=app.config["MAP_ATTRIBUTION"],
                        map_max_native_zoom=app.config["MAP_MAX_NATIVE_ZOOM"],
                        street_tile_url=STREET_URL, street_attribution=STREET_ATTRIBUTION,
-                       presets=PRESETS, default_place=DEFAULT_PLACE,
+                       presets=presets, default_place=default_place,
                        elevation_sources={key: value["label"] for key, value in SOURCES.items()},
                        example_available=example is not None)
 

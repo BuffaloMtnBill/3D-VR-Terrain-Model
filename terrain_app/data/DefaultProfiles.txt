@@ -1,0 +1,322 @@
+Roan Mountain, TN
+{
+  "bounds": {
+    "north": 36.12927106707485,
+    "south": 36.07226152518194,
+    "west": -82.1630622972176,
+    "east": -82.03762595722006,
+    "rotation_deg": 0
+  },
+  "zoom": 12.71,
+  "settings": {
+    "palette": "alpine",
+    "controls": {
+      "feature-roads": true,
+      "color-roads": "#fee0b0",
+      "detail-roads": 50,
+      "feature-railways": true,
+      "color-railways": "#e9a16b",
+      "group-boundaries": true,
+      "feature-borders": true,
+      "color-borders": "#ce9678",
+      "feature-cities": false,
+      "color-cities": "#dbaecf",
+      "feature-parks": false,
+      "color-parks": "#a8c586",
+      "feature-water": true,
+      "color-water": "#1c71d8",
+      "detail-water": 100,
+      "feature-buildings": false,
+      "color-buildings": "#f8e45c",
+      "buildings-detailed": true,
+      "group-trails": true,
+      "feature-at": true,
+      "color-at": "#f0ead6",
+      "feature-trails": false,
+      "color-trails": "#d9c79a",
+      "print-dark_foliage": "#234e40",
+      "print-light_foliage": "#234e40",
+      "print-dirt": "#234e40",
+      "print-snow": "#f0ead6",
+      "print-water": "#619ea5",
+      "print-buildings": "#234e40"
+    }
+  }
+}
+
+Mt. Rainier, WA
+{
+  "bounds": {
+    "east": -121.645,
+    "north": 46.93,
+    "south": 46.775,
+    "west": -121.865,
+    "rotation_deg": 0
+  },
+  "zoom": 11.22,
+  "settings": {
+    "palette": "alpine",
+    "controls": {
+      "feature-roads": false,
+      "color-roads": "#fee0b0",
+      "detail-roads": 50,
+      "feature-railways": false,
+      "color-railways": "#e9a16b",
+      "group-boundaries": false,
+      "feature-borders": true,
+      "color-borders": "#ce9678",
+      "feature-cities": false,
+      "color-cities": "#dbaecf",
+      "feature-parks": false,
+      "color-parks": "#a8c586",
+      "feature-water": true,
+      "color-water": "#1c71d8",
+      "detail-water": 100,
+      "feature-buildings": false,
+      "color-buildings": "#f8e45c",
+      "buildings-detailed": true,
+      "group-trails": false,
+      "feature-at": true,
+      "color-at": "#f0ead6",
+      "feature-trails": false,
+      "color-trails": "#d9c79a",
+      "print-dark_foliage": "#234e40",
+      "print-light_foliage": "#234e40",
+      "print-dirt": "#234e40",
+      "print-snow": "#f0ead6",
+      "print-water": "#619ea5",
+      "print-buildings": "#234e40"
+    }
+  }
+}
+
+Yosemite, CA
+{
+  "bounds": {
+    "north": 37.77580673215381,
+    "south": 37.715524237574286,
+    "west": -119.61899063675821,
+    "east": -119.52521070123247,
+    "rotation_deg": -15.277561232075755
+  },
+  "zoom": 12.79,
+  "settings": {
+    "palette": "alpine",
+    "controls": {
+      "feature-roads": true,
+      "color-roads": "#fee0b0",
+      "detail-roads": 50,
+      "feature-railways": false,
+      "color-railways": "#e9a16b",
+      "group-boundaries": false,
+      "feature-borders": true,
+      "color-borders": "#ce9678",
+      "feature-cities": false,
+      "color-cities": "#dbaecf",
+      "feature-parks": false,
+      "color-parks": "#a8c586",
+      "feature-water": true,
+      "color-water": "#1c71d8",
+      "detail-water": 100,
+      "feature-buildings": false,
+      "color-buildings": "#f8e45c",
+      "buildings-detailed": true,
+      "group-trails": false,
+      "feature-at": true,
+      "color-at": "#f0ead6",
+      "feature-trails": false,
+      "color-trails": "#d9c79a",
+      "print-dark_foliage": "#234e40",
+      "print-light_foliage": "#234e40",
+      "print-dirt": "#234e40",
+      "print-snow": "#f0ead6",
+      "print-water": "#619ea5",
+      "print-buildings": "#234e40"
+    }
+  }
+}
+
+Mt. Fuji, Japan
+{
+  "bounds": {
+    "east": 138.81,
+    "north": 35.43,
+    "south": 35.29,
+    "west": 138.66,
+    "rotation_deg": 0
+  },
+  "zoom": 11.62,
+  "settings": {
+    "palette": "alpine",
+    "controls": {
+      "feature-roads": false,
+      "color-roads": "#fee0b0",
+      "detail-roads": 50,
+      "feature-railways": false,
+      "color-railways": "#e9a16b",
+      "group-boundaries": false,
+      "feature-borders": true,
+      "color-borders": "#ce9678",
+      "feature-cities": false,
+      "color-cities": "#dbaecf",
+      "feature-parks": false,
+      "color-parks": "#a8c586",
+      "feature-water": true,
+      "color-water": "#1c71d8",
+      "detail-water": 100,
+      "feature-buildings": false,
+      "color-buildings": "#f8e45c",
+      "buildings-detailed": true,
+      "group-trails": false,
+      "feature-at": true,
+      "color-at": "#f0ead6",
+      "feature-trails": false,
+      "color-trails": "#d9c79a",
+      "print-dark_foliage": "#234e40",
+      "print-light_foliage": "#234e40",
+      "print-dirt": "#234e40",
+      "print-snow": "#f0ead6",
+      "print-water": "#619ea5",
+      "print-buildings": "#234e40"
+    }
+  }
+}
+
+Grand Canyon, AZ
+{
+  "bounds": {
+    "north": 36.119965035776616,
+    "south": 36.074926357502164,
+    "west": -112.18338172926633,
+    "east": -112.08428870293966,
+    "rotation_deg": 2.2830081082910283
+  },
+  "zoom": 12.81,
+  "settings": {
+    "palette": "desert",
+    "controls": {
+      "feature-roads": false,
+      "color-roads": "#fee0b0",
+      "detail-roads": 50,
+      "feature-railways": false,
+      "color-railways": "#e9a16b",
+      "group-boundaries": false,
+      "feature-borders": true,
+      "color-borders": "#ce9678",
+      "feature-cities": false,
+      "color-cities": "#dbaecf",
+      "feature-parks": false,
+      "color-parks": "#a8c586",
+      "feature-water": true,
+      "color-water": "#1c71d8",
+      "detail-water": 100,
+      "feature-buildings": false,
+      "color-buildings": "#f8e45c",
+      "buildings-detailed": true,
+      "group-trails": true,
+      "feature-at": true,
+      "color-at": "#f0ead6",
+      "feature-trails": true,
+      "color-trails": "#d9c79a",
+      "print-dark_foliage": "#234e40",
+      "print-light_foliage": "#234e40",
+      "print-dirt": "#234e40",
+      "print-snow": "#f0ead6",
+      "print-water": "#619ea5",
+      "print-buildings": "#234e40"
+    }
+  }
+}
+
+Paris, France
+{
+  "bounds": {
+    "north": 48.861838916703626,
+    "south": 48.848498180098915,
+    "west": 2.3282743633284326,
+    "east": 2.3553087158201014,
+    "rotation_deg": 17.293881418168212
+  },
+  "zoom": 14.03,
+  "settings": {
+    "palette": "alpine",
+    "controls": {
+      "feature-roads": true,
+      "color-roads": "#fee0b0",
+      "detail-roads": 50,
+      "feature-railways": false,
+      "color-railways": "#e9a16b",
+      "group-boundaries": false,
+      "feature-borders": true,
+      "color-borders": "#ce9678",
+      "feature-cities": false,
+      "color-cities": "#dbaecf",
+      "feature-parks": false,
+      "color-parks": "#a8c586",
+      "feature-water": true,
+      "color-water": "#1c71d8",
+      "detail-water": 100,
+      "feature-buildings": true,
+      "color-buildings": "#9a9996",
+      "buildings-detailed": true,
+      "group-trails": false,
+      "feature-at": true,
+      "color-at": "#f0ead6",
+      "feature-trails": true,
+      "color-trails": "#d9c79a",
+      "print-dark_foliage": "#234e40",
+      "print-light_foliage": "#234e40",
+      "print-dirt": "#234e40",
+      "print-snow": "#f0ead6",
+      "print-water": "#619ea5",
+      "print-buildings": "#234e40"
+    }
+  }
+}
+
+Pittsburgh, PA
+{
+  "bounds": {
+    "north": 40.45755077608255,
+    "south": 40.429100327737416,
+    "west": -80.03577541939927,
+    "east": -79.98593108350273,
+    "rotation_deg": 17.293881418168212
+  },
+  "zoom": 13.15,
+  "settings": {
+    "palette": "alpine",
+    "controls": {
+      "feature-roads": true,
+      "color-roads": "#fee0b0",
+      "detail-roads": 50,
+      "feature-railways": false,
+      "color-railways": "#e9a16b",
+      "group-boundaries": false,
+      "feature-borders": true,
+      "color-borders": "#ce9678",
+      "feature-cities": false,
+      "color-cities": "#dbaecf",
+      "feature-parks": false,
+      "color-parks": "#a8c586",
+      "feature-water": true,
+      "color-water": "#1c71d8",
+      "detail-water": 100,
+      "feature-buildings": true,
+      "color-buildings": "#9a9996",
+      "buildings-detailed": true,
+      "group-trails": false,
+      "feature-at": true,
+      "color-at": "#f0ead6",
+      "feature-trails": true,
+      "color-trails": "#d9c79a",
+      "print-dark_foliage": "#234e40",
+      "print-light_foliage": "#234e40",
+      "print-dirt": "#234e40",
+      "print-snow": "#f0ead6",
+      "print-water": "#619ea5",
+      "print-buildings": "#234e40"
+    }
+  }
+}
+

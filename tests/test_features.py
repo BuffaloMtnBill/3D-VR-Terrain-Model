@@ -496,3 +496,24 @@ def test_coastlines_turn_open_sea_into_water():
     cover = prepare_cover({"elements": [coast, island]}, bounds)
     assert Polygon(cover["regions"]["water"][0]["outer"], cover["regions"]["water"][0]["holes"]).area == pytest.approx(.48, abs=1e-6)
     assert 'way["natural"="coastline"]' in overpass_query(bounds)
+
+
+@pytest.mark.parametrize("platform,environment,expected", [
+    ("win32", {"LOCALAPPDATA": "C:/Users/someone/AppData/Local"}, "C:/Users/someone/AppData/Local/TerrainStudio/Cache"),
+    ("linux", {"XDG_CACHE_HOME": "/var/cache/someone"}, "/var/cache/someone/terrain-studio"),
+    ("linux", {}, "~/.cache/terrain-studio"), ("darwin", {}, "~/Library/Caches/TerrainStudio")])
+def test_cache_lives_in_the_per_user_cache_folder(monkeypatch, tmp_path, platform, environment, expected):
+    from pathlib import Path
+    from terrain_app import services
+    monkeypatch.setattr(services.sys, "platform", platform)
+    for name in ("LOCALAPPDATA", "XDG_CACHE_HOME", "TERRAIN_CACHE_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    assert services.default_cache_dir() == Path(expected).expanduser()
+    app = create_app({"TESTING": True})
+    try:
+        assert Path(app.config["CACHE_DIR"]) == services.default_cache_dir() / "elevation"
+        assert Path.cwd() not in Path(app.config["CACHE_DIR"]).parents
+    finally:
+        app.extensions["terrain"]["executor"].shutdown(wait=True)

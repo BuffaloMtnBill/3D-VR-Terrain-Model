@@ -1,6 +1,7 @@
 from collections import Counter
 from io import BytesIO
 import json
+import re
 import struct
 import time
 
@@ -271,10 +272,8 @@ def test_real_bundled_example_is_present():
     terrain = load_example()
     assert terrain is not None
     assert terrain.bounds == Bounds.from_dict(PRESETS[DEFAULT_PLACE]["bounds"])
-    assert terrain.elevations.shape == (117, 160)
-    assert 850 < terrain.elevations.min() < 950
-    assert 1850 < terrain.elevations.max() < 1950
-    assert terrain.tile_count == 2
+    assert max(terrain.elevations.shape) == 160 and min(terrain.elevations.shape) >= 16
+    assert 900 < terrain.elevations.min() < 1100 and 1850 < terrain.elevations.max() < 1950  # Roan Mountain, in meters
     vertices, faces = build_mesh(terrain, ModelOptions(smoothing=1))
     assert_closed_and_outward(vertices, faces)
 
@@ -282,17 +281,48 @@ def test_real_bundled_example_is_present():
 def test_default_location_and_terrain_map_are_consistent(application):
     client = application.test_client()
     config = client.get("/api/config").get_json()
-    assert config["default_place"] == "roan"
-    assert {"roan", "rainier", "yosemite", "fuji", "canyon", "alps"} <= config["presets"].keys()
-    assert client.get("/api/terrain/example").get_json()["bounds"] == config["presets"]["roan"]["bounds"]
+    assert config["default_place"] == DEFAULT_PLACE == next(iter(PRESETS)) and config["example_available"]
+    assert config["presets"] == PRESETS
+    assert client.get("/api/terrain/example").get_json()["bounds"] == config["presets"][DEFAULT_PLACE]["bounds"]
     assert config["map_tile_url"] == "https://tile.opentopomap.org/{z}/{x}/{y}.png"
     assert config["map_max_native_zoom"] == 17
     assert "OpenTopoMap" in config["map_attribution"]
     assert config["street_tile_url"] == "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
     html = client.get("/").get_data(as_text=True)
-    assert '<option value="roan" selected>Roan Mountain, USA</option>' in html
-    assert '<option value="rainier">Mount Rainier, USA</option>' in html
-    assert '<h2 id="landscape-title">Roan Mountain</h2>' in html
+    options = re.findall(r'<option value="([^"]+)"( selected)?>([^<]+)</option>', html.split('<select id="place">')[1].split("</select>")[0])
+    assert options == [(key, " selected" if key == DEFAULT_PLACE else "", place["label"]) for key, place in PRESETS.items()] + [("custom", "", "Custom selection")]
+    assert f'<h2 id="landscape-title">{PRESETS[DEFAULT_PLACE]["name"]}</h2>' in html
+
+
+def test_famous_landscapes_come_only_from_the_profiles_file():
+    from terrain_app.places import LANDSCAPES_FILE, parse_landscapes
+    text = LANDSCAPES_FILE.read_text(encoding="utf-8")
+    names = [line.strip() for line in text.splitlines() if line.strip() and line[0] not in ' {}"']
+    assert [place["label"] for place in PRESETS.values()] == names and len(names) >= 1
+    template = (LANDSCAPES_FILE.parents[1] / "templates" / "index.html").read_text(encoding="utf-8")
+    for place in PRESETS.values():
+        for control in place.get("settings", {}).get("controls", {}):
+            assert f'id="{control}"' in template, f"{place['label']}: unknown control {control}"
+    entry = '{"bounds": {"south": 1, "west": 1, "north": 1.1, "east": 1.1, "rotation_deg": 0}, "zoom": 12}'
+    parsed = parse_landscapes(f"Test Peak, Nowhere\n{entry}\n\nSecond Place\n{entry}")
+    assert list(parsed) == ["test-peak-nowhere", "second-place"]
+    assert parsed["test-peak-nowhere"] == {"name": "Test Peak", "label": "Test Peak, Nowhere", "zoom": 12,
+                                           "bounds": {"south": 1, "west": 1, "north": 1.1, "east": 1.1}}
+    for bad in ("", entry, f"A\n{entry}\nA\n{entry}", "A\n{\"bounds\": {\"south\": 5}}", f"A\n{entry}\nB", "A\n{broken"):
+        with pytest.raises(ValueError):
+            parse_landscapes(bad)
+
+
+def test_bundled_terrain_is_dropped_when_the_first_landscape_changes(tmp_path):
+    moved = {"elsewhere": {"name": "Elsewhere", "label": "Elsewhere", "bounds": {"south": 1, "west": 1, "north": 1.1, "east": 1.1}}}
+    app = create_app({"TESTING": True, "CACHE_DIR": tmp_path / "tiles", "LANDSCAPES": moved, "DEFAULT_LANDSCAPE": "elsewhere"})
+    try:
+        client = app.test_client()
+        assert client.get("/api/config").get_json()["example_available"] is False
+        assert client.get("/api/terrain/example").status_code == 404
+        assert '<option value="elsewhere" selected>Elsewhere</option>' in client.get("/").get_data(as_text=True)
+    finally:
+        app.extensions["terrain"]["executor"].shutdown(wait=True)
 
 
 def test_http_example_smoothing_export_and_validation(application):

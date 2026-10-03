@@ -8,10 +8,35 @@ contour lines; the map-style selector also offers a street map.
 
 ## Run
 
-Requires Python 3.11 or newer and a modern browser with WebGL support.
+Requires Python 3.11 or newer and a modern browser with WebGL support. No API
+keys or accounts are needed. Get the code with `git clone`, or with
+**Code → Download ZIP** on GitHub and unzip it.
+
+### Windows
+
+1. Install Python 3.11 or newer from [python.org](https://www.python.org/downloads/windows/).
+   Leave **Add python.exe to PATH** ticked in the installer.
+2. Double-click **`run.bat`** in the project folder.
+
+The first run sets up a private Python environment in the `.venv` folder and
+downloads the required packages, which takes a few minutes. After that it
+starts in seconds and opens the app in your browser. Close the window, or press
+Ctrl+C in it, to stop. If Windows SmartScreen asks, choose **More info → Run
+anyway**; the file is a short, readable script.
+
+To do the same by hand in PowerShell:
+
+```powershell
+cd 3D-Map-Extractor
+py -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python app.py --open
+```
+
+### macOS and Linux
 
 ```bash
-cd /home/will/Projects/3D-Map-Extractor
+cd 3D-Map-Extractor
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
@@ -74,8 +99,7 @@ browser. You can also install with `pip install .` and run `terrain-studio`.
 The default Roan Mountain terrain is a **real bundled DEM**, downloaded from
 Mapzen Terrain Tiles. It renders without network access. New area extraction and
 map tiles, place search, ZIP lookup, and feature layers require internet access. The UI libraries are bundled locally.
-The Explore a place list includes Roan Mountain, Mount Rainier, Yosemite Valley,
-Mount Fuji, Grand Canyon, and Chamonix.
+The Famous landscapes list comes from `terrain_app/data/DefaultProfiles.txt`.
 
 ## Controls
 
@@ -182,8 +206,8 @@ as the model's zero-height reference. Retain source attribution when sharing.
 with contour lines, using OpenStreetMap and SRTM data. The street-map option
 uses OpenStreetMap's standard tiles. By default, heights come from the public
 [Mapzen / Tilezen Terrain Tiles dataset on AWS](https://registry.opendata.aws/terrain-tiles/),
-decoded from Terrarium PNG tiles. The program caches these tiles for 30 days in
-`.cache/elevation/` under the directory where you launch it. At most 64 tiles are
+decoded from Terrarium PNG tiles. The program caches these tiles for 30 days in the
+`elevation` folder of its cache directory (see [Cache location](#cache-location)). At most 64 tiles are
 used for a selection, with four simultaneous tile downloads. Local jobs are
 limited to two simultaneous extractions and four outstanding jobs.
 
@@ -199,7 +223,7 @@ USGS 3DEP heights come from The National Map's public
 [3DEP elevation image service](https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer),
 which needs no API key and is public domain. Each selection is one request for a
 Web Mercator raster at twice the grid density (never finer than 1 m, at most
-1200 pixels per side), cached for 30 days in `.cache/3dep/`. The extra detail
+1200 pixels per side), cached for 30 days in the cache directory's `3dep` folder. The extra detail
 shows on small selections: at 384 points, an area wider than about 4 km is
 already sampled more coarsely than Mapzen's 10 m data. Selections outside the
 United States, or reaching beyond the edge of its coverage, fail with a message
@@ -241,14 +265,14 @@ A provider must support CORS to use its tiles as a 3D texture.
 Address and place-name search uses OpenStreetMap data through the public
 [Nominatim](https://nominatim.org/) service. Searches run when you submit the
 box (there is no as-you-type lookup), return the best single match, are limited
-to one request per second, and cache for 30 days in `.cache/places/`, following
+to one request per second, and cache for 30 days in the cache directory's `places` folder, following
 the [Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/).
 Coverage and address precision depend on OSM.
 
 US ZIP locations come from [Zippopotam.us](https://www.zippopotam.us/), using
 GeoNames data. Leading zeros are preserved; ZIP+4 uses its five-digit area.
 Locations are representative points for the ZIP area. Lookups cache for 30 days
-in `.cache/zip/`. Click Generate terrain after navigating to create its model.
+in the cache directory's `zip` folder. Click Generate terrain after navigating to create its model.
 
 Features come from [OpenStreetMap](https://www.openstreetmap.org/copyright)
 through the public Overpass API. One request fetches every category except
@@ -259,7 +283,7 @@ requests are limited to **50 km per side**, two simultaneous downloads, and, per
 40 MB of response data, 40,000 OSM elements, and 200,000 input points. Buildings
 are a separate request with their own allowance. Queries may run for 60 seconds
 on the Overpass server; the app waits up to 75 seconds for the response. Results cache for seven days in
-`.cache/features/`. Rotated areas fetch their enclosing geographic extent, then
+the cache directory's `features` folder. Rotated areas fetch their enclosing geographic extent, then
 clip linework and polygons to the actual selected rectangle. Elevation exaggeration moves the overlays with the surface.
 
 Borders represent OSM administrative levels 2–6 (country, state, and county);
@@ -307,7 +331,7 @@ Mapped glaciers/permanent snow use Snow; mapped water areas use Water;
 building footprints use Buildings. Unmapped ground uses Dirt. These are mapped
 land-cover classes, not satellite-image analysis or current seasonal snow.
 A separate bounded request fetches and caches these areas for seven days in
-`.cache/landcover/` when Print is selected; areas support up to 50 km per side.
+the cache directory's `landcover` folder when Print is selected; areas support up to 50 km per side.
 Loading errors expose a retry control instead of inventing coverage.
 
 Triangle centroids select each face's surface class. Color boundaries therefore
@@ -322,13 +346,27 @@ height and shared seams. It follows the [3MF Core specification](https://github.
 These are multi-part models: match each part to a filament in your slicer.
 GLB and preview PNG also preserve the mapped palette; STL has no material colors.
 
+## Cache location
+
+Downloaded elevation, map features, and search results are kept in a per-user
+cache folder, wherever the app is started from:
+
+| System | Folder |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\TerrainStudio\Cache` |
+| macOS | `~/Library/Caches/TerrainStudio` |
+| Linux | `$XDG_CACHE_HOME/terrain-studio`, or `~/.cache/terrain-studio` |
+
+The app prints the folder when it starts. It is safe to delete at any time; data
+is downloaded again when needed. Set `TERRAIN_CACHE_DIR` to use another place.
+
 ## Configuration
 
 Optional environment variables:
 
 | Variable | Purpose |
 | --- | --- |
-| `TERRAIN_CACHE_DIR` | Directory for cached elevation tiles; ZIP and feature caches default to sibling directories |
+| `TERRAIN_CACHE_DIR` | Directory for cached elevation tiles, replacing the default cache location; the other caches become its sibling directories |
 | `TERRAIN_FEATURE_CACHE_DIR` | Directory for cached clipped map features |
 | `TERRAIN_3DEP_URL` | USGS 3DEP `exportImage` endpoint; defaults to The National Map's 3DEPElevation ImageServer |
 | `TERRAIN_GEOCODER_URL` | Nominatim-compatible `search` endpoint for address and place lookup |
@@ -342,7 +380,7 @@ The default server binds to loopback. This is a local workstation app, not a
 multi-user hosted service. For LAN access, use `--host 0.0.0.0` and explicitly add
 your machine's hostname/IP to `TERRAIN_TRUSTED_HOSTS`.
 
-To refresh the bundled example from the live elevation service:
+To refresh the bundled terrain for the first famous landscape from the live elevation service:
 
 ```bash
 python scripts/cache_example.py
@@ -445,16 +483,35 @@ buildings, and print palette). It follows the map and every setting change,
 even before new terrain is generated. The **Copy** button in the panel's
 header copies it to the clipboard, whether or not the panel is open.
 
-That JSON is a complete **Famous landscapes** entry apart from its name. To add
-one, put it in `PRESETS` in `terrain_app/places.py` with a `name` and `label`:
+That JSON is a complete **Famous landscapes** entry apart from its name. The
+list is read from `terrain_app/data/DefaultProfiles.txt`, which holds one entry
+after another: a line with the name to show, then the copied JSON.
 
-```python
-"asheville": {"name": "Asheville", "label": "Asheville, USA",
-              "bounds": {...}, "zoom": 12.5, "settings": {"palette": "earth", "controls": {...}}},
+```text
+Roan Mountain, TN
+{
+  "bounds": {"north": 36.129, "south": 36.072, "west": -82.163, "east": -82.038, "rotation_deg": 0},
+  "zoom": 12.71,
+  "settings": {"palette": "alpine", "controls": {"feature-roads": true}}
+}
 ```
 
-Selecting a landscape from the list frames its area at the stored zoom (never
-closer than the area fits the map) and applies its stored rendering settings.
-Landscapes without `settings` leave the current settings unchanged. Unknown or
-out-of-range values in an entry are ignored. Restart the app after editing the
-file.
+Only the landscapes in that file appear in the list, in file order. Add, remove,
+or reorder entries and restart the app. Selecting a landscape frames its area at
+the stored zoom (never closer than the area fits the map) and applies its stored
+rendering settings; entries without `settings` leave the current settings
+unchanged, and unknown or out-of-range values are ignored. A mistake in the
+file stops the app at startup with a message naming the entry.
+
+The first entry is shown when the app starts, with its rendering settings unless
+this browser has saved defaults. Its terrain is bundled so the first view works
+offline; after changing the first entry or its bounds, run
+`python scripts/cache_example.py` to capture terrain for it, or the app opens
+with an empty preview until you click Generate terrain.
+
+## License
+
+Terrain Studio is released under the [MIT License](LICENSE). Bundled
+third-party code keeps its own license (see `terrain_app/static/vendor/`), and
+map and elevation data carry the attribution terms listed in
+`terrain_app/data/ATTRIBUTION.txt`.
