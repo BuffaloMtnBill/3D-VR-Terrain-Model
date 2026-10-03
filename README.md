@@ -45,7 +45,31 @@ python app.py
 
 Open **http://127.0.0.1:8000**. Stop the server with Ctrl+C.
 Use `python app.py --port 8080` to change the port, or `--open` to launch your
-browser. You can also install with `pip install .` and run `terrain-studio`.
+browser.
+
+### Install with pip
+
+To install straight from GitHub without cloning, preferably into a virtual
+environment:
+
+```bash
+pip install git+https://github.com/BuffaloMtnBill/3D-Map-Extractor
+terrain-studio --open
+```
+
+From a cloned copy, `pip install .` does the same. On Windows, use
+`py -m pip` if `pip` is not on your PATH. `terrain-studio` takes the same
+`--port` and `--open` options as `app.py`.
+
+To uninstall, use the package name rather than the command name:
+
+```bash
+pip uninstall 3d-map-extractor
+```
+
+This leaves the packages it depends on installed (deleting the virtual
+environment removes those too), and leaves downloaded data in the
+[cache folder](#cache-location), which you can delete by hand.
 
 ## Use
 
