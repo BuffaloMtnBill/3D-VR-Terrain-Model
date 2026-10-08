@@ -1,9 +1,13 @@
 """Local HTTP interface and bounded background elevation downloads."""
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+from io import BytesIO
 from pathlib import Path
 from threading import RLock
+import json
 import logging
 import os
+import re
 import time
 import uuid
 
@@ -17,6 +21,10 @@ from .features import FeatureClient, OVERPASS_URL, layer_options
 from .services import GEOCODER_URL, PlaceClient, ZipClient, ZipLookupError, default_cache_dir
 from .landcover import LandCoverClient, print_colors, face_classes
 from .printing import export_3mf
+from .addons import BALL_COLOR, catalog as studio_catalog, check_project, platform_top, project_options, text_outline
+from .studio import marker_ball_file, marker_platform_file, studio_export, studio_format
+from .hydrography import HydrographyClient, HYDROGRAPHY_URL, water_source
+from .routes import MAX_GPX_BYTES, RouteStore, public_route, route_lines, route_options, with_route
 
 ROOT = Path(__file__).parent
 LOGGER = logging.getLogger(__name__)
@@ -36,17 +44,20 @@ def load_example(path=None):
 
 
 class WorkerPools:
-    def __init__(self, terrain, features):
+    def __init__(self, terrain, features, studio=None):
         self.terrain, self.features = terrain, features
+        # Print Studio exports are CPU-bound; their own pool keeps them from starving map downloads.
+        self.studio = studio or ThreadPoolExecutor(max_workers=2, thread_name_prefix="studio-job")
 
     def shutdown(self, wait=True):
         self.terrain.shutdown(wait=wait)
         self.features.shutdown(wait=wait)
+        self.studio.shutdown(wait=wait)
 
 
 def create_app(test_config=None):
     app = Flask(__name__)
-    app.config.update(MAX_CONTENT_LENGTH=16_384,
+    app.config.update(MAX_CONTENT_LENGTH=65_536,  # room for a Print Studio project with 40 add-ons
                       TRUSTED_HOSTS=os.environ.get("TERRAIN_TRUSTED_HOSTS", "localhost,127.0.0.1,[::1]").split(","),
                       MAP_TILE_URL=os.environ.get("TERRAIN_MAP_TILE_URL", "https://tile.opentopomap.org/{z}/{x}/{y}.png"),
                       MAP_ATTRIBUTION=os.environ.get("TERRAIN_MAP_ATTRIBUTION", TERRAIN_ATTRIBUTION),
@@ -63,6 +74,8 @@ def create_app(test_config=None):
     zip_client = ZipClient(cache_root / "zip")
     place_client = PlaceClient(cache_root / "places", os.environ.get("TERRAIN_GEOCODER_URL", GEOCODER_URL))
     cover_client = LandCoverClient(cache_root / "landcover", os.environ.get("TERRAIN_OVERPASS_URL", OVERPASS_URL))
+    hydro_client = HydrographyClient(cache_root / "hydrography", os.environ.get("TERRAIN_3DHP_URL", HYDROGRAPHY_URL))
+    route_store = RouteStore(cache_root / "routes")
     # Slow map-feature services must not hold up elevation downloads.
     executor = WorkerPools(ThreadPoolExecutor(max_workers=2, thread_name_prefix="terrain-job"),
                            ThreadPoolExecutor(max_workers=3, thread_name_prefix="feature-job"))
@@ -70,14 +83,17 @@ def create_app(test_config=None):
     jobs = {}
     feature_jobs = {}
     building_jobs = {}
+    water_jobs = {}
     cover_jobs = {}
+    studio_jobs = {}
     presets, default_place = app.config["LANDSCAPES"], app.config["DEFAULT_LANDSCAPE"]
     example = load_example(app.config["EXAMPLE_PATH"])
     if example is not None and example.bounds != Bounds.from_dict(presets[default_place]["bounds"]):
         example = None  # captured for a different area than the first landscape now describes
     app.extensions["terrain"] = {"client": client, "clients": clients, "jobs": jobs, "lock": lock, "executor": executor,
                                  "features": feature_client, "feature_jobs": feature_jobs, "building_jobs": building_jobs, "zip": zip_client, "places": place_client,
-                                 "landcover": cover_client, "cover_jobs": cover_jobs}
+                                 "landcover": cover_client, "cover_jobs": cover_jobs, "hydrography": hydro_client, "water_jobs": water_jobs, "studio_jobs": studio_jobs,
+                                 "routes": route_store}
 
     @app.before_request
     def same_origin():
@@ -154,8 +170,12 @@ def create_app(test_config=None):
     def feature_records():
         """Buildings are a separate, on-demand job: ?layer=buildings."""
         layer = request.args.get("layer", "")
+        if layer == "water":
+            if water_source(request.args.get("source", "usgs")) != "usgs":
+                raise ValueError("OpenStreetMap water is included in the main map features request.")
+            return water_jobs, hydro_client.fetch
         if layer not in ("", "buildings"):
-            raise ValueError("Request all map features, or layer=buildings.")
+            raise ValueError("Request all map features, layer=buildings, or layer=water&source=usgs.")
         return (building_jobs, feature_client.fetch_buildings) if layer else (feature_jobs, feature_client.fetch)
 
     def run_cover(identifier, terrain):
@@ -317,43 +337,234 @@ def create_app(test_config=None):
             result["true_elevations"] = np.round(true_heights, 4).ravel().tolist()
         return jsonify(result)
 
+    def print_inputs(identifier, features, colors):
+        """Surface classes and loaded map features for 3MF color parts; a ValueError says what is still loading."""
+        if colors is None:
+            raise ValueError("Select the Print palette and choose its surface colors before exporting 3MF.")
+        with lock:
+            record = cover_jobs.get(identifier)
+            if not record or record["state"] != "ready":
+                raise ValueError("Wait for the mapped surface colors to load before exporting 3MF.")
+            classes = np.asarray(record["data"]["face_classes"], dtype=np.uint8)
+        feature_data = None
+        if any(style["enabled"] for style in features.values()):
+            with lock:
+                feature_record = feature_jobs.get(identifier)
+                if not feature_record or feature_record["state"] != "ready":
+                    raise ValueError("Wait for selected map features to load before exporting 3MF.")
+                feature_data = feature_record["data"]
+                if features.get("water", {}).get("enabled") and features["water"].get("source", "osm") == "usgs":
+                    water_record = water_jobs.get(identifier)
+                    if not water_record or water_record["state"] != "ready":
+                        raise ValueError("Wait for USGS waterways to load before exporting 3MF.")
+                    # Preserve OSM's open-sea geometry, which 3DHP doesn't supply.
+                    sea = [feature for feature in feature_data["layers"]["water"] if feature.get("kind") == "sea"]
+                    feature_data = {**feature_data, "layers": {**feature_data["layers"], "water": sea + water_record["data"]["water"]}}
+                if features.get("buildings", {}).get("enabled"):
+                    building_record = building_jobs.get(identifier)
+                    if not building_record or building_record["state"] != "ready":
+                        raise ValueError("Wait for buildings to load before exporting 3MF.")
+                    feature_data = {**feature_data, "layers": {**feature_data["layers"], "buildings": building_record["data"]["layers"]["buildings"]}}
+        return classes, feature_data
+
+    def available_print_inputs(identifier, features, colors):
+        """For GLB files and previews: color parts once the surface map is ready, map features once they are loaded."""
+        for layers in (features, {}):
+            try:
+                return print_inputs(identifier, layers, colors)
+            except ValueError:
+                pass
+        return None, None
+
+    def marker_buildings(identifier, project):
+        """The loaded building layer when marker platforms carry buildings (whether or not the layer is shown)."""
+        if platform_top(project) != "building":
+            return None
+        with lock:
+            record = building_jobs.get(identifier)
+            return record["data"]["layers"]["buildings"] if record and record["state"] == "ready" else None
+
+    def route_layer(payload, terrain):
+        """The uploaded route's style and its lines in this terrain's frame, or None when it is off."""
+        style = route_options(payload.get("route"))
+        if style is None:
+            return None
+        route = route_store.load(style["id"])
+        if route is None:
+            raise ValueError("The uploaded route is no longer available. Upload the GPX file again.")
+        return style, route_lines(route, terrain.bounds)
+
+    def add_route(payload, terrain, features, feature_data):
+        layer = route_layer(payload, terrain)
+        return with_route(features, feature_data, *layer) if layer else (features, feature_data)
+
+    def export_payload():
+        payload = request.get_json()
+        if not isinstance(payload, dict):
+            raise ValueError("Supply export options.")
+        return (payload, ModelOptions.from_dict(payload), layer_options(payload.get("feature_layers")),
+                print_colors(payload.get("print_palette")), project_options(payload.get("project")))
+
     @app.post("/api/export/<identifier>")
     def export(identifier):
         terrain = find_terrain(identifier)
         if terrain is None:
             return jsonify(error="Terrain is unavailable. Generate the area again."), 404
-        payload = request.get_json()
-        if not isinstance(payload, dict):
-            raise ValueError("Supply export options.")
-        options = ModelOptions.from_dict(payload)
-        features = layer_options(payload.get("feature_layers"))
-        colors = print_colors(payload.get("print_palette"))
+        payload, options, features, colors, project = export_payload()
         format = payload.get("format", "stl")
         attribution = (ROOT / "data" / "ATTRIBUTION.txt").read_text(encoding="utf-8")
         if format == "3mf":
-            if colors is None:
-                raise ValueError("Select the Print palette and choose its surface colors before exporting 3MF.")
-            with lock:
-                record = cover_jobs.get(identifier)
-                if not record or record["state"] != "ready":
-                    raise ValueError("Wait for the mapped surface colors to load before exporting 3MF.")
-                classes = np.asarray(record["data"]["face_classes"], dtype=np.uint8)
-            feature_data = None
-            if any(style["enabled"] for style in features.values()):
-                with lock:
-                    feature_record = feature_jobs.get(identifier)
-                    if not feature_record or feature_record["state"] != "ready":
-                        raise ValueError("Wait for selected map features to load before exporting 3MF.")
-                    feature_data = feature_record["data"]
-                    if features.get("buildings", {}).get("enabled"):
-                        building_record = building_jobs.get(identifier)
-                        if not building_record or building_record["state"] != "ready":
-                            raise ValueError("Wait for buildings to load before exporting 3MF.")
-                        feature_data = {**feature_data, "layers": {**feature_data["layers"], "buildings": building_record["data"]["layers"]["buildings"]}}
-            content, mimetype, filename = export_3mf(terrain, options, colors, classes, attribution, features, feature_data)
+            classes, feature_data = print_inputs(identifier, features, colors)
+            features, feature_data = add_route(payload, terrain, features, feature_data)
+            # The project is passed only when there is one, keeping the call unchanged for plain exports.
+            content, mimetype, filename = export_3mf(terrain, options, colors, classes, attribution, features, feature_data,
+                                                     **({"project": project, "buildings": marker_buildings(identifier, project)} if project else {}))
         else:
-            content, mimetype, filename = export_file(terrain, options, format, attribution, features, colors)
+            content, mimetype, filename = export_file(terrain, options, format, attribution, features, colors, project)
         return send_file(content, mimetype=mimetype, as_attachment=True, download_name=filename)
+
+    def prune_studio_jobs():
+        now = time.monotonic()
+        finished = sorted((key for key, job in studio_jobs.items() if job["state"] in ("ready", "error")), key=lambda key: studio_jobs[key]["finished"])
+        for key in finished:
+            if now-studio_jobs[key]["finished"] > 600 or len(studio_jobs) >= 6:
+                del studio_jobs[key]
+
+    def run_studio_job(identifier, work):
+        def progress(fraction, message):
+            with lock:
+                studio_jobs[identifier].update(state="running", progress=round(float(fraction), 3), message=message)
+        progress(0, "Starting the export…")
+        try:
+            content, mimetype, filename = work(progress=progress)
+            with lock:
+                studio_jobs[identifier].update(state="ready", progress=1, message="Ready to download.", content=content,
+                                               mimetype=mimetype, filename=filename, finished=time.monotonic())
+        except Exception as error:
+            LOGGER.exception("Print Studio export failed")
+            message = str(error) if isinstance(error, ValueError) else "The export failed. Try a smaller area or check the terminal for details."
+            with lock:
+                studio_jobs[identifier].update(state="error", message=message, finished=time.monotonic())
+
+    @app.get("/api/studio/catalog")
+    def studio_types():
+        # Not jsonify: its sorted keys would scramble the parameter order the forms are built in.
+        return app.response_class(json.dumps(studio_catalog()), mimetype="application/json")
+
+    @app.post("/api/studio/<identifier>/check")
+    def studio_check(identifier):
+        terrain = find_terrain(identifier)
+        if terrain is None:
+            return jsonify(error="Terrain is unavailable. Generate the area again."), 404
+        payload, options, features, colors, project = export_payload()
+        bed = payload.get("bed_mm", 256)
+        if isinstance(bed, bool) or not isinstance(bed, (int, float)) or not 50 <= bed <= 2000:
+            raise ValueError("Printer bed size must be between 50 and 2000 mm.")
+        features, _ = add_route(payload, terrain, features, None)  # its color counts toward the filament limit
+        return jsonify(check_project(terrain, options, project, colors, features, payload.get("format", "3mf"), bed,
+                                     buildings=marker_buildings(identifier, project)))
+
+    @app.post("/api/studio/<identifier>/text-outline")
+    def studio_text(identifier):
+        payload = request.get_json()
+        if not isinstance(payload, dict):
+            raise ValueError("Supply the text and its size.")
+        return jsonify(text_outline(payload.get("text", ""), payload.get("text_size", 6)))
+
+    @app.post("/api/studio/<identifier>/export")
+    def studio_export_job(identifier):
+        terrain = find_terrain(identifier)
+        if terrain is None:
+            return jsonify(error="Terrain is unavailable. Generate the area again."), 404
+        payload, options, features, colors, project = export_payload()
+        preview = payload.get("preview", False)
+        if not isinstance(preview, bool):
+            raise ValueError("preview must be true or false.")
+        format = "glb" if preview else studio_format(payload.get("format", "stl"))
+        classes = feature_data = None
+        if format == "3mf":
+            classes, feature_data = print_inputs(identifier, features, colors)
+        elif format == "glb":
+            classes, feature_data = available_print_inputs(identifier, features, colors)
+        if format in ("3mf", "glb"):
+            features, feature_data = add_route(payload, terrain, features, feature_data)
+        if project and project["addons"] and not options.solid and format in ("stl", "obj", "3mf", "glb"):
+            raise ValueError("Enable Solid base to add holes, pockets, and other add-ons.")
+        attribution = (ROOT / "data" / "ATTRIBUTION.txt").read_text(encoding="utf-8")
+        with lock:
+            prune_studio_jobs()
+            if sum(job["state"] in ("queued", "running") for job in studio_jobs.values()) >= 4:
+                return jsonify(error="Four exports are already running. Wait for one to finish."), 429
+            job = uuid.uuid4().hex
+            studio_jobs[job] = dict(state="queued", progress=0, message="Waiting to start…", finished=None)
+        executor.studio.submit(run_studio_job, job, partial(studio_export, terrain, options, format, attribution, palette=colors, classes=classes,
+                                                            feature_layers=features, feature_data=feature_data, project=project, preview_mesh=preview,
+                                                            buildings=marker_buildings(identifier, project)))
+        return jsonify(job=job), 202
+
+    @app.get("/api/studio/jobs/<job>")
+    def studio_job(job):
+        with lock:
+            record = studio_jobs.get(job)
+            if record is None:
+                return jsonify(error="This export has expired. Export again."), 404
+            result = {key: record[key] for key in ("state", "progress", "message")}
+            if record["state"] == "ready":
+                result["filename"] = record["filename"]
+        return jsonify(result)
+
+    @app.get("/api/studio/jobs/<job>/file")
+    def studio_job_file(job):
+        with lock:
+            record = studio_jobs.get(job)
+            if record is None:
+                return jsonify(error="This export has expired. Export again."), 404
+            if record["state"] != "ready":
+                return jsonify(error="This export is not ready yet."), 409
+            content, mimetype, filename = record["content"], record["mimetype"], record["filename"]
+        return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True, download_name=filename)
+
+    @app.get("/api/studio/marker-ball")
+    def studio_marker_ball():
+        color = request.args.get("color") or BALL_COLOR
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            raise ValueError("Choose a six-digit hex color for the marker ball.")
+        content, mimetype, filename = marker_ball_file(request.args.get("format", "stl"), color.lower())
+        return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True, download_name=filename)
+
+    @app.get("/api/studio/marker-platform")
+    def studio_marker_platform():
+        color = request.args.get("color") or BALL_COLOR
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            raise ValueError("Choose a six-digit hex color for the marker platform.")
+        content, mimetype, filename = marker_platform_file(request.args.get("format", "stl"), color.lower())
+        return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True, download_name=filename)
+
+    @app.post("/api/routes")
+    def upload_route():
+        # GPX text arrives as JSON (the same-origin guard accepts only JSON posts), so allow a larger body here.
+        request.max_content_length = MAX_GPX_BYTES*2+4096
+        payload = request.get_json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("gpx"), str):
+            raise ValueError("Choose a GPX file to upload.")
+        filename = payload.get("filename") if isinstance(payload.get("filename"), str) else ""
+        return jsonify(public_route(route_store.save(payload["gpx"].encode("utf-8"), filename[:200])))
+
+    @app.get("/api/routes/<route>")
+    def get_route(route):
+        found = route_store.load(route)
+        if found is None:
+            return jsonify(error="The uploaded route is no longer available. Upload the GPX file again."), 404
+        return jsonify(public_route(found))
+
+    @app.get("/api/routes/<route>/lines/<identifier>")
+    def get_route_lines(route, identifier):
+        terrain, found = find_terrain(identifier), route_store.load(route)
+        if terrain is None:
+            return jsonify(error="Terrain is unavailable. Generate the area again."), 404
+        if found is None:
+            return jsonify(error="The uploaded route is no longer available. Upload the GPX file again."), 404
+        return jsonify(lines=route_lines(found, terrain.bounds))
 
     @app.get("/api/attribution")
     def attribution():

@@ -60,6 +60,15 @@ def fixture_other_features(bounds):
 app.extensions["terrain"]["features"].fetch = fixture_other_features
 app.extensions["terrain"]["features"].fetch_buildings = fixture_buildings
 
+
+def fixture_water(bounds):
+    data = fixture_features(bounds)
+    features = [{**feature, "id": f"usgs/{index}", "name": "USGS TEST CREEK"} for index, feature in enumerate(data["layers"]["water"])]
+    return {"water": features, "source": "USGS TEST FIXTURE", "source_url": "https://www.usgs.gov/3d-hydrography-program", "bounds": bounds.to_dict()}
+
+
+app.extensions["terrain"]["hydrography"].fetch = fixture_water
+
 if __name__ == "__main__":
     print("TEST FIXTURES ONLY: http://127.0.0.1:8001", flush=True)
     app.run(host="127.0.0.1", port=8001, debug=False, threaded=True)

@@ -158,8 +158,11 @@ def export_metadata(terrain: Terrain, options: ModelOptions):
     }
 
 
-def export_file(terrain: Terrain, options: ModelOptions, format: str, attribution: str, feature_layers=None, print_palette=None):
-    """Return one native file, its MIME type, and its suggested filename."""
+def export_file(terrain: Terrain, options: ModelOptions, format: str, attribution: str, feature_layers=None, print_palette=None, project=None):
+    """Return one native file, its MIME type, and its suggested filename.
+
+    A Print Studio project with add-ons cuts them into (or adds them onto) the STL/OBJ solid."""
+    from .addons import active_addons, addon_mesh, changes_model, project_metadata
     formats = {
         "stl": ("model/stl", "terrain.stl"),
         "obj": ("text/plain", "terrain.obj"),
@@ -175,8 +178,10 @@ def export_file(terrain: Terrain, options: ModelOptions, format: str, attributio
         metadata["feature_layers"] = feature_layers
     if print_palette:
         metadata["print_palette"] = print_palette
+    if changes_model(project):
+        metadata["project"] = project_metadata(project)
     if format in ("stl", "obj"):
-        vertices, faces = build_mesh(terrain, options)
+        vertices, faces = addon_mesh(terrain, options, project) if active_addons(project) else build_mesh(terrain, options)
         metadata |= {"vertices": len(vertices), "triangles": len(faces)}
         content = binary_stl(vertices, faces, SOURCES[terrain.source]["short"]) if format == "stl" else obj_file(vertices, faces, metadata, attribution)
         buffer = BytesIO(content)

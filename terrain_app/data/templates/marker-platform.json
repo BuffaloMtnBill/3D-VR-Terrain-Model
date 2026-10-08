@@ -1,0 +1,25 @@
+{
+  "name": "Nail marker platform",
+  "units": "mm",
+  "generator": "Blender 4.5.14 LTS",
+  "nail": {
+    "shank_diameter": 1.66,
+    "length": 31.8,
+    "head_diameter": 3.2,
+    "head_thickness": 0.8,
+    "head_size_assumed": true
+  },
+  "deck_shape": "round",
+  "deck_size": 30.0,
+  "deck_thickness": 2.4,
+  "deck_chamfer": 0.6,
+  "hub_top_diameter": 8.0,
+  "hub_bottom_diameter": 5.5,
+  "hub_height": 6.6,
+  "deck_top_z": 9.0,
+  "height": 9.0,
+  "exposed_nail_length": 26.5,
+  "recommended_hole_diameter": 1.8,
+  "print_orientation": "deck down",
+  "print": "Deck top down on the bed, no supports (the head-pocket bridge is 3.5 mm). Slide the nail in from the slot side until it snaps; add a drop of CA glue. A platform with a printed-on top prints upright and needs supports under the deck."
+}

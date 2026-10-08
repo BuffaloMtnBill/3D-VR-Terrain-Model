@@ -51,9 +51,9 @@ function terrainSampler(data,options,scale) {
   return {point,width,height,rows,columns,unit};
 }
 
-function ribbonGeometry(features,category,sampler) {
+function ribbonGeometry(features,category,sampler,widthOverride=null) {
   const positions=[],{point,width,height,rows,columns}=sampler;
-  const lineWidth=category==='roads'?.014:category==='water'?.012:.010;
+  const lineWidth=widthOverride??(category==='roads'?.014:category==='water'?.012:.010);
   let segmentNumber=0;
   function ribbon(start,end,normal,offset,thickness) {
     const [u0,v0]=start,[u1,v1]=end;
@@ -170,4 +170,14 @@ export function buildFeatures(data,terrain,options,styles,terrainGeometry,scale=
     }
     return group;
   } catch(error) {disposeFeatures(group);throw error;}
+}
+
+// An uploaded GPS route: a ribbon of its printed width (mm) draped like the trail layers, drawn above them.
+export function buildRoute(lines,terrain,options,color,widthMm,scale=6.4) {
+  const geometry=ribbonGeometry([{lines}],'route',terrainSampler(terrain,options,scale),widthMm*scale/options.size_mm);
+  if(!geometry)return null;
+  const mesh=new THREE.Mesh(geometry,new THREE.MeshBasicMaterial({color,side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));
+  mesh.name='GPS route';mesh.renderOrder=3;mesh.userData={category:'route',color,width_mm:widthMm};
+  const group=new THREE.Group();group.name='GPS route';group.add(mesh);
+  return group;
 }

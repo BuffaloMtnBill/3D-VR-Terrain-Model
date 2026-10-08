@@ -1,0 +1,18 @@
+{
+  "name": "Push-pin marker ball",
+  "units": "mm",
+  "generator": "Blender 4.5.14 LTS",
+  "nail": {
+    "shank_diameter": 1.66,
+    "length": 31.8,
+    "head_diameter": 3.2,
+    "head_thickness": 0.8,
+    "head_size_assumed": true
+  },
+  "ball_diameter": 10.0,
+  "height": 12.0,
+  "collar_bottom_diameter": 4.4,
+  "exposed_nail_length": 24.4,
+  "recommended_hole_diameter": 1.8,
+  "print": "Flat collar down, no supports. Slide the nail in from the slot side until it snaps; add a drop of CA glue."
+}

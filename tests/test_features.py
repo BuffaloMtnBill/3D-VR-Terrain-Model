@@ -13,6 +13,7 @@ from terrain_app.elevation import Bounds, selection_coordinates
 from terrain_app.features import FeatureClient, LAYER_NAMES, building_height, classify, layer_options, overpass_query, paths, prepare_features, to_selection
 from terrain_app.server import create_app, load_example
 from terrain_app.services import ZipClient, ZipLookupError, response_json
+from terrain_app.hydrography import HydrographyClient, prepare_water
 
 
 @pytest.fixture
@@ -40,6 +41,105 @@ class JsonResponse:
     def iter_content(self, size):
         for offset in range(0, len(self.content), size):
             yield self.content[offset:offset+size]
+
+
+def hydro_line(identifier=1, label="Channel Line", order=1):
+    return {"attributes": {"OBJECTID": identifier, "featuretypelabel": label, "gnisidlabel": "Test Creek", "streamorder": order},
+            "geometry": {"paths": [[[-.005, .005, 200], [.015, .005, 150]]]}}
+
+
+def test_usgs_clips_creeks_and_excludes_artificial_paths():
+    bounds = Bounds(0, 0, .01, .01)
+    result = prepare_water({50: [hydro_line(), hydro_line(2, "Artificial Path"), hydro_line(3, order=4)]}, bounds)
+    assert [feature["kind"] for feature in result["water"]] == ["stream", "river"]
+    assert result["water"][0]["lines"] == [[[0, .5], [1, .5]]]
+    assert result["water"][0]["name"] == "Test Creek"
+
+
+def test_usgs_preserves_legacy_channel_labels_and_headwater_drainage():
+    data = {50: [hydro_line(1, 'River'), hydro_line(2, 'Canal'), hydro_line(3, 'Drainageway'), hydro_line(4, 'Surface Connector')]}
+    result = prepare_water(data, Bounds(0, 0, .01, .01))
+    assert [feature['kind'] for feature in result['water']] == ['stream', 'canal', 'drain']
+
+
+@pytest.mark.parametrize("rotation", [0, 35])
+def test_usgs_waterbody_preserves_islands_and_full_area(rotation):
+    bounds = Bounds(0, 0, .01, .01, rotation)
+    # Same winding and reversed input ordering must still identify the island.
+    outer = [[-.005,-.005],[.015,-.005],[.015,.015],[-.005,.015],[-.005,-.005]]
+    island = [[.004,.004],[.006,.004],[.006,.006],[.004,.006],[.004,.004]]
+    record = {"attributes": {"OBJECTID": 5, "featuretypelabel": "Lake"}, "geometry": {"rings": [island, outer]}}
+    feature = prepare_water({60: [record]}, bounds)["water"][0]
+    polygon = feature["polygons"][0]
+    assert len(polygon["holes"]) == 1
+    assert not Polygon(polygon["outer"], polygon["holes"]).contains(Point(.5, .5))
+    assert feature["area_m2"] == pytest.approx(3.96*np.prod(bounds.dimensions), abs=.02)
+
+
+def test_usgs_paginates_and_caches_complete_results(tmp_path, monkeypatch):
+    bounds = Bounds(0, 0, .01, .01, 25)
+    calls = []
+    def get(url, **options):
+        params = options["params"]
+        calls.append((url, params.copy()))
+        if '/60/' in url:
+            return JsonResponse({"features": []})
+        offset = params["resultOffset"]
+        return JsonResponse({"features": [hydro_line(offset+1)], "exceededTransferLimit": offset == 0})
+    monkeypatch.setattr("terrain_app.hydrography.requests.get", get)
+    provider = HydrographyClient(tmp_path)
+    result = provider.fetch(bounds)
+    assert len(result["water"]) == 2
+    assert provider.fetch(bounds) == result
+    assert [params["resultOffset"] for _, params in calls] == [0, 1, 0]
+    assert calls[0][1]["geometry"] == ','.join(str(v) for v in (bounds.geographic_extent.west, bounds.geographic_extent.south, bounds.geographic_extent.east, bounds.geographic_extent.north))
+    assert calls[0][1]["outSR"] == 4326
+
+
+@pytest.mark.parametrize("page", [{"error": {"code": 500}}, {"features": [], "exceededTransferLimit": True}])
+def test_usgs_incomplete_download_is_not_cached(tmp_path, monkeypatch, page):
+    monkeypatch.setattr("terrain_app.hydrography.requests.get", lambda *a, **kw: JsonResponse(page))
+    with pytest.raises(ValueError):
+        HydrographyClient(tmp_path).fetch(Bounds(0, 0, .01, .01))
+    assert not list(tmp_path.glob('*.json'))
+
+
+def test_usgs_water_jobs_are_independent_and_export_uses_selected_source(application, monkeypatch):
+    bounds = load_example().bounds
+    extension = application.extensions["terrain"]
+    data = {"water": [{"id": "usgs/50/1", "kind": "stream", "lines": [[[0,.5],[1,.5]]], "polygons": []}], "source": "USGS"}
+    monkeypatch.setattr(extension["hydrography"], "fetch", lambda b: data)
+    client = application.test_client()
+    query = '/api/features/example?layer=water&source=usgs'
+    assert client.post(query, json={}).status_code == 202
+    for _ in range(100):
+        result = client.get(query).get_json()
+        if result['state'] == 'ready':
+            break
+        time.sleep(.01)
+    assert result['water'] == data['water']
+    assert client.post(query, json={}).status_code == 200
+    assert not extension['feature_jobs']
+    assert client.post('/api/features/example?layer=water&source=bad', json={}).status_code == 400
+    styles = {"water": {"enabled": True, "color": "#123456", "source": "usgs", "detail": 100}}
+    response = client.post('/api/export/example', json={"format": "metadata", "feature_layers": styles})
+    assert response.get_json()['feature_layers']['water']['source'] == 'usgs'
+    osm = prepare_features({"elements": []}, bounds)
+    osm['layers']['water'] = [{"id": "osm/creek", "kind": "stream"}, {"id": "coastline/sea", "kind": "sea"}]
+    extension['feature_jobs']['example'] = {"state": "ready", "data": osm}
+    terrain = load_example()
+    rows, columns = terrain.elevations.shape
+    extension['cover_jobs']['example'] = {"state": "ready", "data": {"face_classes": [0]*(2*(rows-1)*(columns-1))}}
+    captured = []
+    def export(*args):
+        captured.append(args[-1])
+        return BytesIO(b'test'), 'application/octet-stream', 'terrain.3mf'
+    monkeypatch.setattr('terrain_app.server.export_3mf', export)
+    payload = {"format": "3mf", "feature_layers": styles, "print_palette": dict.fromkeys(('dark_foliage','light_foliage','dirt','snow','water','buildings'), '#123456')}
+    assert client.post('/api/export/example', json=payload).status_code == 200
+    assert [feature['id'] for feature in captured[0]['layers']['water']] == ['coastline/sea', 'usgs/50/1']
+    del extension['water_jobs']['example']
+    assert client.post('/api/export/example', json=payload).status_code == 400
 
 
 def osm_way(identifier, tags, points):

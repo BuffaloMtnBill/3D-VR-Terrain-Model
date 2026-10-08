@@ -9,6 +9,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23234a3b'/%3E%3Cpath d='M5 24 14 8 20 18 23 13 28 24Z' fill='none' stroke='%23e7eedb' stroke-width='2'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='studio.css') }}">
   <script type="importmap">{"imports":{"three":"/static/vendor/three.module.js"}}</script>
   <script src="{{ url_for('static', filename='vendor/leaflet.js') }}" defer></script>
   <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
@@ -35,6 +36,20 @@
         <form id="zip-form" class="coordinate-search"><label class="sr-only" for="zip-code">Go to US ZIP code</label><input id="zip-code" type="text" inputmode="numeric" autocomplete="postal-code" placeholder="Go to US ZIP code" pattern="[0-9]{5}(-[0-9]{4})?" maxlength="10" required aria-describedby="zip-status"><button type="submit" title="Go to ZIP code" aria-label="Go to ZIP code">↗</button></form>
         <span id="zip-status" class="small-hint" role="status" hidden></span>
         <span id="coordinate-hint" class="small-hint">Pan or zoom the map beneath the fixed frame.</span>
+        <div id="route-block" class="route-block">
+          <div class="route-heading"><span class="route-title">GPS route</span><button id="route-upload" type="button" class="button secondary route-upload">Upload GPX ↑</button></div>
+          <input id="route-file" type="file" accept=".gpx,application/gpx+xml" hidden>
+          <span id="route-status" class="small-hint" role="status">Overlay an activity exported as GPX from Strava, Garmin Connect, or COROS.</span>
+          <div id="route-controls" hidden>
+            <div class="route-summary"><strong id="route-name"></strong><span id="route-stats" class="small-hint"></span></div>
+            <label class="route-option" for="route-show"><input id="route-show" type="checkbox" checked>Show on the map, model, and exports</label>
+            <div class="route-option"><label for="route-color">Line color</label><input id="route-color" type="color" value="#e4572e"></div>
+            <div class="slider-label"><label for="route-width">Line thickness</label><output id="route-width-value">1.6 mm</output></div>
+            <input id="route-width" type="range" min="0.4" max="6" step="0.2" value="1.6" aria-describedby="route-width-hint">
+            <span id="route-width-hint" class="small-hint">Width on the printed model. The route stays on the ground as you move or resize the frame.</span>
+            <div class="route-actions"><button id="route-frame" type="button" class="button secondary">Frame the route</button><button id="route-remove" type="button" class="text-button">Remove route</button></div>
+          </div>
+        </div>
         <label for="elevation-source" class="space-top">Elevation source</label>
         <select id="elevation-source" aria-describedby="elevation-source-hint"><option value="mapzen" selected>Mapzen · global</option><option value="usgs3dep">USGS 3DEP · United States</option></select>
         <span id="elevation-source-hint" class="small-hint">Global coverage; about 10 m detail in the US, 30 m elsewhere.</span>
@@ -123,7 +138,7 @@
             <div class="feature-option"><label for="feature-cities"><input id="feature-cities" type="checkbox" data-feature="cities">City boundaries</label><span id="feature-count-cities" class="feature-count"></span><input id="color-cities" type="color" value="#dbaecf" data-feature-color="cities" aria-label="City boundaries color" title="City boundaries color"></div>
             <div class="feature-option"><label for="feature-parks"><input id="feature-parks" type="checkbox" data-feature="parks">Park boundaries</label><span id="feature-count-parks" class="feature-count"></span><input id="color-parks" type="color" value="#a8c586" data-feature-color="parks" aria-label="Park boundaries color" title="Park boundaries color"></div>
           </div></div>
-          <div class="feature-block"><div class="feature-option"><label for="feature-water"><input id="feature-water" type="checkbox" data-feature="water" checked>Water</label><span id="feature-count-water" class="feature-count"></span><input id="color-water" type="color" value="#619ea5" data-feature-color="water" aria-label="Water color" title="Water color"></div><div class="feature-detail"><div class="slider-label"><label for="detail-water">Water detail</label><output id="detail-water-value">100%</output></div><input id="detail-water" type="range" min="0" max="100" step="1" value="100" data-feature-detail="water" aria-label="Water level of detail"><div class="range-endpoints"><span>Large water areas</span><span>Creeks & ponds</span></div></div></div>
+          <div class="feature-block"><div class="feature-option"><label for="feature-water"><input id="feature-water" type="checkbox" data-feature="water" checked>Water</label><span id="feature-count-water" class="feature-count"></span><input id="color-water" type="color" value="#619ea5" data-feature-color="water" aria-label="Water color" title="Water color"></div><div class="feature-detail"><label for="water-source">Water source</label><select id="water-source" aria-describedby="water-source-hint"><option value="usgs" selected>USGS 3DHP · United States</option><option value="osm">OpenStreetMap · global</option></select><span id="water-source-hint" class="small-hint"></span><div class="slider-label"><label for="detail-water">Water detail</label><output id="detail-water-value">100%</output></div><input id="detail-water" type="range" min="0" max="100" step="1" value="100" data-feature-detail="water" aria-label="Water level of detail"><div class="range-endpoints"><span>Large water areas</span><span>Creeks & ponds</span></div></div></div>
           <div class="feature-block"><div class="feature-option"><label for="feature-buildings"><input id="feature-buildings" type="checkbox" data-feature="buildings">Buildings</label><span id="feature-count-buildings" class="feature-count"></span><input id="color-buildings" type="color" value="#e2c4a4" data-feature-color="buildings" aria-label="Buildings color" title="Buildings color"></div><div id="building-options" class="feature-detail feature-submenu" hidden><div class="feature-option"><label for="buildings-detailed"><input id="buildings-detailed" type="checkbox">3D buildings</label></div><span class="small-hint">Uses OpenStreetMap 3D tags: building parts, base heights, and gabled, hipped, pyramidal, or sloped roofs. Unchecked, buildings are flat-roofed blocks.</span></div></div>
           <div class="feature-block"><div class="feature-option"><label for="group-trails"><input id="group-trails" type="checkbox" aria-controls="trail-options" aria-expanded="false">Trails</label></div><div id="trail-options" class="feature-detail feature-submenu" role="group" aria-label="Trail types" hidden>
             <div class="feature-option"><label for="feature-at"><input id="feature-at" type="checkbox" data-feature="at" title="Appalachian Trail route from OpenStreetMap">AT</label><span id="feature-count-at" class="feature-count"></span><input id="color-at" type="color" value="#f0ead6" data-feature-color="at" aria-label="Appalachian Trail color" title="Appalachian Trail color"></div>
@@ -132,7 +147,7 @@
           <span id="map-feature-image-note" class="small-hint" hidden>The Map image already contains roads and boundaries. These checkboxes control added features; Relief and Print show only the selected feature layers.</span>
           <span id="print-feature-color-count" class="small-hint" role="status" hidden></span>
           <span id="feature-status" class="small-hint" role="status">Choose layers to show on the current terrain.</span><button id="feature-retry" type="button" class="text-button" hidden>Retry map features ↗</button>
-          <span class="small-hint feature-source">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> · 3MF, GLB & preview images include layers.</span>
+          <span class="small-hint feature-source">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a><span id="water-credit"> · Water: <a href="https://www.usgs.gov/3d-hydrography-program" target="_blank" rel="noopener">USGS 3DHP</a></span> · 3MF, GLB & preview images include layers.</span>
         </fieldset>
         <button id="save-style-defaults" type="button" class="button secondary full">Save as default</button><p id="style-defaults-status" class="small-hint" role="status">Save these selections as defaults for this browser.</p>
         </div>
@@ -141,22 +156,79 @@
   </main>
 
   <div id="toast" role="status" hidden></div>
-  <dialog id="export-dialog">
-    <form method="dialog" class="dialog-header"><div><span class="eyebrow">YOUR LANDSCAPE, ANYWHERE</span><h2>Export your terrain</h2></div><button class="icon-button" aria-label="Close export dialog">×</button></form>
-    <p>Models use the current elevation multiplier and base. Choose a size for the longest horizontal edge.</p>
-    <label for="export-size">Model size (millimeters)</label><input id="export-size" type="number" min="10" max="2000" step="1" value="180"><div id="export-dimensions" class="small-hint"></div>
-    <div class="export-choices">
-      <button data-export="stl"><strong>STL <span>↓</span></strong><span>Solid geometry for 3D printing</span></button>
-      <button data-export="obj"><strong>OBJ <span>↓</span></strong><span>Geometry for CAD and 3D tools</span></button>
-      <button data-export="3mf"><strong>Four-color 3MF <span>↓</span></strong><span>Print palette · separate solid color parts</span></button>
-      <button data-export="glb"><strong>GLB <span>↓</span></strong><span>Colored model with selected map features</span></button>
-      <button data-export="png"><strong>Heightmap PNG <span>↓</span></strong><span>16-bit heightmap with embedded bounds</span></button>
-      <button data-export="csv"><strong>Elevation CSV <span>↓</span></strong><span>Original heights in meters</span></button>
-      <button data-export="npy"><strong>Elevation NumPy <span>↓</span></strong><span>Original elevation array (.npy)</span></button>
+  <dialog id="studio" aria-labelledby="studio-title">
+    <header class="studio-bar">
+      <button id="studio-back" type="button" class="button secondary studio-back" aria-label="Back to map"><span aria-hidden="true">←</span> Back to map</button>
+      <div class="studio-heading"><span class="eyebrow">PRINT STUDIO</span><h2 id="studio-title">Your landscape</h2><span id="studio-dimensions" class="studio-dimensions"></span></div>
+      <div class="studio-projects" role="group" aria-label="Projects for this area">
+        <label for="studio-project" class="sr-only">Project</label><select id="studio-project"></select>
+        <button type="button" class="button secondary" data-project-action="new" title="New empty project">New</button>
+        <button type="button" class="button secondary" data-project-action="rename" title="Rename project">Rename</button>
+        <button type="button" class="button secondary" data-project-action="duplicate" title="Duplicate project">Duplicate</button>
+        <button type="button" class="button secondary" data-project-action="delete" title="Delete project">Delete</button>
+      </div>
+    </header>
+    <div class="studio-body">
+      <aside class="studio-left" aria-label="Templates and add-ons">
+        <section class="studio-card"><h3>Start from</h3><div id="studio-templates" class="studio-templates"></div></section>
+        <section class="studio-card"><h3>Add to the model</h3><div id="studio-palette" class="studio-palette"><span class="small-hint">Loading add-ons…</span></div><span id="studio-place-hint" class="small-hint" role="status"></span></section>
+        <section class="studio-card"><h3>Placed <span id="studio-addon-count" class="studio-count"></span></h3><ul id="studio-addons" class="studio-addons"></ul>
+          <div class="studio-history"><button type="button" id="studio-undo" class="button secondary" title="Undo (Ctrl+Z)">Undo</button><button type="button" id="studio-redo" class="button secondary" title="Redo (Ctrl+Shift+Z)">Redo</button></div>
+          <div class="studio-io"><button type="button" id="studio-import" class="text-button">Import project JSON ↑</button><button type="button" id="studio-export-json" class="text-button">Export project JSON ↓</button><input id="studio-import-file" type="file" accept="application/json,.json" hidden></div>
+        </section>
+      </aside>
+      <section class="studio-center" aria-label="Model preview">
+        <div class="studio-toolbar">
+          <div class="view-tabs studio-views" role="group" aria-label="Studio view"><button type="button" data-studio-view="perspective" aria-pressed="true" class="active">Perspective</button><button type="button" data-studio-view="top" aria-pressed="false">Top</button><button type="button" data-studio-view="side" aria-pressed="false">Side</button><button type="button" data-studio-view="section" aria-pressed="false" title="Cut through the selected add-on">Section</button><button type="button" data-studio-view="xray" aria-pressed="false" title="See through the terrain">X-ray</button></div>
+          <label class="studio-snap"><span>Snap</span><select id="studio-snap"><option value="none">None</option><option value="grid">5 mm grid</option><option value="center">Centerlines</option><option value="high">Highest point nearby</option></select></label>
+          <button type="button" id="studio-preview" class="button secondary" aria-pressed="false" title="Compute the real cuts on a coarse model">Preview cuts</button>
+        </div>
+        <div id="studio-view" class="studio-view"><div id="studio-view-empty" class="studio-view-empty" hidden></div>
+          <div id="studio-checks" class="studio-checks" aria-live="polite"><strong>Checks</strong><ul id="studio-check-list"><li class="info">Checks appear after a change.</li></ul></div>
+          <div class="studio-view-hint" id="studio-view-hint">Drag to orbit · click an add-on to select · drag it to move · R rotates</div>
+        </div>
+      </section>
+      <aside class="studio-right" aria-label="Settings and export">
+        <section id="studio-settings" class="studio-card"></section>
+        <section id="studio-model-settings" class="studio-card"><h3>Model</h3>
+          <label for="export-size">Model size (millimeters, longest side)</label><input id="export-size" type="number" min="10" max="2000" step="1" value="180"><div id="export-dimensions" class="small-hint"></div>
+          <label for="studio-base" class="space-top">Base thickness (% of longest side)</label><input id="studio-base" type="number" min="0.5" max="10" step="0.5">
+          <span id="studio-exaggeration" class="small-hint"></span>
+          <label for="studio-bed" class="space-top">Printer bed (mm, square)</label><input id="studio-bed" type="number" min="50" max="2000" step="1" value="256">
+        </section>
+        <section id="studio-marker" class="studio-card"><h3>Nail markers</h3>
+          <label class="studio-inline" for="studio-marker-style">Style <select id="studio-marker-style"><option value="ball">Ball</option><option value="platform">Platform</option></select></label>
+          <label class="studio-check"><input id="studio-marker-include" type="checkbox"> Include one per nail marker in the 3MF</label>
+          <label class="studio-inline" for="studio-marker-color">Marker color <input id="studio-marker-color" type="color" value="#c0392b"></label>
+          <div id="studio-platform-options" hidden>
+            <label class="studio-inline" for="studio-platform-top">On top <select id="studio-platform-top"><option value="none">Nothing</option><option value="terrain">Terrain around the marker</option><option value="building">Building at the marker</option></select></label>
+            <label class="studio-inline" for="studio-platform-top-color">Top color <input id="studio-platform-top-color" type="color" value="#c0392b"></label>
+            <div id="studio-platform-terrain" hidden>
+              <label class="studio-inline" for="studio-platform-area">Area lifted (mm) <input id="studio-platform-area" type="number" min="10" max="80" step="1" value="30"></label>
+              <label class="studio-inline" for="studio-platform-exaggeration">Top exaggeration <input id="studio-platform-exaggeration" type="number" min="0.5" max="20" step="0.5" placeholder="Model's"></label>
+            </div>
+          </div>
+          <span id="studio-marker-info" class="small-hint"></span>
+          <div class="studio-downloads"><a class="text-button" data-marker-format="stl" href="/api/studio/marker-ball?format=stl" download>Ball STL ↓</a><a class="text-button" data-marker-format="3mf" href="/api/studio/marker-ball?format=3mf" download>Ball 3MF ↓</a><a class="text-button" data-marker-format="blend" href="/api/studio/marker-ball?format=blend" download>Ball Blender file ↓</a></div>
+          <div class="studio-downloads"><a class="text-button" data-marker-kind="platform" data-marker-format="stl" href="/api/studio/marker-platform?format=stl" download>Platform STL ↓</a><a class="text-button" data-marker-kind="platform" data-marker-format="3mf" href="/api/studio/marker-platform?format=3mf" download>Platform 3MF ↓</a><a class="text-button" data-marker-kind="platform" data-marker-format="blend" href="/api/studio/marker-platform?format=blend" download>Platform Blender file ↓</a></div>
+        </section>
+        <section class="studio-card studio-export"><h3>Export</h3>
+          <div class="export-choices">
+            <button type="button" data-export="3mf"><strong>Four-color 3MF <span>↓</span></strong><span id="export-3mf-hint">Print palette · separate solid color parts</span></button>
+            <button type="button" data-export="stl"><strong>STL <span>↓</span></strong><span>Solid geometry for 3D printing</span></button>
+            <button type="button" data-export="obj"><strong>OBJ <span>↓</span></strong><span>Geometry for CAD and 3D tools</span></button>
+            <button type="button" data-export="glb"><strong>GLB <span>↓</span></strong><span>Colored model with selected map features</span></button>
+            <button type="button" data-export="png"><strong>Heightmap PNG <span>↓</span></strong><span>16-bit heightmap with embedded bounds</span></button>
+            <button type="button" data-export="csv"><strong>Elevation CSV <span>↓</span></strong><span>Original heights in meters</span></button>
+            <button type="button" data-export="npy"><strong>Elevation NumPy <span>↓</span></strong><span>Original elevation array (.npy)</span></button>
+          </div>
+          <progress id="studio-progress" max="1" value="0" hidden></progress>
+          <div id="export-status" role="status"></div>
+          <div class="export-extras"><button type="button" data-export="metadata" class="text-button">Optional settings & coordinates (JSON) ↓</button><a id="export-credits" class="text-button" href="/api/attribution?download=1" download="terrain-credits.txt">Source credits (TXT) ↓</a></div>
+          <details class="studio-about"><summary>About the formats</summary><p class="dialog-note">Each button downloads one file. Models use the current elevation multiplier and base; the size sets the longest horizontal edge. 3MF requires the Print palette and at most four distinct colors across surfaces, enabled features, add-on colors, and nail markers (balls, platforms, and platform tops); assign its color parts to your filaments in the slicer. 3MF includes selected features as surface inlays and raised buildings. GLB includes selected map features and their colors. STL and OBJ contain terrain geometry and add-ons. Heightmaps and arrays preserve original elevations. GLB uses meters. Add-on cuts pass through every part, including map features.</p></details>
+        </section>
+      </aside>
     </div>
-    <p class="dialog-note">Each button downloads one file. 3MF requires the Print palette and at most four distinct colors across surfaces and enabled features; assign its color parts to your filaments in the slicer. 3MF includes selected features as surface inlays and raised buildings, with roof shapes when 3D buildings is on. GLB includes selected map features and their colors. STL and OBJ contain terrain geometry. Heightmaps and arrays preserve original elevations. GLB uses meters. OBJ, GLB, and PNG embed metadata.</p>
-    <div class="export-extras"><button type="button" data-export="metadata" class="text-button">Optional settings & coordinates (JSON) ↓</button><a id="export-credits" class="text-button" href="/api/attribution?download=1" download="terrain-credits.txt">Source credits (TXT) ↓</a></div>
-    <div id="export-status" role="status"></div>
   </dialog>
 
   <dialog id="print-palette-dialog"><form method="dialog" class="dialog-header"><div><span class="eyebrow">FOUR FILAMENTS · SIX SURFACES</span><h2>Print palette</h2></div><button class="icon-button" aria-label="Close print palette">×</button></form>

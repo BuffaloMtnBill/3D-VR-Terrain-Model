@@ -3,7 +3,7 @@ import math
 
 import manifold3d as mf
 import numpy as np
-from shapely import contains_xy, make_valid
+from shapely import contains_xy, get_coordinates, line_interpolate_point, make_valid
 from shapely.affinity import affine_transform
 from shapely.geometry import LineString, Polygon, box
 from shapely.geometry.polygon import orient
@@ -13,8 +13,9 @@ from .features import LAYER_NAMES, parts
 from .mesh import build_mesh
 
 LABELS = dict(zip(LAYER_NAMES, ("Roads", "Train tracks", "Borders", "Water", "City boundaries", "Park boundaries", "Buildings", "AT", "Other trails")))
+LABELS["route"] = "Route"  # an uploaded GPX track (routes.py), printed like a trail at its chosen width
 # Later layers take precedence where features intersect.
-ORDER = ("water", "roads", "railways", "borders", "cities", "parks", "trails", "at", "buildings")
+ORDER = ("water", "roads", "railways", "borders", "cities", "parks", "trails", "at", "route", "buildings")
 ROAD_DETAIL = {"motorway": 0, "motorway_link": 0, "trunk": 0, "trunk_link": 0, "primary": 0, "primary_link": 0,
                "secondary": 25, "secondary_link": 25, "tertiary": 50, "tertiary_link": 50, "unclassified": 75, "residential": 75}
 INLAY_DEPTH = .6  # mm: three layers at a typical 0.2 mm layer height
@@ -94,8 +95,8 @@ def footprint(feature, transform):
                         for p in feature.get("polygons", [])])
 
 
-def line_footprint(features, name, transform, model_size):
-    width = max(MIN_LINE_WIDTH, model_size*(.014 if name == "roads" else .012 if name == "water" else .010)/6.4)
+def line_footprint(features, name, transform, model_size, width_mm=None):
+    width = max(MIN_LINE_WIDTH, width_mm or model_size*(.014 if name == "roads" else .012 if name == "water" else .010)/6.4)
     shapes, segments = [], 0
     for feature in features:
         for path in feature.get("lines", []):
@@ -166,6 +167,28 @@ def clean_collinear_faces(vertices, faces):
     raise ValueError("Too many tiny feature contacts to print. Reduce detail or choose a smaller area.")
 
 
+def grid_window(bounds, width, height, rows, columns):
+    """Row and column slices of the model grid covering an (x0, y0, x1, y1) box in model millimeters."""
+    x0, y0, x1, y1 = bounds
+    first_column = max(0, math.floor((x0/width+.5)*(columns-1)))
+    last_column = min(columns-1, math.ceil((x1/width+.5)*(columns-1)))
+    first_row = max(0, math.floor((.5-y1/height)*(rows-1)))
+    last_row = min(rows-1, math.ceil((.5-y0/height)*(rows-1)))
+    return slice(first_row, max(first_row, last_row+1)), slice(first_column, max(first_column, last_column+1))
+
+
+def surface_heights(top, width, height, points):
+    """Heights of the triangulated model surface (a rows×columns×3 grid in mm) at x/y points."""
+    rows, columns = top.shape[:2]
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 2)
+    x = np.clip((points[:, 0]/width+.5)*(columns-1), 0, columns-1)
+    y = np.clip((.5-points[:, 1]/height)*(rows-1), 0, rows-1)
+    col, row = np.minimum(x.astype(int), columns-2), np.minimum(y.astype(int), rows-2)
+    rx, ry = x-col, y-row
+    a, b, c, d = top[row, col, 2], top[row, col+1, 2], top[row+1, col, 2], top[row+1, col+1, 2]
+    return np.where(rx+ry <= 1, a*(1-rx-ry)+b*rx+c*ry, d*(rx+ry-1)+b*(1-ry)+c*(1-rx))
+
+
 def feature_color_parts(terrain, options, palette, base_parts, styles, data):
     """Cut surface inlays out of terrain; cut building foundations out before adding roofs.
 
@@ -188,20 +211,16 @@ def feature_color_parts(terrain, options, palette, base_parts, styles, data):
     rows, columns = terrain.elevations.shape
     top = vertices[:rows*columns].reshape(rows, columns, 3)
     def surface_height(points):
-        points = np.asarray(points)
-        x = np.clip((points[:, 0]/width+.5)*(columns-1), 0, columns-1)
-        y = np.clip((.5-points[:, 1]/height)*(rows-1), 0, rows-1)
-        col, row = np.minimum(x.astype(int), columns-2), np.minimum(y.astype(int), rows-2)
-        rx, ry = x-col, y-row
-        a, b, c, d = top[row, col, 2], top[row, col+1, 2], top[row+1, col, 2], top[row+1, col+1, 2]
-        return np.where(rx+ry <= 1, a*(1-rx-ry)+b*rx+c*ry, d*(rx+ry-1)+b*(1-ry)+c*(1-rx))
+        return surface_heights(top, width, height, points)
     def polygon_ground(polygon):
         # Sample grid vertices plus densely sampled footprint edges for a level base.
         ring = polygon.exterior
         spacing = min(width/(columns-1), height/(rows-1))/2
-        points = np.asarray([ring.interpolate(distance).coords[0] for distance in np.linspace(0, ring.length, max(2, math.ceil(ring.length/spacing)+1))])
-        within = contains_xy(polygon, top[:, :, 0], top[:, :, 1])
-        return max(float(surface_height(points).max()), float(top[:, :, 2][within].max()) if within.any() else 0)
+        points = get_coordinates(line_interpolate_point(ring, np.linspace(0, ring.length, max(2, math.ceil(ring.length/spacing)+1))))
+        # Only grid vertices inside the footprint's bounding box can lie within it.
+        window = top[grid_window(polygon.bounds, width, height, rows, columns)]
+        within = contains_xy(polygon, window[:, :, 0], window[:, :, 1])
+        return max(float(surface_height(points).max()), float(window[:, :, 2][within].max()) if within.any() else 0)
     for name in ORDER:
         features = selected.get(name, [])
         counts[name] = len(features) if name in selected else 0
@@ -231,7 +250,7 @@ def feature_color_parts(terrain, options, palette, base_parts, styles, data):
                 continue
             feature_solid = union(buildings)
         else:
-            geometry = line_footprint(features, name, transform, options.size_mm)
+            geometry = line_footprint(features, name, transform, options.size_mm, styles[name].get("width_mm"))
             if name == "water":
                 geometry = unary_union([geometry, *(footprint(feature, transform) for feature in features)])
             geometry = geometry.intersection(frame)

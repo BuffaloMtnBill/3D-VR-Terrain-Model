@@ -3,8 +3,9 @@ import { OrbitControls } from './vendor/OrbitControls.js';
 import { GLTFExporter } from './vendor/GLTFExporter.js';
 import { SelectionFrame } from './map-frame.js';
 import {rotationAngle,selectionCorners,sampleLocation,geographicExtent,mercatorPixel} from './selection-geometry.js';
-import {buildFeatures,disposeFeatures,featureLabels,filterFeatures} from './feature-layers.js';
+import {buildFeatures,buildRoute,disposeFeatures,featureLabels,filterFeatures} from './feature-layers.js';
 import {paintSurface,coverLabels} from './print-palette.js';
+import {createStudio} from './print-studio.js';
 
 const $ = id => document.getElementById(id);
 const presets = {};
@@ -17,10 +18,12 @@ const paletteStops = {
 const ramps = Object.fromEntries(Object.entries(paletteStops).map(([key, stops]) => [key, stops.map(hex => new THREE.Color(hex))]));
 const state = {selection:null, selectionError:null, palette:'alpine', view:'relief', mapStyle:'terrain', data:null, id:null, loading:false, name:'', surfaceVersion:0};
 let map, mapLayer, selectionFrame, profileMapLine, renderer, scene, camera, perspective, orthographic, controls, sun, grid, model, topMesh, baseMesh, mapTexture, featureGroup;
-let toastTimer, sceneReady = false, lastMapError = 0;
+let toastTimer, sceneReady = false, lastMapError = 0, studio = null;
 let featureData=null,featureRequest=null,featureError=null,zipRequest=null,placeRequest=null;
+let waterSourceChosen=false;
 const featureCache=new Map();
 let coverData=null,coverRequest=null,coverError=null;
+let route=null,routeLines=null,routeLinesKey=null,routeMesh=null,routeLayer=null;
 const coverCache=new Map();
 const tileImages = new Map();
 const SCALE = 6.4;
@@ -379,10 +382,12 @@ function buildScene(reset=false) {
   if(state.view==='map'&&mapTexture) applyMapMaterial();
   if(baseMesh) baseMesh.visible=state.view!=='elevation';
   rebuildFeatures();
+  rebuildRoute();
   grid.visible=state.view!=='elevation';
   updateProfileMapLine();
   if(reset) resetCamera();
   $('scene-detail').textContent=`${columns} × ${rows} points · ${number((rows-1)*(columns-1)*2)} surface faces${rotationAngle(data.bounds)?` · ${number(rotationAngle(data.bounds),1)}° selection`:''}`;
+  studio?.modelChanged();
 }
 
 function contourInterval(range) {
@@ -440,7 +445,15 @@ async function loadSurface(id, reset=false, loadedName=null) {
   if(version!==state.surfaceVersion) return;
   const changedArea=state.id!==id;
   state.id=id; state.data=data;
-  if(changedArea){featureData=featureCache.get(id)||null;featureError=null;}
+  if(changedArea){
+    if(!waterSourceChosen) {
+      const b=data.bounds,lat=(b.north+b.south)/2,lon=(b.west+b.east)/2;
+      // Initial regional default; users can select either source at any location.
+      const us=(lon>=-125&&lon<=-66&&lat>=24&&lat<=49)||(lon>=-180&&lon<=-130&&lat>=51&&lat<=72)||(lon>=-161&&lon<=-154&&lat>=18&&lat<=23)||(lon>=-68&&lon<=-64&&lat>=17&&lat<=19);
+      $('water-source').value=us?'usgs':'osm';
+    }
+    featureData=featureCache.get(`${id}:${$('water-source').value}`)||null;featureError=null;updateWaterSource();
+  }
   if(changedArea){coverData=coverCache.get(id)||null;coverError=null;}
   if(loadedName) state.loadedName=loadedName;
   if(changedArea&&mapTexture) {mapTexture.dispose();mapTexture=null;}
@@ -448,6 +461,7 @@ async function loadSurface(id, reset=false, loadedName=null) {
   buildScene(reset); updateExportDimensions(); updateElevationCredit();
   if(featuresEnabled())ensureFeatures().catch(()=>{});
   if(state.palette==='print')ensureCover().catch(()=>{});
+  ensureRouteLines().catch(error=>routeMessage(error.message,true));
 }
 
 function printColors() {return Object.fromEntries(Object.keys(coverLabels).map(name=>[name,$(`print-${name}`).value]));}
@@ -455,7 +469,7 @@ function printColors() {return Object.fromEntries(Object.keys(coverLabels).map(n
 function updatePrintPalette() {
   
   const surfaceCount=new Set(Object.values(printColors())).size;
-  const count=new Set([...Object.values(printColors()),...Object.values(featureStyles()).filter(style=>style.enabled).map(style=>style.color)]).size;
+  const count=new Set([...Object.values(printColors()),...Object.values(featureStyles()).filter(style=>style.enabled).map(style=>style.color),...routeColors()]).size;
   $('print-color-count').textContent=count<=4?`${count} distinct colors including enabled features · ready for a four-color printer.`:`${count} distinct colors including enabled features · share palette and feature colors to fit four filaments.`;
   $('print-color-count').classList.toggle('error',count>4);
   $('print-summary').textContent=`${surfaceCount} surface colors · ${count} total with enabled features.`;
@@ -464,7 +478,12 @@ function updatePrintPalette() {
   $('print-feature-color-count').textContent=`3MF: ${count} / 4 filament colors across surfaces and enabled features.`;
   $('print-feature-color-count').classList.toggle('error',count>4);
   $('contours').disabled=state.palette==='print';
-  document.querySelector('[data-export="3mf"]').disabled=state.palette!=='print'||count>4;
+  // A disabled button cannot explain itself on click, so the button says why 3MF is unavailable.
+  // Add-on fill colors and marker balls from the Print Studio project also need filaments.
+  const printCount=new Set([...Object.values(printColors()),...Object.values(featureStyles()).filter(style=>style.enabled).map(style=>style.color),...routeColors(),...(studio?.extraColors()||[])]).size;
+  const unavailable=state.palette!=='print'?'Select the Print palette to enable':printCount>4?`${printCount} colors · share colors to fit four filaments`:'';
+  document.querySelector('[data-export="3mf"]').disabled=Boolean(unavailable);
+  $('export-3mf-hint').textContent=unavailable||'Print palette · separate solid color parts';
   $('cover-status').classList.toggle('error',Boolean(coverError));
   $('cover-retry').hidden=!coverError;
   $('cover-status').textContent=coverError||(coverData?(Object.values(coverData.counts).some(count=>count>0)?'Mapped surface colors loaded.':'No mapped surface areas; using Dirt.'):(state.id?'Loading surface map…':'Generate terrain to load mapped surface colors.'));
@@ -506,10 +525,17 @@ function featureStyles() {
   const closed=Object.entries(featureGroups).flatMap(([group,names])=>$(`group-${group}`).checked?[]:names);
   return Object.fromEntries(Object.keys(featureLabels).map(name=>[name,{enabled:$(`feature-${name}`).checked&&!closed.includes(name),color:$(`color-${name}`).value,
     ...(['roads','water'].includes(name)?{detail:Number($(`detail-${name}`).value)}:{}),
+    ...(name==='water'?{source:$('water-source').value}:{}),
     ...(name==='buildings'?{detailed:$('buildings-detailed').checked}:{})}]));
 }
 
 function featuresEnabled() {return Object.values(featureStyles()).some(style=>style.enabled);}
+
+function updateWaterSource() {
+  const usgs=$('water-source').value==='usgs';
+  $('water-source-hint').textContent=usgs?'US coverage: detailed creeks, rivers and lakes from USGS 3DHP, including legacy NHD.':'Global coverage from OpenStreetMap; creek coverage varies by location.';
+  $('water-credit').hidden=!usgs;
+}
 
 function featureStatus() {
   
@@ -523,6 +549,7 @@ function featureStatus() {
   $('feature-retry').hidden=!featureError||!featuresEnabled();
   if(!featuresEnabled())$('feature-status').textContent='Choose layers to show on the current terrain.';
   else if(featureError)$('feature-status').textContent=featureError;
+  else if(featureRequest?.water&&!featureData?.waterLoaded)$('feature-status').textContent='Loading USGS waterways…';
   else if(featureData&&featureRequest?.buildings&&!featureData.buildingsLoaded)$('feature-status').textContent='Loading buildings…';
   else if(featureData) {
     const count=Object.entries(styles).reduce((total,[name,style])=>total+(style.enabled?filtered.counts[name]:0),0);
@@ -538,6 +565,7 @@ function rebuildFeatures() {
     catch(error) {featureError=error.message;}
   }
   featureStatus();
+  studio?.modelChanged();
 }
 
 function syncFeatureVisibility() {
@@ -564,19 +592,29 @@ async function loadFeatureLayers(id,query='') {
 // Buildings are the largest layer by far, so they download only once Buildings is checked.
 async function ensureFeatures(force=false) {
   if(!state.id||!featuresEnabled())return null;
-  const id=state.id,buildings=$('feature-buildings').checked;
-  if(!force&&featureData&&(featureData.buildingsLoaded||!buildings))return featureData;
-  if(featureRequest?.id===id&&(featureRequest.buildings||!buildings))return featureRequest.promise;
+  const id=state.id,buildings=$('feature-buildings').checked,source=$('water-source').value;
+  const water=$('feature-water').checked&&source==='usgs',key=`${id}:${source}`;
+  if(!force&&featureData&&(!water||featureData.waterLoaded)&&(featureData.buildingsLoaded||!buildings))return featureData;
+  if(featureRequest?.id===id&&featureRequest.source===source&&(featureRequest.water||!water)&&(featureRequest.buildings||!buildings))return featureRequest.promise;
   featureError=null;
-  const request={id,buildings,promise:null};
+  const request={id,buildings,source,water,promise:null};
   const show=result=>{
-    featureCache.set(id,result);if(featureCache.size>4)featureCache.delete(featureCache.keys().next().value);
-    if(state.id===id&&!(featureData?.buildingsLoaded&&!result.buildingsLoaded)){featureData=result;featureError=null;rebuildFeatures();}
+    if(featureRequest!==request)return;
+    featureCache.set(key,result);if(featureCache.size>4)featureCache.delete(featureCache.keys().next().value);
+    if(state.id===id&&$('water-source').value===source&&!(featureData?.buildingsLoaded&&!result.buildingsLoaded)&&!(featureData?.waterLoaded&&!result.waterLoaded)){featureData=result;featureError=null;rebuildFeatures();}
   };
   request.promise=(async()=>{
     try {
       let result=!force&&state.id===id&&featureData?featureData:await loadFeatureLayers(id);
       if(!result)return null;
+      if(water&&!result.waterLoaded) {
+        const sea=result.layers.water.filter(feature=>feature.kind==='sea');
+        show({...result,layers:{...result.layers,water:sea},counts:{...result.counts,water:sea.length}});
+        const part=await loadFeatureLayers(id,'?layer=water&source=usgs');
+        if(!part)return null;
+        const features=[...result.layers.water.filter(feature=>feature.kind==='sea'),...part.water];
+        result={...result,layers:{...result.layers,water:features},counts:{...result.counts,water:features.length},waterLoaded:true,water_source:source,water_source_url:part.source_url};
+      }
       if(buildings&&!result.buildingsLoaded) {
         show(result);
         const part=await loadFeatureLayers(id,'?layer=buildings');
@@ -586,7 +624,7 @@ async function ensureFeatures(force=false) {
       show(result);
       return result;
     } catch(error) {
-      if(state.id===id){featureError=error.message;featureStatus();}
+      if(featureRequest===request&&state.id===id&&$('water-source').value===source){featureError=error.message;featureStatus();}
       throw error;
     } finally {if(featureRequest===request){featureRequest=null;featureStatus();}}
   })();
@@ -762,7 +800,7 @@ async function exportGLB() {
   if(!sceneReady||!topMesh) throw new Error('GLB export requires the WebGL preview. STL and OBJ are available without it.');
   const group=new THREE.Group(),data=state.data,opts=options();
   group.name='Terrain Studio';
-  group.userData={...data,elevations:undefined,true_elevations:undefined,model_options:opts,print_palette:state.palette==='print'?printColors():undefined,surface_source:state.palette==='print'?coverData.source:undefined,feature_layers:featureStyles(),mesh_units:'meters',axes:'X selection right, Y up, Z selection bottom',map_texture:'omitted; interactive viewing only',attribution:await fetch('/api/attribution').then(response=>response.text())};
+  group.userData={...data,elevations:undefined,true_elevations:undefined,model_options:opts,print_palette:state.palette==='print'?printColors():undefined,surface_source:state.palette==='print'?coverData.source:undefined,feature_layers:featureStyles(),water_source:$('water-source').value,mesh_units:'meters',axes:'X selection right, Y up, Z selection bottom',map_texture:'omitted; interactive viewing only',attribution:await fetch('/api/attribution').then(response=>response.text())};
   let geometry=topMesh.geometry.clone();geometry.deleteAttribute('elevation');
   if(state.palette==='print')geometry=paintSurface(geometry,printColors(),coverData);
   else {
@@ -778,6 +816,7 @@ async function exportGLB() {
   }
   group.add(...ownedMeshes);
   if(featureGroup)group.add(featureGroup.clone(true));
+  if(routeMesh)group.add(routeMesh.clone(true));
   group.scale.setScalar(opts.size_mm/SCALE/1000);
   try {
     const result=await new GLTFExporter().parseAsync(group,{binary:true,onlyVisible:true});
@@ -785,35 +824,129 @@ async function exportGLB() {
   } finally {ownedMeshes.forEach(mesh=>{mesh.geometry.dispose();mesh.material.dispose();});}
 }
 
-async function exportModel(format) {
-  if(!state.id) return notify('Generate terrain before exporting.',true);
-  const opts=options();
-  if(!Number.isFinite(opts.size_mm)||opts.size_mm<10||opts.size_mm>2000) return notify('Choose a model size between 10 and 2000 millimeters.',true);
-  const buttons=[...document.querySelectorAll('[data-export]')];buttons.forEach(button=>button.disabled=true);
-  $('export-status').textContent='Preparing your export…';
-  try {
-    await loadSurface(state.id);
-    if(state.palette==='print'&&['glb','3mf'].includes(format)) {
-      $('export-status').textContent='Loading mapped surface colors…';
-      await ensureCover();if(coverError)throw new Error(coverError);
-    }
-    if(['glb','3mf'].includes(format)&&featuresEnabled()) {
-      $('export-status').textContent='Loading selected map features…';
-      await ensureFeatures();if(featureError)throw new Error(featureError);
-    }
-    if(format==='glb') {
-      await exportGLB();
-    }
-    else {
-      const response=await fetch(`/api/export/${state.id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...opts,format,feature_layers:featureStyles(),print_palette:state.palette==='print'?printColors():undefined})});
-      if(!response.ok) {const result=await response.json();throw new Error(result.error||'Export failed.');}
-      const filename=response.headers.get('Content-Disposition')?.match(/filename="?([^";]+)"?/i)?.[1]||`terrain.${format}`;
-      download(await response.blob(),filename);
-    }
-    $('export-status').textContent='Your file has been downloaded.';
-  } catch(error) { $('export-status').textContent=error.message;notify(error.message,true); }
-  finally { buttons.forEach(button=>button.disabled=false);updatePrintPalette(); }
+// Loads what a model export needs; the Print Studio (print-studio.js) runs the export itself.
+async function prepareExport(format,status=()=>{}) {
+  await loadSurface(state.id);
+  if(state.palette==='print'&&['glb','3mf'].includes(format)) {
+    status('Loading mapped surface colors…');
+    await ensureCover();if(coverError)throw new Error(coverError);
+  }
+  if(['glb','3mf'].includes(format)&&featuresEnabled()) {
+    status('Loading selected map features…');
+    await ensureFeatures();if(featureError)throw new Error(featureError);
+  }
 }
+
+// ---------- Uploaded GPS route (GPX) ----------
+// The route lives in geographic coordinates, so it stays on the ground as the frame moves or resizes.
+const routeKey='terrain-route';
+const routeShown=()=>Boolean(route)&&$('route-show').checked;
+const routeColors=()=>routeShown()?[$('route-color').value.toLowerCase()]:[];
+function routeOptions() {
+  return routeShown()?{id:route.id,enabled:true,color:$('route-color').value.toLowerCase(),width_mm:Number($('route-width').value)}:undefined;
+}
+function routeMessage(text,error=false) {$('route-status').textContent=text;$('route-status').classList.toggle('error',error);}
+function saveRoute() {
+  try{localStorage.setItem(routeKey,JSON.stringify(route?{id:route.id,show:$('route-show').checked,color:$('route-color').value,width:Number($('route-width').value)}:null));}
+  catch{/* Optional persistence. */}
+}
+function drawRouteOnMap() {
+  if(routeLayer){routeLayer.remove();routeLayer=null;}
+  if(!map||!routeShown())return;
+  routeLayer=L.polyline(route.display,{color:$('route-color').value,weight:2+Number($('route-width').value)*1.2,opacity:.92,interactive:false,lineCap:'round'}).addTo(map);
+}
+function rebuildRoute() {
+  requestRender();
+  if(routeMesh){disposeFeatures(routeMesh);routeMesh=null;}
+  if(sceneReady&&topMesh&&state.data&&routeShown()&&routeLines?.length&&routeLinesKey===`${route.id}:${state.id}`) {
+    routeMesh=buildRoute(routeLines,state.data,options(),$('route-color').value,Number($('route-width').value),SCALE);
+    if(routeMesh)model.add(routeMesh);
+  }
+  studio?.modelChanged();
+}
+async function ensureRouteLines() {
+  if(!route||!state.id)return;
+  const key=`${route.id}:${state.id}`;
+  if(key===routeLinesKey)return;
+  const result=await api(`/api/routes/${route.id}/lines/${state.id}`);
+  if(!route||key!==`${route.id}:${state.id}`)return;
+  routeLines=result.lines;routeLinesKey=key;rebuildRoute();
+  routeMessage(routeLines.length?'The route is draped on the model and included in exports.':'The route is outside the generated area. Use Frame the route, then Generate.');
+}
+function showRoute(data) {
+  route=data;routeLines=null;routeLinesKey=null;
+  $('route-controls').hidden=false;
+  $('route-name').textContent=data.name;
+  routeStats();
+  $('route-width-value').textContent=`${Number($('route-width').value).toFixed(1)} mm`;
+  drawRouteOnMap();saveRoute();updatePrintPalette();rebuildRoute();
+  routeMessage(state.id?'Placing the route on the model…':'Generate terrain to drape the route on the model.');
+  ensureRouteLines().catch(error=>routeMessage(error.message,true));
+}
+function routeStats() {
+  if(!route)return;
+  const u=units();
+  $('route-stats').textContent=`${number(route.distance_m/u.distance,1)} ${u.distanceLabel} · ${number(route.gain_m*u.height)} ${u.label} climbing · ${number(route.points)} points`;
+}
+function routeStyleChanged() {
+  $('route-width-value').textContent=`${Number($('route-width').value).toFixed(1)} mm`;
+  drawRouteOnMap();saveRoute();updatePrintPalette();rebuildRoute();
+  if(routeShown())ensureRouteLines().catch(error=>routeMessage(error.message,true));
+}
+function frameRoute() {
+  if(!route)return;
+  const {south,west,north,east}=route.bounds,pad=.08,minimum=.003;
+  const latPad=Math.max((north-south)*pad,minimum),lonPad=Math.max((east-west)*pad,minimum/Math.cos((north+south)/2*Math.PI/180));
+  try{updateSelection({south:south-latPad,west:west-lonPad,north:north+latPad,east:east+lonPad},true);routeMessage('The frame now surrounds the route. Generate to build it.');}
+  catch(error){notify(error.message,true);}
+}
+async function uploadRoute(file) {
+  if(!file)return;
+  if(file.size>15e6)return routeMessage('GPX files must be under 15 MB.',true);
+  $('route-upload').disabled=true;routeMessage(`Reading ${file.name}…`);
+  try {
+    const data=await api('/api/routes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({gpx:await file.text(),filename:file.name})});
+    $('route-show').checked=true;showRoute(data);
+    // A route far from the current frame is framed automatically; nearby ones keep the user's frame.
+    const b=route.bounds,frame=state.selection;
+    if(!frame||b.east<Math.min(frame.west,frame.east)||b.west>Math.max(frame.west,frame.east)||b.north<frame.south||b.south>frame.north)frameRoute();
+  } catch(error){routeMessage(error.message,true);}
+  finally{$('route-upload').disabled=false;$('route-file').value='';}
+}
+function removeRoute() {
+  route=null;routeLines=null;routeLinesKey=null;
+  $('route-controls').hidden=true;drawRouteOnMap();rebuildRoute();saveRoute();updatePrintPalette();
+  routeMessage('Overlay an activity exported as GPX from Strava, Garmin Connect, or COROS.');
+}
+async function restoreRoute() {
+  let saved=null;
+  try{saved=JSON.parse(localStorage.getItem(routeKey)||'null');}catch{saved=null;}
+  if(!saved?.id||!/^[0-9a-f]{24}$/.test(saved.id))return;
+  if(/^#[0-9a-f]{6}$/i.test(saved.color))$('route-color').value=saved.color;
+  if(Number.isFinite(saved.width)&&saved.width>=.4&&saved.width<=6)$('route-width').value=saved.width;
+  $('route-show').checked=saved.show!==false;
+  try{showRoute(await api(`/api/routes/${saved.id}`));}
+  catch{removeRoute();}
+}
+function wireRoute() {
+  $('route-upload').addEventListener('click',()=>$('route-file').click());
+  $('route-file').addEventListener('change',()=>uploadRoute($('route-file').files[0]));
+  $('route-show').addEventListener('change',routeStyleChanged);
+  $('route-color').addEventListener('input',routeStyleChanged);
+  $('route-width').addEventListener('input',routeStyleChanged);
+  $('route-frame').addEventListener('click',frameRoute);
+  $('route-remove').addEventListener('click',removeRoute);
+  restoreRoute();
+}
+
+// Everything the Print Studio reads from the main view; it never changes app state except through these inputs.
+const studioContext={
+  SCALE,
+  get state(){return state;},
+  get coverData(){return coverData;},
+  get meshes(){return {topMesh,baseMesh,featureGroup,routeGroup:routeMesh};},
+  options,printColors,featureStyles,featuresEnabled,routeOptions,notify,download,exportGLB,prepareExport,updatePrintPalette,updateExportDimensions,
+};
 
 async function screenshot() {
   if(!sceneReady||!state.data) return notify('Generate a terrain preview first.',true);
@@ -831,7 +964,7 @@ async function screenshot() {
   context.fillText(`Elevation: ${state.data.source} · ${plainUrl(state.data.source_url)}`,15*ratio,source.height+42*ratio);
   const mapCredits=state.mapStyle==='terrain'?'© OpenStreetMap · SRTM · OpenTopoMap (CC-BY-SA)':'© OpenStreetMap contributors · openstreetmap.org/copyright';
   context.fillText(state.view==='map'?mapCredits:`Source credits: ${plainUrl(state.data.license_url)}`,15*ratio,source.height+56*ratio);
-  if(mapped)context.fillText('Map surfaces & features: © OpenStreetMap contributors · openstreetmap.org/copyright',15*ratio,source.height+70*ratio);
+  if(mapped)context.fillText(`Map surfaces & features: © OpenStreetMap contributors${$('feature-water').checked&&$('water-source').value==='usgs'?' · Water: USGS 3DHP':''}`,15*ratio,source.height+70*ratio);
   canvas.toBlob(blob=>download(blob,'terrain-preview.png'),'image/png');
 }
 
@@ -903,6 +1036,7 @@ function setUnits(value) {
   $('profile').setAttribute('aria-label',`Elevation cross section in ${units().name} above sea level`);
   if(state.selection)updateSelectionSize();
   if(state.data){updateLegend();updateStats();drawProfile();}
+  routeStats();
 }
 
 const reliefHints={standard:'Every height is multiplied equally.',local:'Fine relief is amplified; broad landforms keep their height.',lowland:'Low ground gets a larger share of the model height.'};
@@ -968,6 +1102,18 @@ function wireControls() {
     if(sourceHints[savedSource])$('elevation-source').value=savedSource;
   } catch { /* Saved source is optional. */ }
   updateElevationSource();
+  try {
+    const saved=localStorage.getItem('terrain-water-source');
+    if(['osm','usgs'].includes(saved)){$('water-source').value=saved;waterSourceChosen=true;}
+  } catch { /* Saved source is optional. */ }
+  updateWaterSource();
+  $('water-source').addEventListener('change',()=>{
+    waterSourceChosen=true;
+    try{localStorage.setItem('terrain-water-source',$('water-source').value);}catch{/* Optional persistence. */}
+    featureData=featureCache.get(`${state.id}:${$('water-source').value}`)||null;featureError=null;
+    updateWaterSource();rebuildFeatures();
+    if(featuresEnabled())ensureFeatures().catch(()=>{});
+  });
   $('elevation-source').addEventListener('change',()=>{
     try{localStorage.setItem('terrain-elevation-source',$('elevation-source').value);}catch{/* Optional persistence. */}
     updateElevationSource();
@@ -1007,9 +1153,9 @@ function wireControls() {
   featureStatus();
   $('generate').addEventListener('click',generateTerrain);
   $('help-button').addEventListener('click',()=>$('help-dialog').showModal());
-  $('export-button').addEventListener('click',()=>{if(!state.data)return notify('Generate terrain before exporting.',true);updateExportDimensions();updatePrintPalette();$('export-dialog').showModal();});
-  document.querySelectorAll('[data-export]').forEach(button=>button.addEventListener('click',()=>exportModel(button.dataset.export)));
-  $('export-size').addEventListener('input',updateExportDimensions);
+  studio=createStudio(studioContext);
+  $('export-button').addEventListener('click',()=>{if(!state.data)return notify('Generate terrain before exporting.',true);updateExportDimensions();updatePrintPalette();studio.open();});
+  $('export-size').addEventListener('input',()=>{updateExportDimensions();rebuildRoute();});
   document.querySelectorAll('[data-palette]').forEach(button=>button.addEventListener('click',()=>{
     state.palette=button.dataset.palette;
     document.querySelectorAll('[data-palette]').forEach(item=>{const active=item===button;item.classList.toggle('active',active);item.setAttribute('aria-pressed',String(active));});
@@ -1041,7 +1187,7 @@ async function init() {
     const initialPlace=presets[config.default_place];
     state.selection={...initialPlace.bounds};state.name=initialPlace.name;
     $('place').value=config.default_place;
-    setupMap(config); setupScene(); wireControls();
+    setupMap(config); setupScene(); wireControls(); wireRoute();
     if(config.example_available) {
       state.loadedName=initialPlace.name;
       await loadSurface('example',true);

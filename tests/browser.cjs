@@ -1,6 +1,7 @@
 /* Optional end-to-end test: run scripts/browser_fixture_server.py on port 8001.
  * Install Playwright separately, or set TERRAIN_PLAYWRIGHT_PATH to its package.
  * Map, ZIP, and feature requests use fixtures; public services are not queried.
+ * TERRAIN_CHROMIUM_PATH optionally selects the Chromium binary. The Print Studio has its own test (browser-studio.cjs).
  */
 const { chromium } = require(process.env.TERRAIN_PLAYWRIGHT_PATH || 'playwright');
 const assert = require('node:assert/strict');
@@ -104,11 +105,13 @@ async function snapRatios(page) {
 async function alignTwoPoints(page,first=[110,100],second=[250,175],touch=false) {
   // On a phone the map sits below the taller settings column; taps outside the viewport are lost.
   await page.locator('#map').evaluate(element=>element.scrollIntoView({block:'center'}));await page.waitForTimeout(100);
-  const before=await frameGeometry(page),map=await page.locator('#map').boundingBox();
-  const click=point=>touch?page.touchscreen.tap(map.x+point[0],map.y+point[1]):page.mouse.click(map.x+point[0],map.y+point[1]);
   await page.locator('#align-selection').click();
   assert.equal(await page.locator('#align-selection').getAttribute('aria-pressed'),'true');
   assert.match(await page.locator('#alignment-status').innerText(),/first point/);
+  // Activating the toolbar can scroll the page; measure tap positions afterwards.
+  await page.locator('#map').evaluate(element=>element.scrollIntoView({block:'center'}));await page.waitForTimeout(100);
+  const before=await frameGeometry(page),map=await page.locator('#map').boundingBox();
+  const click=point=>touch?page.touchscreen.tap(map.x+point[0],map.y+point[1]):page.mouse.click(map.x+point[0],map.y+point[1]);
   await click(first);
   fixedFrame(before,await frameGeometry(page),['x','y','width','height','angle']);
   assert.match(await page.locator('#alignment-status').innerText(),/second point/);
@@ -184,7 +187,7 @@ async function verifyFeatureGLB(page,bytes) {
 
 async function main() {
   await fs.mkdir(output,{recursive:true});
-  const browser=await chromium.launch({headless:true,args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+  const browser=await chromium.launch({headless:true,executablePath:process.env.TERRAIN_CHROMIUM_PATH,args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
   const context=await browser.newContext({viewport:{width:1440,height:1100},acceptDownloads:true});
   await context.route(mapTiles,route=>route.fulfill({status:200,contentType:'image/svg+xml',body:testTile,headers:{'access-control-allow-origin':'*'}}));
   let featurePosts=0,buildingPosts=0,failFeatures=true;
@@ -206,6 +209,8 @@ async function main() {
   const page=await context.newPage();
   // Roads and Water are on for a first start; begin the feature checks from an empty selection.
   await page.addInitScript(()=>localStorage.setItem('terrain-style-defaults',JSON.stringify({version:1,controls:{'feature-roads':false,'feature-water':false}})));
+  // Existing feature fixtures exercise OSM; USGS switching has its own browser test.
+  await page.addInitScript(()=>localStorage.setItem('terrain-water-source','osm'));
   const errors=[];
   page.on('pageerror',error=>{errors.push(error.message);console.error('Browser exception:',error.message);});
   page.on('console',message=>{if(message.type()==='error'&&!message.text().includes('net::')&&!message.location().url.includes('/api/location/zip/00000')){errors.push(message.text());console.error('Browser error:',message.text());}});
@@ -307,7 +312,8 @@ async function main() {
   assert.equal(await page.locator('#building-options').isHidden(),true);
   for(const name of layerNames)await page.locator('#feature-'+name).check();
   assert.equal(await page.locator('#building-options').isVisible(),true);
-  assert.equal(await page.locator('#feature-count-buildings').innerText(),'1');
+  // Buildings arrive from their own request (polled), so wait for the count rather than reading it at once.
+  await page.waitForFunction(()=>document.getElementById('feature-count-buildings').textContent==='1');
   const sceneImage=async()=>{await page.waitForTimeout(300);return page.locator('#scene-container canvas').evaluate(canvas=>canvas.toDataURL());};
   const blockImage=await sceneImage();
   await page.locator('#buildings-detailed').check();
@@ -332,7 +338,7 @@ async function main() {
   const simpleDocument=readGLB(await fs.readFile(path.join(output,'major-features.glb'))).document;
   for(const name of ['Roads','Water'])assert.equal(simpleDocument.nodes.find(node=>node.name===name).extras.feature_count,1);
   await page.waitForFunction(()=>!document.querySelector('[data-export="stl"]').disabled);
-  await page.locator('#export-dialog button[aria-label="Close export dialog"]').click();
+  await page.locator('#studio-back').click();
   await slider(page,'detail-roads',100);await slider(page,'detail-water',100);
   const canvasImage=async()=>{await page.waitForTimeout(100);return page.locator('#scene-container canvas').evaluate(canvas=>canvas.toDataURL());};
   for(const name of layerNames)await page.locator('#feature-'+name).uncheck();
@@ -355,7 +361,7 @@ async function main() {
   assert.equal(noBorderDocument.nodes.some(node=>node.name==='Borders'),false);
   assert.ok(noBorderDocument.nodes.some(node=>node.name==='Park boundaries'));
   await page.waitForFunction(()=>!document.querySelector('[data-export="stl"]').disabled);
-  await page.locator('#export-dialog button[aria-label="Close export dialog"]').click();
+  await page.locator('#studio-back').click();
   await page.locator('#feature-borders').check();
   await page.screenshot({path:path.join(output,'feature-layers.png'),fullPage:true});
 
@@ -379,11 +385,11 @@ async function main() {
   await slider(page,'relief-strength',100);await page.locator('#relief-strength').dispatchEvent('change');await strongSurface;
   assert.equal(await page.locator('#relief-strength-value').innerText(),'100%');
   await page.waitForFunction(previous=>document.getElementById('export-dimensions').textContent!==previous,standardSize);
-  const reliefExport=page.waitForRequest(request=>request.url().includes('/api/export/')&&request.method()==='POST');
+  const reliefExport=page.waitForRequest(request=>/\/api\/(studio\/[^/]+\/)?export/.test(request.url())&&request.method()==='POST');
   await page.locator('#export-button').click();await page.locator('[data-export="metadata"]').click();
   assert.equal((await reliefExport).postDataJSON().relief,'local');
   await page.waitForFunction(()=>!document.querySelector('[data-export="stl"]').disabled);
-  await page.locator('#export-dialog button[aria-label="Close export dialog"]').click();
+  await page.locator('#studio-back').click();
   const standardSurface=page.waitForResponse(response=>response.url().includes('relief=standard'));
   await page.locator('#relief-method').selectOption('standard');await standardSurface;
   await page.waitForFunction(previous=>document.getElementById('export-dimensions').textContent===previous,standardSize);
@@ -560,7 +566,7 @@ async function main() {
   assert.equal(credits.suggestedFilename(),'terrain-credits.txt');
   await credits.saveAs(path.join(output,credits.suggestedFilename()));
   await page.screenshot({path:path.join(output,'export-dialog.png'),fullPage:true});
-  await page.locator('#export-dialog button[aria-label="Close export dialog"]').click();
+  await page.locator('#studio-back').click();
   const snapshot=page.waitForEvent('download');await page.locator('#screenshot').click();
   const download=await snapshot;await download.saveAs(path.join(output,download.suggestedFilename()));
   await page.locator('#feature-roads').uncheck();
@@ -572,7 +578,7 @@ async function main() {
   assert.equal(disabledDocument.nodes.some(node=>node.name==='Roads'),false);
   assert.ok(disabledDocument.nodes.some(node=>node.name==='Train tracks'));
   await page.waitForFunction(()=>!document.querySelector('[data-export="stl"]').disabled);
-  await page.locator('#export-dialog button[aria-label="Close export dialog"]').click();
+  await page.locator('#studio-back').click();
   await page.locator('#feature-roads').check();
   for(const name of layerNames)await page.locator('#color-'+name).evaluate(element=>{element.value='#b99570';element.dispatchEvent(new Event('input',{bubbles:true}));});
   const featureState=await page.locator('[data-feature]').evaluateAll(elements=>elements.map(element=>[element.dataset.feature,element.checked]));
@@ -620,7 +626,7 @@ async function main() {
   for(let index=0;index<colorAccessor.count;index++)colors.push(Array.from({length:3},(_,axis)=>printFile.binary.readFloatLE(colorOffset+index*(colorView.byteStride||colorSize*4)+axis*4)).map(value=>value.toFixed(6)).join(','));
   assert.equal(new Set(colors).size,4,'Print surface must use exactly the four selected colors');
   for(let index=0;index<colors.length;index+=3){assert.equal(colors[index],colors[index+1]);assert.equal(colors[index],colors[index+2]);}
-  const printRequest=page.waitForRequest(request=>request.url().includes('/api/export/')&&request.postDataJSON()?.format==='3mf');
+  const printRequest=page.waitForRequest(request=>/\/api\/(studio\/[^/]+\/)?export/.test(request.url())&&request.postDataJSON()?.format==='3mf');
   const printWaiting=page.waitForEvent('download');await page.locator('[data-export="3mf"]').click();
   const printDownload=await printWaiting,requestData=(await printRequest).postDataJSON();
   assert.equal(printDownload.suggestedFilename(),'terrain-print.3mf');
@@ -631,14 +637,14 @@ async function main() {
   await printDownload.saveAs(path.join(output,'terrain-print.3mf'));
   await page.waitForFunction(()=>!document.querySelector('[data-export="stl"]').disabled);
   assert.equal((await fs.readFile(path.join(output,'terrain-print.3mf'))).subarray(0,2).toString(),'PK');
-  await page.locator('#export-dialog button[aria-label="Close export dialog"]').click();
+  await page.locator('#studio-back').click();
   const printSnapshot=page.waitForEvent('download');await page.locator('#screenshot').click();
   const printImage=await printSnapshot;await printImage.saveAs(path.join(output,'print-preview.png'));
   await page.locator('[data-palette="alpine"]').click();assert.equal(await page.locator('#contours').isDisabled(),false);
   await page.locator('#help-button').click();assert.equal(await page.locator('#help-dialog').isVisible(),true);
   await page.keyboard.press('Escape');
   await page.locator('#export-button').click();
-  assert.equal(await page.locator('#export-dialog').isVisible(),true,'Exports remain accessible beside the style menu');
+  assert.equal(await page.locator('#studio').isVisible(),true,'Exports remain accessible beside the style menu');
   await page.keyboard.press('Escape');
   await page.screenshot({path:path.join(output,'collapsed-style-sidebar.png'),fullPage:true});
   await page.setViewportSize({width:700,height:1000});

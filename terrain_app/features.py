@@ -45,6 +45,10 @@ def layer_options(value):
         if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
             raise ValueError("Choose a six-digit hex color for each feature layer.")
         result[name] = {"enabled": options["enabled"], "color": color.lower()}
+        if "source" in options:
+            if name != "water" or options["source"] not in ("osm", "usgs"):
+                raise ValueError("Choose OpenStreetMap or USGS 3DHP as the water source.")
+            result[name]["source"] = options["source"]
         if "detail" in options:
             detail = options["detail"]
             if name not in {"roads", "water"} or isinstance(detail, bool) or not isinstance(detail, (int, float)) or not math.isfinite(detail) or not 0 <= detail <= 100:

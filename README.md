@@ -224,6 +224,56 @@ selection rotation, four geographic
 corners, and the absolute elevation used
 as the model's zero-height reference. Retain source attribution when sharing.
 
+## Print Studio add-ons
+
+**Export** opens the Print Studio, where a *project* (several named projects per framed area)
+adds parametric add-ons to the printed model: holes, nail markers, pencil holders, photo
+slots, pockets, coaster recesses, stand grooves, magnet pockets and wall hangers in the
+underside, plaques (flatten, level or raise a pad, with optional engraved or raised text),
+and text labels. Sizes are millimeters of the exported model. "Print as is" (a project
+without add-ons) exports exactly as before.
+
+- Cuts go through everything, including map-feature inlays and buildings. Holes, slots, and
+  grooves are measured from the surface at their position; pockets and coasters have a flat
+  floor measured from the lowest surface point inside them. Added material (plaque pads,
+  raised text) uses the add-on's color, or the Dirt color when none is chosen, and counts
+  toward the four 3MF filaments.
+- The server applies add-ons with manifold mesh booleans to STL, OBJ, 3MF, and a server-built
+  GLB; the project is recorded in 3MF, OBJ, GLB, and JSON metadata. Printability checks
+  (floors thinner than 0.8 mm, thin walls, overlaps, colors, printer bed size) update as you
+  edit, and long exports run as background jobs with progress.
+- Text uses the bundled DejaVu Sans Bold font (`terrain_app/data/fonts/`, under the
+  [DejaVu font license](terrain_app/data/fonts/DejaVu-LICENSE.txt)).
+- **Marker balls:** `terrain_app/data/templates/marker-ball.stl` is a 10 mm push-pin ball for a
+  brass nail (24.4 mm exposed, 1.8 mm hole); its dimensions are in `marker-ball.json`. Nail
+  markers default to that depth; with *Include marker balls* each nail marker adds one ball
+  beside the model in the 3MF, in its own color. The ball can also be downloaded alone (STL,
+  3MF, or the Blender source). Regenerate it with
+  `blender --background --python scripts/make_marker_ball.py`.
+- **Marker platforms:** choose *Platform* as the nail-marker style to turn each nail into a post
+  holding a 30 mm round deck (`terrain_app/data/templates/marker-platform.stl`, dimensions in
+  `marker-platform.json`). Its hub takes the nail through the same side T-slot as the ball (head
+  pocket, shank channel, 1.46 mm snap mouth); the deck top stands 9 mm above the hub's bottom and
+  26.5 mm of nail stands below it, so nail holes follow that depth when you switch styles. *On
+  top* can print a patch of the terrain around the marker (the *Area lifted* square, shrunk onto
+  the deck with its own *Top exaggeration* over a 1.2 mm base) or the mapped building at the
+  marker (scaled to fit the deck, at least 4 mm tall; the Buildings layer must be loaded, and a
+  marker with no building within 15 m prints bare). The top color counts toward the four 3MF
+  filaments. Print a bare platform deck top down on the bed, with no supports (the 3MF lays them
+  out that way). A platform with a printed-on top is an assembly of two parts, platform and top,
+  that stays aligned in the slicer; it prints upright and needs supports under the deck. Like the
+  ball, the nail head (3.2 × 0.8 mm) is assumed: measure yours and edit the constants (shared with
+  `make_marker_ball.py`). Regenerate it with
+  `~/opt/blender-4.5.14-linux-x64/blender --background --python scripts/make_marker_platform.py`
+  (any Blender 4.2 or newer).
+
+API: `GET /api/studio/catalog` (add-on types and parameters), `POST /api/studio/<id>/check`,
+`POST /api/studio/<id>/text-outline`, `POST /api/studio/<id>/export` (returns a job; poll
+`GET /api/studio/jobs/<job>`, then download `GET /api/studio/jobs/<job>/file`; `"preview": true`
+returns JSON mesh parts at a coarser grid), `GET /api/studio/marker-ball?format=stl|3mf|blend`, and
+`GET /api/studio/marker-platform?format=stl|3mf|blend` (both take `&color=` for the 3MF).
+`POST /api/export/<id>` also accepts an optional `project`.
+
 ## Elevation source and geographic limits
 
 [OpenTopoMap](https://opentopomap.org/about) provides the default terrain map
@@ -328,12 +378,26 @@ for occasional local requests; use your own Overpass endpoint for larger usage.
 Road detail uses OSM highway classes: 0% retains motorways, trunk roads, primary
 roads and their links; 25% adds secondary roads, 50% tertiary roads, 75% residential
 and unclassified roads, and 100% service roads, tracks, and other small roads.
+Water source selects USGS 3DHP or OpenStreetMap independently of elevation.
+The initial regional default is USGS for US selections and OpenStreetMap
+elsewhere; an explicitly chosen source is remembered. USGS supplies flowlines
+and waterbody polygons, including legacy NHD where newer elevation-derived
+mapping is unavailable. Open-sea geometry still comes from OpenStreetMap.
+Source changes apply to the preview, GLB, 3MF, and preview images; the choice
+is saved in export metadata. Failed USGS requests offer Retry or a switch to
+OpenStreetMap rather than silently changing sources. Both providers support
+selections up to 50 km per side. USGS data are cached for seven days.
+
 Water detail retains rivers at every setting, adds canals from 25%, streams
 from 80%, and ditches/drains at 100%. For water polygons, the minimum area drops
 continuously from two hectares at 0% to zero at 100%. Area is measured from the
 full mapped body before clipping, preserving large lakes when only a small
 piece lies in the selection. Detail changes reuse loaded data and apply to both
 preview and GLB export; the chosen percentages are saved in export metadata.
+For USGS channel lines, stream order 4 and above is treated as a river for
+this display filter; smaller or unclassified channels are treated as streams.
+Network connectors and underground paths are excluded from surface waterways.
+Headwater drainageways appear at 100% water detail.
 
 Every switch removes its generated layer from the preview and GLB. The Map
 view's raster image can contain its own drawn-in roads and boundaries; feature
@@ -395,6 +459,7 @@ Optional environment variables:
 | `TERRAIN_3DEP_URL` | USGS 3DEP `exportImage` endpoint; defaults to The National Map's 3DEPElevation ImageServer |
 | `TERRAIN_GEOCODER_URL` | Nominatim-compatible `search` endpoint for address and place lookup |
 | `TERRAIN_OVERPASS_URL` | Overpass endpoint; defaults to `https://overpass-api.de/api/interpreter` |
+| `TERRAIN_3DHP_URL` | USGS hydrography FeatureServer; defaults to `https://3dhp.nationalmap.gov/arcgis/rest/services/usgs_3dhp_all/FeatureServer` |
 | `TERRAIN_MAP_TILE_URL` | Alternative map provider URL with `{z}`, `{x}`, `{y}` placeholders |
 | `TERRAIN_MAP_ATTRIBUTION` | Attribution HTML for that provider |
 | `TERRAIN_MAP_MAX_NATIVE_ZOOM` | Highest native zoom of the terrain provider; defaults to 17 |
@@ -432,6 +497,9 @@ start the separate fixture server with `python scripts/browser_fixture_server.py
 (port 8001), then run `node tests/browser.cjs`. This server supplies synthetic
 land-cover regions for tests and never alters the production app on port 8000. Set `TERRAIN_PLAYWRIGHT_PATH`
 to the Playwright package directory if it is installed outside this project.
+Run `node tests/browser-water.cjs` against the same server to verify USGS/OSM
+switching, cached sources, saved preferences, and late-response handling.
+Set `TERRAIN_CHROMIUM_PATH` when using an existing Chromium executable.
 The test intercepts map, ZIP, and feature requests with fixtures, exercises ZIP
 navigation and errors, two-point alignment with mouse/touch, cancellation,
 every feature category and color, the Boundaries and Trails submenus, raised and 3D buildings, GLB geometry and
@@ -481,6 +549,23 @@ this layer so the two toggles do not overlap.
 The AT feature follows mapped Appalachian Trail hiking-route relations and named
 trail ways from OpenStreetMap, clipped to the selected terrain. Its checkbox and
 color picker work independently of Roads, including at low road detail.
+
+## GPS routes (GPX)
+
+**Upload GPX** under *Your landscape* overlays a recorded activity on the map,
+the 3D preview, and model exports. Export the activity as GPX from Strava
+("Export GPX"), Garmin Connect ("Export to GPX"), or COROS. Tracks and routes
+are read with any GPX namespace; files must be under 15 MB and 500,000 points.
+
+The route is stored in geographic coordinates (cached under `routes/` in the
+cache folder), so moving or resizing the frame never rescales it: each frame
+shows the part of the route inside it. **Frame the route** fits the selection
+around it, and a route far from the current frame is framed automatically.
+Choose its **line color** and **line thickness** (0.4–6 mm on the printed
+model). In 3MF files the route is a color part printed like a trail inlay, and
+its color counts toward the four-filament limit; GLB files and preview images
+include it. STL and OBJ files contain terrain geometry only, as with other map
+features.
 
 ### Interface defaults and favorite landscape parameters
 
@@ -536,6 +621,7 @@ with an empty preview until you click Generate terrain.
 ## License
 
 Terrain Studio is released under the [MIT License](LICENSE). Bundled
-third-party code keeps its own license (see `terrain_app/static/vendor/`), and
+third-party code keeps its own license (see `terrain_app/static/vendor/`; the bundled
+DejaVu Sans Bold font is under `terrain_app/data/fonts/DejaVu-LICENSE.txt`), and
 map and elevation data carry the attribution terms listed in
 `terrain_app/data/ATTRIBUTION.txt`.
