@@ -1,7 +1,7 @@
 /* Optional end-to-end test: run scripts/browser_fixture_server.py on port 8001.
  * Install Playwright separately, or set TERRAIN_PLAYWRIGHT_PATH to its package.
  * Map, ZIP, and feature requests use fixtures; public services are not queried.
- * TERRAIN_CHROMIUM_PATH optionally selects the Chromium binary. The Print Studio has its own test (browser-studio.cjs).
+ * TERRAIN_CHROMIUM_PATH optionally selects the Chromium binary. The design page (Print Studio) has its own test (browser-studio.cjs).
  */
 const { chromium } = require(process.env.TERRAIN_PLAYWRIGHT_PATH || 'playwright');
 const assert = require('node:assert/strict');
@@ -219,9 +219,9 @@ async function main() {
   await page.waitForTimeout(350);
   assert.match(await page.locator('#stat-low').innerText(),/2,949.*ft ASL/);
   assert.equal(await page.locator('.topbar-description').textContent(),'Print the world.');
-  assert.equal(await page.locator('.intro h1').textContent(),'Global settings');
+  assert.equal(await page.locator('.intro h1').textContent(),'Geography selection');
   assert.equal(await page.locator('label[for=place]').textContent(),'Famous landscapes');
-  assert.equal(await page.locator('.export-section h2').textContent(),'Export to print');
+  assert.equal(await page.locator('.export-section h2').textContent(),'Design and export');
   assert.equal(await page.locator('.step,.panel-number').count(),0);
   const parameters=JSON.parse(await page.locator('#selection-parameters').inputValue());
   assert.deepEqual(Object.keys(parameters).sort(),['bounds','settings','zoom']);

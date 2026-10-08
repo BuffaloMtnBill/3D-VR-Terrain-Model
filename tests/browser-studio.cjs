@@ -1,4 +1,4 @@
-/* Print Studio end-to-end test: run scripts/browser_fixture_server.py (port 8001) first.
+/* Design page (Print Studio) end-to-end test: run scripts/browser_fixture_server.py (port 8001) first.
  * TERRAIN_PLAYWRIGHT_PATH points at a Playwright package; TERRAIN_CHROMIUM_PATH at a Chromium binary if needed.
  * Studio endpoints are used when the server has them; on a 404 the test answers with a fixture from the spec,
  * so the UI flow is tested either way (exports then fall back to the original /api/export endpoint).
@@ -48,7 +48,7 @@ const CATALOG={font:'DejaVu Sans Bold',marker_ball:{name:'Push-pin marker ball',
     await page.goto(url);
     await page.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('160 × 117'));
     await page.locator('#export-button').click();
-    assert.equal(await page.locator('#studio').isVisible(),true,'Export opens the Print Studio');
+    assert.equal(await page.locator('#studio').isVisible(),true,'Export opens the design page');
     await page.waitForSelector('[data-addon-type="hole"]');
     await page.waitForTimeout(300);
   }
@@ -63,7 +63,7 @@ const CATALOG={font:'DejaVu Sans Bold',marker_ball:{name:'Push-pin marker ball',
     await page.waitForFunction(()=>document.getElementById('cover-status').textContent.includes('loaded'));
     page.on('pageerror',error=>errors.push(error.message));
     await page.locator('#export-button').click();
-    assert.equal(await page.locator('#studio').isVisible(),true,'Export opens the Print Studio');
+    assert.equal(await page.locator('#studio').isVisible(),true,'Export opens the design page');
     await page.waitForSelector('[data-addon-type="hole"]');
     assert.equal(await page.locator('#studio-view canvas').count(),1,'The studio has its own 3D view');
     assert.match(await page.locator('#studio-title').innerText(),/Roan Mountain/);
@@ -73,11 +73,11 @@ const CATALOG={font:'DejaVu Sans Bold',marker_ball:{name:'Push-pin marker ball',
     assert.equal(await page.locator('#studio-addons li').count(),2,'Desk set places a pencil holder and a pocket');
     assert.match(await page.locator('#studio-addons').innerText(),/Pencil holder[\s\S]*Pocket/);
 
-    // Profile: the map page's cross section, drawn as the printed silhouette and sharing one slice with the map page.
+    // Profile: the geography selection page's cross section, drawn as the printed silhouette and sharing one slice with the geography selection page.
     await page.locator('[data-studio-view="profile"]').click();
     assert.equal(await page.locator('#studio-profile').isVisible(),true);
     await page.locator('#studio-profile-position').evaluate(element=>{element.value='14';element.dispatchEvent(new Event('input',{bubbles:true}));});
-    assert.equal(await page.locator('#profile-position').inputValue(),'14','The studio slider moves the map page slice');
+    assert.equal(await page.locator('#profile-position').inputValue(),'14','The studio slider moves the geography selection page slice');
     await page.locator('#studio-profile-direction').selectOption('ns');
     assert.equal(await page.locator('#profile-direction').inputValue(),'ns');
     await page.locator('#studio-profile-direction').selectOption('ew');
@@ -174,6 +174,6 @@ const CATALOG={font:'DejaVu Sans Bold',marker_ball:{name:'Push-pin marker ball',
     await phone.screenshot({path:path.join(output,'studio-mobile-bottom.png')});
     await mobile.close();
     assert.deepEqual(errors,[]);
-    console.log(`Print Studio browser test passed${mocked.size?` (fixtures for missing endpoints: ${[...mocked].join(', ')})`:''}.`);
+    console.log(`Design page browser test passed${mocked.size?` (fixtures for missing endpoints: ${[...mocked].join(', ')})`:''}.`);
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exit(1);});

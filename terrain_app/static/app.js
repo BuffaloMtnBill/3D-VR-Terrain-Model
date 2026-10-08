@@ -479,7 +479,7 @@ function updatePrintPalette() {
   $('print-feature-color-count').classList.toggle('error',count>4);
   $('contours').disabled=state.palette==='print';
   // A disabled button cannot explain itself on click, so the button says why 3MF is unavailable.
-  // Add-on fill colors and marker balls from the Print Studio project also need filaments.
+  // Add-on fill colors and marker balls from the design page project also need filaments.
   const printCount=new Set([...Object.values(printColors()),...Object.values(featureStyles()).filter(style=>style.enabled).map(style=>style.color),...routeColors(),...(studio?.extraColors()||[])]).size;
   const unavailable=state.palette!=='print'?'Select the Print palette to enable':printCount>4?`${printCount} colors · share colors to fit four filaments`:'';
   document.querySelector('[data-export="3mf"]').disabled=Boolean(unavailable);
@@ -824,7 +824,7 @@ async function exportGLB() {
   } finally {ownedMeshes.forEach(mesh=>{mesh.geometry.dispose();mesh.material.dispose();});}
 }
 
-// Loads what a model export needs; the Print Studio (print-studio.js) runs the export itself.
+// Loads what a model export needs; the design page (print-studio.js) runs the export itself.
 async function prepareExport(format,status=()=>{}) {
   await loadSurface(state.id);
   if(state.palette==='print'&&['glb','3mf'].includes(format)) {
@@ -939,7 +939,7 @@ function wireRoute() {
   restoreRoute();
 }
 
-// Everything the Print Studio reads from the main view; it never changes app state except through these inputs.
+// Everything the design page reads from the geography selection page; it never changes app state except through these inputs.
 const studioContext={
   SCALE,
   get state(){return state;},

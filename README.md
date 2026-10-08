@@ -73,6 +73,9 @@ environment removes those too), and leaves downloaded data in the
 
 ## Use
 
+Terrain Studio has two pages: the **geography selection page**, where you find, frame,
+and style a place, and the **design page**, where you add markers and other add-ons and export.
+
 1. Pick a preset, **search for an address, city, or place name**, or enter a
    **US ZIP code** (five digits or ZIP+4). The search box zooms to fit the place
    it finds; typing a `latitude, longitude` pair there jumps straight to it.
@@ -104,7 +107,7 @@ environment removes those too), and leaves downloaded data in the
    The **Elevation multiplier**, **Base thickness**, and **Contour lines**
    controls sit below Terrain detail and update the model immediately.
 4. Use the right-hand **Make it yours** panel, which is always open, to adjust the
-   palette and map features. Export model stays in the left sidebar. Orbit with the mouse, scroll to zoom, and
+   palette and map features. **Open the design page** stays in the left sidebar. Orbit with the mouse, scroll to zoom, and
    use the camera reset or auto-rotate buttons. Under **Map features**, check
    roads, train tracks, water, or buildings. **Boundaries** opens a submenu for
    borders, city boundaries, and park boundaries; **Trails** opens one for the AT
@@ -224,9 +227,9 @@ selection rotation, four geographic
 corners, and the absolute elevation used
 as the model's zero-height reference. Retain source attribution when sharing.
 
-## Print Studio add-ons
+## Design page add-ons
 
-**Export** opens the Print Studio, where a *project* (several named projects per framed area)
+**Open the design page** (the Print Studio) opens a full-page workspace where a *project* (several named projects per framed area)
 adds parametric add-ons to the printed model: holes, nail markers, pencil holders, photo
 slots, pockets, coaster recesses, stand grooves, magnet pockets and wall hangers in the
 underside, plaques (flatten, level or raise a pad, with optional engraved or raised text),
@@ -242,10 +245,10 @@ without add-ons) exports exactly as before.
   GLB; the project is recorded in 3MF, OBJ, GLB, and JSON metadata. Printability checks
   (floors thinner than 0.8 mm, thin walls, overlaps, colors, printer bed size) update as you
   edit, and long exports run as background jobs with progress.
-- **Profile** shows the elevation-profile slice from the map page as the printed model's
+- **Profile** shows the elevation-profile slice from the geography selection page as the printed model's
   silhouette in millimeters (base band, terrain, and add-on cuts and fills crossing the slice),
   in true proportions or stretched, or as real elevation. Its direction and position slider are
-  the map page's own, so both always show the same slice. **Cut the 3D view here** clips the
+  the geography selection page's own, so both always show the same slice. **Cut the 3D view here** clips the
   model and add-on ghosts at the slice; point at the chart to read heights and cut floors.
 - Text uses the bundled DejaVu Sans Bold font (`terrain_app/data/fonts/`, under the
   [DejaVu font license](terrain_app/data/fonts/DejaVu-LICENSE.txt)).

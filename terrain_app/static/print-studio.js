@@ -1,4 +1,4 @@
-/* Print Studio: a full-page export workspace with parametric add-ons placed on the model.
+/* Design page (internally the Print Studio): a full-page export workspace with parametric add-ons placed on the model.
  * app.js hands over a context object (see studioContext there); everything else lives here.
  * Coordinates follow the shared contract: u left→right, v top→bottom in [0,1]; sizes in model millimeters.
  */
@@ -176,7 +176,7 @@ export function createStudio(ctx) {
     return STORE_PREFIX+hash(key);
   }
   function sanitize(input,keepId=false) {
-    if(!input||typeof input!=='object'||!Array.isArray(input.addons))throw new Error('This file is not a Print Studio project.');
+    if(!input||typeof input!=='object'||!Array.isArray(input.addons))throw new Error('This file is not a design page project.');
     const result=emptyProject(typeof input.name==='string'&&input.name.trim()?input.name.trim().slice(0,80):'Imported project');
     if(keepId&&typeof input.id==='string')result.id=input.id;
     result.addons=input.addons.filter(addon=>addon&&typeof addon.type==='string'&&(!catalog||typeInfo(addon.type))).slice(0,200).map((addon,index)=>{
@@ -269,7 +269,7 @@ export function createStudio(ctx) {
     renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.1;
     renderer.localClippingEnabled=true;
     container.prepend(renderer.domElement);
-    renderer.domElement.setAttribute('aria-label','Print Studio model view: drag to orbit, click to place or select add-ons');
+    renderer.domElement.setAttribute('aria-label','Design page model view: drag to orbit, click to place or select add-ons');
     scene=new THREE.Scene();
     perspective=new THREE.PerspectiveCamera(38,1,.02,150);
     orthographic=new THREE.OrthographicCamera(-5,5,5,-5,.02,150);
@@ -323,7 +323,7 @@ export function createStudio(ctx) {
     $('studio-title').textContent=ctx.state.loadedName||ctx.state.name||'Your landscape';
     ctx.updateExportDimensions();
     $('studio-dimensions').textContent=$('export-dimensions').textContent;
-    $('studio-exaggeration').textContent=`Elevation multiplier ${number(frame.exaggeration)}× · change it on the map page.`;
+    $('studio-exaggeration').textContent=`Elevation multiplier ${number(frame.exaggeration)}× · change it on the geography selection page.`;
     $('studio-base').value=ctx.options().base_percent;
     if(!renderer)return;
     disposeGroup(terrainGroup);terrainMesh=null;
@@ -361,7 +361,7 @@ export function createStudio(ctx) {
   }
   function updateSectionPlane() {
     if(!frame)return;
-    if(profileCut) {  // keep the far half and look at the cut face, like the map page's slice
+    if(profileCut) {  // keep the far half and look at the cut face, like the geography selection page's slice
       const {horizontal,fraction}=profileSlice();
       clipPlane.setFromNormalAndCoplanarPoint(horizontal?new THREE.Vector3(0,0,-1):new THREE.Vector3(-1,0,0),
         horizontal?new THREE.Vector3(0,0,(fraction-.5)*frame.height):new THREE.Vector3((fraction-.5)*frame.width,0,0));
@@ -554,7 +554,7 @@ export function createStudio(ctx) {
     requestRender();
   }
 
-  // ---------- cross section (shares its slice with the map page's elevation profile) ----------
+  // ---------- cross section (shares its slice with the geography selection page's elevation profile) ----------
   function profileSlice() {
     return {horizontal:$('profile-direction').value==='ew',fraction:clamp(Number($('profile-position').value)/100,0,1)};
   }
@@ -652,7 +652,7 @@ export function createStudio(ctx) {
     }
     updateProfileLine();
   }
-  // The slice drawn on the 3D model as a line over the surface, like the dashed line on the map page.
+  // The slice drawn on the 3D model as a line over the surface, like the dashed line on the geography selection page.
   function updateProfileLine() {
     if(profileLine){profileLine.removeFromParent();profileLine.geometry.dispose();profileLine.material.dispose();profileLine=null;}
     if(!renderer||!profileOn||!frame)return;
@@ -664,7 +664,7 @@ export function createStudio(ctx) {
     profileLine=new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0xffb354,depthTest:!profileCut}));
     profileLine.renderOrder=6;scene.add(profileLine);requestRender();
   }
-  // The studio's slider and direction drive the map page's own controls, so both views always show one slice.
+  // The studio's slider and direction drive the geography selection page's own controls, so both views always show one slice.
   function syncProfileControls() {
     const direction=$('profile-direction'),studioDirection=$('studio-profile-direction');
     [...direction.options].forEach((option,index)=>{if(studioDirection.options[index])studioDirection.options[index].textContent=option.textContent;});
@@ -699,7 +699,7 @@ export function createStudio(ctx) {
     $('studio-profile-cut').addEventListener('change',event=>{profileCut=event.target.checked;applyMaterials();rebuildGhosts();updateProfileLine();setCamera(cameraMode);});
     const chart=$('studio-profile-chart');
     chart.addEventListener('pointermove',event=>drawStudioProfile(event.clientX-chart.getBoundingClientRect().left));
-    chart.addEventListener('pointerleave',()=>{drawStudioProfile();$('studio-profile-readout').textContent="Shares its slice with the map page's elevation profile. Point at the chart for heights.";});
+    chart.addEventListener('pointerleave',()=>{drawStudioProfile();$('studio-profile-readout').textContent="Shares its slice with the geography selection page's elevation profile. Point at the chart for heights.";});
     new ResizeObserver(()=>drawStudioProfile()).observe(chart);
   }
 
@@ -866,7 +866,7 @@ export function createStudio(ctx) {
       selectedId=null;
     });
     syncMarker();
-    $('studio-place-hint').textContent=name==='Print as is'?'No add-ons: the model exports exactly as on the map page.':`${name} applied. Drag add-ons to adjust them; Undo restores the previous layout.`;
+    $('studio-place-hint').textContent=name==='Print as is'?'No add-ons: the model exports exactly as on the geography selection page.':`${name} applied. Drag add-ons to adjust them; Undo restores the previous layout.`;
   }
 
   // ---------- panels ----------

@@ -26,7 +26,7 @@
 
   <main class="workspace">
     <aside class="sidebar" aria-label="Terrain settings">
-      <div class="intro"><span class="eyebrow">FROM MAP TO MODEL</span><h1>Global settings</h1><p>Find a place. Frame it. <br>Make the landscape your own.</p></div>
+      <div class="intro"><span class="eyebrow">STEP 1 OF 2</span><h1>Geography selection</h1><p>Find a place. Frame it. <br>Make the landscape your own.</p></div>
       <section class="control-section">
         <div class="section-label"><h2>Your landscape</h2></div>
         <label for="place">Famous landscapes</label>
@@ -75,7 +75,7 @@
 
 
 
-      <section class="export-section"><div class="section-label"><h2>Export to print</h2></div><p>A landscape for your next project.</p><button id="export-button" class="button secondary full">Export model <span aria-hidden="true">↓</span></button><div class="export-formats">STL &nbsp; / &nbsp; OBJ &nbsp; / &nbsp; GLB &nbsp; / &nbsp; HEIGHTMAP</div></section>
+      <section class="export-section"><div class="section-label"><h2>Design and export</h2></div><p>Add markers, plaques, and holders, then export.</p><button id="export-button" class="button secondary full">Open the design page <span aria-hidden="true">→</span></button><div class="export-formats">STL &nbsp; / &nbsp; OBJ &nbsp; / &nbsp; GLB &nbsp; / &nbsp; HEIGHTMAP</div></section>
       <div class="sidebar-foot">Real places. Real elevation.<br><a href="https://www.openstreetmap.org/fixthemap" target="_blank" rel="noopener">Report a map issue ↗</a></div>
     </aside>
 
@@ -158,8 +158,8 @@
   <div id="toast" role="status" hidden></div>
   <dialog id="studio" aria-labelledby="studio-title">
     <header class="studio-bar">
-      <button id="studio-back" type="button" class="button secondary studio-back" aria-label="Back to map"><span aria-hidden="true">←</span> Back to map</button>
-      <div class="studio-heading"><span class="eyebrow">PRINT STUDIO</span><h2 id="studio-title">Your landscape</h2><span id="studio-dimensions" class="studio-dimensions"></span></div>
+      <button id="studio-back" type="button" class="button secondary studio-back" aria-label="Back to the geography selection page"><span aria-hidden="true">←</span> Geography selection</button>
+      <div class="studio-heading"><span class="eyebrow">STEP 2 OF 2 · DESIGN</span><h2 id="studio-title">Your landscape</h2><span id="studio-dimensions" class="studio-dimensions"></span></div>
       <div class="studio-projects" role="group" aria-label="Projects for this area">
         <label for="studio-project" class="sr-only">Project</label><select id="studio-project"></select>
         <button type="button" class="button secondary" data-project-action="new" title="New empty project">New</button>
@@ -179,7 +179,7 @@
       </aside>
       <section class="studio-center" aria-label="Model preview">
         <div class="studio-toolbar">
-          <div class="view-tabs studio-views" role="group" aria-label="Studio view"><button type="button" data-studio-view="perspective" aria-pressed="true" class="active">Perspective</button><button type="button" data-studio-view="top" aria-pressed="false">Top</button><button type="button" data-studio-view="side" aria-pressed="false">Side</button><button type="button" data-studio-view="section" aria-pressed="false" title="Cut through the selected add-on">Section</button><button type="button" data-studio-view="xray" aria-pressed="false" title="See through the terrain">X-ray</button><button type="button" data-studio-view="profile" aria-pressed="false" aria-controls="studio-profile" title="The cross section from the map page's elevation profile">Profile</button></div>
+          <div class="view-tabs studio-views" role="group" aria-label="Studio view"><button type="button" data-studio-view="perspective" aria-pressed="true" class="active">Perspective</button><button type="button" data-studio-view="top" aria-pressed="false">Top</button><button type="button" data-studio-view="side" aria-pressed="false">Side</button><button type="button" data-studio-view="section" aria-pressed="false" title="Cut through the selected add-on">Section</button><button type="button" data-studio-view="xray" aria-pressed="false" title="See through the terrain">X-ray</button><button type="button" data-studio-view="profile" aria-pressed="false" aria-controls="studio-profile" title="The cross section from the geography selection page's elevation profile">Profile</button></div>
           <label class="studio-snap"><span>Snap</span><select id="studio-snap"><option value="none">None</option><option value="grid">5 mm grid</option><option value="center">Centerlines</option><option value="high">Highest point nearby</option></select></label>
           <button type="button" id="studio-preview" class="button secondary" aria-pressed="false" title="Compute the real cuts on a coarse model">Preview cuts</button>
         </div>
@@ -197,7 +197,7 @@
             <label class="studio-profile-option" for="studio-profile-cut"><input id="studio-profile-cut" type="checkbox">Cut the 3D view here</label>
           </div>
           <div class="studio-profile-chart"><canvas id="studio-profile-chart" aria-label="Cross section of the model"></canvas></div>
-          <span id="studio-profile-readout" class="small-hint" role="status">Shares its slice with the map page's elevation profile. Point at the chart for heights.</span>
+          <span id="studio-profile-readout" class="small-hint" role="status">Shares its slice with the geography selection page's elevation profile. Point at the chart for heights.</span>
         </div>
       </section>
       <aside class="studio-right" aria-label="Settings and export">
