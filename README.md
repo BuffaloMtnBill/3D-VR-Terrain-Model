@@ -242,6 +242,11 @@ without add-ons) exports exactly as before.
   GLB; the project is recorded in 3MF, OBJ, GLB, and JSON metadata. Printability checks
   (floors thinner than 0.8 mm, thin walls, overlaps, colors, printer bed size) update as you
   edit, and long exports run as background jobs with progress.
+- **Profile** shows the elevation-profile slice from the map page as the printed model's
+  silhouette in millimeters (base band, terrain, and add-on cuts and fills crossing the slice),
+  in true proportions or stretched, or as real elevation. Its direction and position slider are
+  the map page's own, so both always show the same slice. **Cut the 3D view here** clips the
+  model and add-on ghosts at the slice; point at the chart to read heights and cut floors.
 - Text uses the bundled DejaVu Sans Bold font (`terrain_app/data/fonts/`, under the
   [DejaVu font license](terrain_app/data/fonts/DejaVu-LICENSE.txt)).
 - **Marker balls:** `terrain_app/data/templates/marker-ball.stl` is a 10 mm push-pin ball for a

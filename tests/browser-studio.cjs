@@ -65,13 +65,29 @@ const CATALOG={font:'DejaVu Sans Bold',marker_ball:{name:'Push-pin marker ball',
     await page.locator('#export-button').click();
     assert.equal(await page.locator('#studio').isVisible(),true,'Export opens the Print Studio');
     await page.waitForSelector('[data-addon-type="hole"]');
-    assert.equal(await page.locator('#studio canvas').count(),1,'The studio has its own 3D view');
+    assert.equal(await page.locator('#studio-view canvas').count(),1,'The studio has its own 3D view');
     assert.match(await page.locator('#studio-title').innerText(),/Roan Mountain/);
     assert.match(await page.locator('#studio-dimensions').innerText(),/mm/);
 
     await page.locator('[data-template="Desk set"]').click();
     assert.equal(await page.locator('#studio-addons li').count(),2,'Desk set places a pencil holder and a pocket');
     assert.match(await page.locator('#studio-addons').innerText(),/Pencil holder[\s\S]*Pocket/);
+
+    // Profile: the map page's cross section, drawn as the printed silhouette and sharing one slice with the map page.
+    await page.locator('[data-studio-view="profile"]').click();
+    assert.equal(await page.locator('#studio-profile').isVisible(),true);
+    await page.locator('#studio-profile-position').evaluate(element=>{element.value='14';element.dispatchEvent(new Event('input',{bubbles:true}));});
+    assert.equal(await page.locator('#profile-position').inputValue(),'14','The studio slider moves the map page slice');
+    await page.locator('#studio-profile-direction').selectOption('ns');
+    assert.equal(await page.locator('#profile-direction').inputValue(),'ns');
+    await page.locator('#studio-profile-direction').selectOption('ew');
+    const chart=await page.locator('#studio-profile-chart').boundingBox();
+    await page.mouse.move(chart.x+chart.width*.6,chart.y+chart.height/2);
+    assert.match(await page.locator('#studio-profile-readout').innerText(),/mm along · surface [\d.]+ mm/);
+    await page.locator('#studio-profile-cut').check();
+    await page.locator('#studio-profile-cut').uncheck();
+    await page.locator('[data-studio-view="profile"]').click();
+    assert.equal(await page.locator('#studio-profile').isVisible(),false);
 
     await page.locator('[data-addon-type="hole"]').click();
     assert.equal(await page.locator('[data-addon-type="hole"]').getAttribute('aria-pressed'),'true');

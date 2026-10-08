@@ -179,13 +179,25 @@
       </aside>
       <section class="studio-center" aria-label="Model preview">
         <div class="studio-toolbar">
-          <div class="view-tabs studio-views" role="group" aria-label="Studio view"><button type="button" data-studio-view="perspective" aria-pressed="true" class="active">Perspective</button><button type="button" data-studio-view="top" aria-pressed="false">Top</button><button type="button" data-studio-view="side" aria-pressed="false">Side</button><button type="button" data-studio-view="section" aria-pressed="false" title="Cut through the selected add-on">Section</button><button type="button" data-studio-view="xray" aria-pressed="false" title="See through the terrain">X-ray</button></div>
+          <div class="view-tabs studio-views" role="group" aria-label="Studio view"><button type="button" data-studio-view="perspective" aria-pressed="true" class="active">Perspective</button><button type="button" data-studio-view="top" aria-pressed="false">Top</button><button type="button" data-studio-view="side" aria-pressed="false">Side</button><button type="button" data-studio-view="section" aria-pressed="false" title="Cut through the selected add-on">Section</button><button type="button" data-studio-view="xray" aria-pressed="false" title="See through the terrain">X-ray</button><button type="button" data-studio-view="profile" aria-pressed="false" aria-controls="studio-profile" title="The cross section from the map page's elevation profile">Profile</button></div>
           <label class="studio-snap"><span>Snap</span><select id="studio-snap"><option value="none">None</option><option value="grid">5 mm grid</option><option value="center">Centerlines</option><option value="high">Highest point nearby</option></select></label>
           <button type="button" id="studio-preview" class="button secondary" aria-pressed="false" title="Compute the real cuts on a coarse model">Preview cuts</button>
         </div>
         <div id="studio-view" class="studio-view"><div id="studio-view-empty" class="studio-view-empty" hidden></div>
           <div id="studio-checks" class="studio-checks" aria-live="polite"><strong>Checks</strong><ul id="studio-check-list"><li class="info">Checks appear after a change.</li></ul></div>
           <div class="studio-view-hint" id="studio-view-hint">Drag to orbit · click an add-on to select · drag it to move · R rotates</div>
+        </div>
+        <div id="studio-profile" class="studio-profile" hidden>
+          <div class="studio-profile-head">
+            <strong>Cross section</strong>
+            <label class="sr-only" for="studio-profile-direction">Profile direction</label><select id="studio-profile-direction"><option value="ew">West → East</option><option value="ns">North → South</option></select>
+            <label class="studio-profile-position" for="studio-profile-position"><span>Position</span><input id="studio-profile-position" type="range" min="0" max="100" step="1" value="50"><output id="studio-profile-position-value">50%</output></label>
+            <div class="view-tabs studio-profile-modes" role="group" aria-label="Profile scale"><button type="button" data-profile-mode="model" class="active" aria-pressed="true" title="The printed model's silhouette in millimeters, base and add-ons included">Printed model</button><button type="button" data-profile-mode="elevation" aria-pressed="false" title="Real elevation above sea level, as on the map page">Elevation</button></div>
+            <label class="studio-profile-option" for="studio-profile-true"><input id="studio-profile-true" type="checkbox" checked>True proportions</label>
+            <label class="studio-profile-option" for="studio-profile-cut"><input id="studio-profile-cut" type="checkbox">Cut the 3D view here</label>
+          </div>
+          <div class="studio-profile-chart"><canvas id="studio-profile-chart" aria-label="Cross section of the model"></canvas></div>
+          <span id="studio-profile-readout" class="small-hint" role="status">Shares its slice with the map page's elevation profile. Point at the chart for heights.</span>
         </div>
       </section>
       <aside class="studio-right" aria-label="Settings and export">

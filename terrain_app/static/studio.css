@@ -128,3 +128,23 @@
   .studio-snap select{flex:1}
   .studio-checks{top:auto;bottom:8px;right:8px;left:8px;width:auto;max-height:34%}
 }
+
+/* Cross section panel (Profile view): the map page's elevation profile slice, as the printed silhouette */
+.studio-profile{flex-shrink:0;border-top:1px solid var(--line);background:#16251b;padding:10px 14px 8px;display:flex;flex-direction:column;gap:6px}
+.studio-profile-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;font-size:11px}
+.studio-profile-head strong{font-size:12px;font-weight:600}
+.studio-profile-head select{width:auto;padding:5px 8px;font-size:11px}
+.studio-profile-position{display:flex;align-items:center;gap:8px;margin:0;font-size:11px;flex:1 1 180px;min-width:150px}
+.studio-profile-position input{flex:1;min-width:80px}
+.studio-profile-position output{font-size:10px;width:32px;font-variant-numeric:tabular-nums}
+.studio-profile-modes{height:auto;padding:2px;background:transparent;border:0;gap:2px}
+.studio-profile-modes button{flex:0 0 auto;padding:4px 8px}
+.studio-profile-option{display:flex;align-items:center;gap:6px;margin:0;font-size:11px;cursor:pointer}
+.studio-profile-option input{width:13px;height:13px;margin:0;accent-color:var(--sage)}
+.studio-profile-chart{height:150px;position:relative}
+.studio-profile-chart canvas{display:block;width:100%;height:100%;cursor:crosshair}
+#studio-profile-readout{margin-top:0;min-height:15px}
+@media(max-width:900px){
+  .studio-center:has(.studio-profile:not([hidden])){height:auto}
+  .studio-center:has(.studio-profile:not([hidden])) .studio-view{height:min(48vh,420px);flex:none}
+}

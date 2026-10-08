@@ -70,6 +70,8 @@ export function createStudio(ctx) {
   const hidden=new Set(),undoStack=[],redoStack=[],outlines=new Map();
   let renderer=null,scene,perspective,orthographic,camera,controls,terrainGroup,ghostGroup,previewGroup,ring=null,terrainMesh=null;
   let frame=null,dirtyModel=true,renderUntil=0,cameraMode='perspective',xray=false,section=false;
+  let profileOn=false,profileCut=false,profileMode='model',profileLine=null,profileData=null;
+  const clipping=()=>section||profileCut;
   let checkTimer=null,checkRequest=null,checkResults={checks:[],addons:[]},lastFitKey=null,busy=false,saveFailed=false;
   const clipPlane=new THREE.Plane(new THREE.Vector3(0,0,-1),0);
 
@@ -340,6 +342,7 @@ export function createStudio(ctx) {
       terrainGroup.add(copy);
     }
     applyMaterials();rebuildGhosts();
+    if(profileOn)syncProfileControls();
     const fitKey=`${ctx.state.id}:${frame.width.toFixed(3)}:${frame.height.toFixed(3)}`;
     if(fitKey!==lastFitKey){lastFitKey=fitKey;setCamera(cameraMode);}
     requestRender();
@@ -352,12 +355,18 @@ export function createStudio(ctx) {
       material.userData.original??={transparent:material.transparent,opacity:material.opacity,depthWrite:material.depthWrite};
       const original=material.userData.original;
       material.transparent=xray||original.transparent;material.opacity=xray?Math.min(original.opacity,.28):original.opacity;material.depthWrite=xray?false:original.depthWrite;
-      material.clippingPlanes=section?[clipPlane]:null;material.needsUpdate=true;
+      material.clippingPlanes=clipping()?[clipPlane]:null;material.needsUpdate=true;
     });
     updateSectionPlane();requestRender();
   }
   function updateSectionPlane() {
     if(!frame)return;
+    if(profileCut) {  // keep the far half and look at the cut face, like the map page's slice
+      const {horizontal,fraction}=profileSlice();
+      clipPlane.setFromNormalAndCoplanarPoint(horizontal?new THREE.Vector3(0,0,-1):new THREE.Vector3(-1,0,0),
+        horizontal?new THREE.Vector3(0,0,(fraction-.5)*frame.height):new THREE.Vector3((fraction-.5)*frame.width,0,0));
+      return;
+    }
     const addon=selected(),angle=rad(addon?.rotation_deg||0);
     const normal=new THREE.Vector3(-Math.sin(angle),0,-Math.cos(angle));
     const center=addon?new THREE.Vector3((addon.u-.5)*frame.width,0,(addon.v-.5)*frame.height):new THREE.Vector3();
@@ -378,7 +387,7 @@ export function createStudio(ctx) {
       // Narrow (portrait) views need more distance for the model's width to fit.
       const halfWidth=Math.atan(Math.tan(rad(perspective.fov/2))*perspective.aspect),radius=Math.hypot(frame.width,frame.height)/2;
       const distance=Math.max(Math.max(frame.width,frame.height,peak)*1.45,radius/Math.tan(halfWidth)*.95);
-      if(section) {
+      if(clipping()) {
         const normal=clipPlane.normal,point=clipPlane.coplanarPoint(new THREE.Vector3());
         perspective.position.set(point.x-normal.x*distance,center+distance*.35,point.z-normal.z*distance);
         controls.target.set(point.x,center,point.z);
@@ -388,7 +397,7 @@ export function createStudio(ctx) {
     }
     controls.object=camera;camera.lookAt(controls.target);fitOrthographic();controls.update();
     document.querySelectorAll('[data-studio-view]').forEach(button=>{
-      const view=button.dataset.studioView,active=view==='xray'?xray:view==='section'?section:view===cameraMode;
+      const view=button.dataset.studioView,active=view==='xray'?xray:view==='section'?section:view==='profile'?profileOn:view===cameraMode;
       button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
     });
     requestRender();
@@ -514,7 +523,8 @@ export function createStudio(ctx) {
     const color=role==='cut'?CUT_COLOR:role==='ball'?new THREE.Color(project.marker_balls.color):role==='plate'?0xf3d592:new THREE.Color(fillColor);
     const opacity=through?(active?.22:.12):role==='ball'?(project.marker_balls.include?.85:.3):role==='fill'?.78:active?.7:.5;
     return new THREE.MeshStandardMaterial({color,transparent:true,opacity,depthWrite:false,depthTest:!through,roughness:.6,
-      emissive:active?new THREE.Color(0x553311):new THREE.Color(0),side:THREE.DoubleSide});
+      emissive:active?new THREE.Color(0x553311):new THREE.Color(0),side:THREE.DoubleSide,
+      clippingPlanes:profileCut?[clipPlane]:null});  // a profile cut hides the ghosts in front of the slice too
   }
   function rebuildGhosts() {
     if(!renderer||!frame||!project)return;
@@ -523,7 +533,7 @@ export function createStudio(ctx) {
       if(hidden.has(addon.id))continue;
       const group=new THREE.Group(),active=addon.id===selectedId;
       for(const part of ghostParts(addon)) {
-        const mesh=new THREE.Mesh(part.geometry,ghostMaterial(part.role,addon,active));mesh.userData.addonId=addon.id;mesh.renderOrder=2;group.add(mesh);
+        const mesh=new THREE.Mesh(part.geometry,ghostMaterial(part.role,addon,active));mesh.userData.addonId=addon.id;mesh.userData.role=part.role;mesh.renderOrder=2;group.add(mesh);
         if(part.role==='cut'){const through=new THREE.Mesh(part.geometry,ghostMaterial('cut',addon,active,true));through.userData.addonId=addon.id;through.renderOrder=3;group.add(through);}
       }
       if(active) {
@@ -539,8 +549,158 @@ export function createStudio(ctx) {
       // The geometry is in millimeters relative to the center; heights were already absolute.
       ghostGroup.add(group);
     }
-    if(section)updateSectionPlane();
+    if(clipping())updateSectionPlane();
+    drawStudioProfile();
     requestRender();
+  }
+
+  // ---------- cross section (shares its slice with the map page's elevation profile) ----------
+  function profileSlice() {
+    return {horizontal:$('profile-direction').value==='ew',fraction:clamp(Number($('profile-position').value)/100,0,1)};
+  }
+  const metricUnits=()=>document.querySelector('[data-units="m"]')?.classList.contains('active');
+  // Heights along the slice, mm above the model bottom (printed) or true elevation in meters.
+  function profileHeights(count) {
+    const {horizontal,fraction}=profileSlice(),d=frame.data,truth=d.true_elevations||d.elevations,values=[];
+    for(let index=0;index<count;index++) {
+      const t=index/(count-1),u=horizontal?t:fraction,v=horizontal?fraction:t;
+      if(profileMode==='model'){values.push(heightMm(u,v));continue;}
+      const x=u*(frame.columns-1),y=v*(frame.rows-1),c=Math.min(frame.columns-2,Math.floor(x)),r=Math.min(frame.rows-2,Math.floor(y)),fx=x-c,fy=y-r,i=r*frame.columns+c;
+      values.push(truth[i]*(1-fx)*(1-fy)+truth[i+1]*fx*(1-fy)+truth[i+frame.columns]*(1-fx)*fy+truth[i+frame.columns+1]*fx*fy);
+    }
+    return values;
+  }
+  // Where the slice passes through add-on ghosts: vertical spans (mm) per sample, found by casting rays down through them.
+  function profileAddons(count) {
+    const meshes=[];ghostGroup?.updateMatrixWorld(true);
+    ghostGroup?.traverse(object=>{if(object.isMesh&&object.userData.role&&!object.userData.ring)meshes.push(object);});
+    if(!meshes.length)return [];
+    const {horizontal,fraction}=profileSlice(),caster=new THREE.Raycaster(),down=new THREE.Vector3(0,-1,0),spans=[];
+    const top=frame.peak+60*frame.mmUnit;
+    for(let index=0;index<count;index++) {
+      const t=index/(count-1),x=((horizontal?t:fraction)-.5)*frame.width,z=((horizontal?fraction:t)-.5)*frame.height;
+      caster.set(new THREE.Vector3(x,top,z),down);
+      const byMesh=new Map();
+      for(const hit of caster.intersectObjects(meshes,false)) {
+        const list=byMesh.get(hit.object)||[];list.push(hit.point.y/frame.mmUnit);byMesh.set(hit.object,list);
+      }
+      for(const [mesh,heights] of byMesh) {
+        heights.sort((a,b)=>b-a);
+        // A closed ghost is entered and left in pairs; a grazing ray may report a single hit, which is skipped.
+        for(let k=0;k+1<heights.length;k+=2)spans.push({index,role:mesh.userData.role,high:heights[k],low:heights[k+1],color:mesh.material.color.getStyle()});
+      }
+    }
+    // Cutters reach above the terrain so they show in 3D; on the chart a cut ends at the surface it removes.
+    const surface=profileHeights(count);
+    return spans.map(span=>span.role==='cut'?{...span,high:Math.min(span.high,surface[span.index])}:span).filter(span=>span.high>span.low);
+  }
+  function drawStudioProfile(pointer=null) {
+    if(!profileOn||!frame)return;
+    const canvas=$('studio-profile-chart'),rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return;
+    const dpr=Math.min(window.devicePixelRatio||1,2);canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);
+    const g=canvas.getContext('2d');g.scale(dpr,dpr);
+    const {horizontal}=profileSlice(),model=profileMode==='model',width=rect.width,height=rect.height;
+    const left=46,right=14,top=12,bottom=22,chartW=width-left-right,chartH=height-top-bottom;
+    const count=Math.max(32,Math.min(480,Math.round(chartW/2))),values=profileHeights(count);
+    const lengthMm=horizontal?frame.W:frame.H,metric=metricUnits(),feet=1/0.3048;
+    const spans=model?profileAddons(count):[];
+    let low,high,scaleX=chartW,offset=left;
+    if(model) {
+      high=Math.max(...values,...spans.map(span=>span.high))*1.08;low=Math.min(0,...spans.map(span=>span.low));
+      if($('studio-profile-true').checked) {  // equal millimeters across and up: the print's real silhouette
+        const scale=Math.min(chartW/lengthMm,chartH/(high-low));scaleX=lengthMm*scale;high=low+chartH/scale;
+      }
+    } else {
+      const minimum=Math.min(...values),maximum=Math.max(...values),range=Math.max(maximum-minimum,10);
+      low=minimum-range*.14;high=maximum+range*.16;
+    }
+    const px=index=>offset+index/(count-1)*scaleX,py=value=>top+(high-value)/(high-low)*chartH;
+    g.font='9px "Segoe UI", Arial';g.lineWidth=1;
+    for(let k=0;k<=3;k++) {
+      const y=top+k/3*chartH,value=high-k/3*(high-low);
+      g.strokeStyle='#3b4835';g.setLineDash([3,4]);g.beginPath();g.moveTo(left,y);g.lineTo(width-right,y);g.stroke();g.setLineDash([]);
+      g.fillStyle='#b4b39a';g.textAlign='right';
+      g.fillText(model?`${number(value,0)} mm`:`${number(value*(metric?1:feet),0)} ${metric?'m':'ft'}`,left-6,y+3);
+    }
+    // The silhouette: the base band and terrain above it (printed), or the elevation area.
+    g.beginPath();g.moveTo(px(0),py(model?0:low));values.forEach((value,index)=>g.lineTo(px(index),py(value)));g.lineTo(px(count-1),py(model?0:low));g.closePath();
+    const fill=g.createLinearGradient(0,top,0,height-bottom);fill.addColorStop(0,'#c3c87dcc');fill.addColorStop(1,'#58704760');g.fillStyle=fill;g.fill();
+    if(model){g.fillStyle='#8a6d4a';g.fillRect(px(0),py(frame.baseMm),scaleX,py(0)-py(frame.baseMm));}
+    g.beginPath();values.forEach((value,index)=>index?g.lineTo(px(index),py(value)):g.moveTo(px(index),py(value)));g.strokeStyle='#e6d29b';g.lineWidth=1.6;g.stroke();
+    // Add-ons crossing the slice: cuts in warm red, added material in its color, nail markers faint.
+    const step=Math.max(scaleX/(count-1),1);
+    for(const span of spans) {
+      g.globalAlpha=span.role==='cut'?.85:span.role==='ball'?.45:.8;g.fillStyle=span.role==='cut'?'#e2643f':span.color;
+      g.fillRect(px(span.index)-step/2,py(span.high),step+.5,Math.max(py(span.low)-py(span.high),1));
+    }
+    g.globalAlpha=1;
+    const distance=horizontal?frame.data.width_m:frame.data.height_m,distanceUnit=metric?1000:1609.344,distanceLabel=metric?'km':'mi';
+    g.fillStyle='#b4b39a';g.textAlign='left';
+    const startLabel=$('profile-direction').selectedOptions[0]?.textContent.split('→')[0].trim()||'';
+    const endLabel=$('profile-direction').selectedOptions[0]?.textContent.split('→')[1]?.trim()||'';
+    g.fillText(`${startLabel} · 0`,px(0),height-6);g.textAlign='right';
+    g.fillText(model?`${number(lengthMm,0)} mm · ${endLabel}`:`${number(distance/distanceUnit,2)} ${distanceLabel} · ${endLabel}`,px(count-1),height-6);
+    profileData={values,count,px,py,model,lengthMm,distance,distanceUnit,distanceLabel,metric,feet,spans};
+    if(pointer!==null) {
+      const fraction=clamp((pointer-offset)/scaleX,0,1),index=Math.round(fraction*(count-1)),value=values[index];
+      g.strokeStyle='#d4b47d';g.setLineDash([3,3]);g.beginPath();g.moveTo(px(index),top);g.lineTo(px(index),height-bottom);g.stroke();g.setLineDash([]);
+      g.fillStyle='#ffedb9';g.beginPath();g.arc(px(index),py(value),3,0,Math.PI*2);g.fill();
+      const cuts=spans.filter(span=>span.index===index&&span.role==='cut'),floor=cuts.length?Math.min(...cuts.map(span=>span.low)):null;
+      $('studio-profile-readout').textContent=model
+        ?`${number(fraction*lengthMm,1)} mm along · surface ${number(value,1)} mm${floor!==null?` · cut down to ${number(Math.max(floor,0),1)} mm`:''} · base ${number(frame.baseMm,1)} mm`
+        :`${number(fraction*distance/distanceUnit,2)} ${distanceLabel} along · ${number(value*(metric?1:feet),0)} ${metric?'m':'ft'} above sea level`;
+    }
+    updateProfileLine();
+  }
+  // The slice drawn on the 3D model as a line over the surface, like the dashed line on the map page.
+  function updateProfileLine() {
+    if(profileLine){profileLine.removeFromParent();profileLine.geometry.dispose();profileLine.material.dispose();profileLine=null;}
+    if(!renderer||!profileOn||!frame)return;
+    const {horizontal,fraction}=profileSlice(),points=[];
+    for(let index=0;index<=160;index++) {
+      const t=index/160,u=horizontal?t:fraction,v=horizontal?fraction:t;
+      points.push(new THREE.Vector3((u-.5)*frame.width,(heightMm(u,v)+.6)*frame.mmUnit,(v-.5)*frame.height));
+    }
+    profileLine=new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0xffb354,depthTest:!profileCut}));
+    profileLine.renderOrder=6;scene.add(profileLine);requestRender();
+  }
+  // The studio's slider and direction drive the map page's own controls, so both views always show one slice.
+  function syncProfileControls() {
+    const direction=$('profile-direction'),studioDirection=$('studio-profile-direction');
+    [...direction.options].forEach((option,index)=>{if(studioDirection.options[index])studioDirection.options[index].textContent=option.textContent;});
+    studioDirection.value=direction.value;$('studio-profile-position').value=$('profile-position').value;
+    $('studio-profile-position-value').textContent=`${$('profile-position').value}%`;
+  }
+  function setProfile(on) {
+    profileOn=on;$('studio-profile').hidden=!on;
+    if(!on&&profileCut){profileCut=false;$('studio-profile-cut').checked=false;applyMaterials();rebuildGhosts();}
+    if(on)syncProfileControls();
+    // The 3D view shrinks to make room for the chart once the layout settles.
+    requestAnimationFrame(()=>{resize();updateProfileLine();setCamera(cameraMode);if(on)drawStudioProfile();});
+  }
+  function profileChanged() {
+    if(profileCut){updateSectionPlane();setCamera(cameraMode);}
+    drawStudioProfile();requestRender();
+  }
+  function wireProfile() {
+    $('studio-profile-position').addEventListener('input',event=>{
+      const main=$('profile-position');main.value=event.target.value;main.dispatchEvent(new Event('input',{bubbles:true}));
+      $('studio-profile-position-value').textContent=`${event.target.value}%`;profileChanged();
+    });
+    $('studio-profile-direction').addEventListener('change',event=>{
+      const main=$('profile-direction');main.value=event.target.value;main.dispatchEvent(new Event('change',{bubbles:true}));profileChanged();
+    });
+    document.querySelectorAll('[data-profile-mode]').forEach(button=>button.addEventListener('click',()=>{
+      profileMode=button.dataset.profileMode;
+      document.querySelectorAll('[data-profile-mode]').forEach(item=>{const active=item===button;item.classList.toggle('active',active);item.setAttribute('aria-pressed',String(active));});
+      $('studio-profile-true').disabled=profileMode!=='model';drawStudioProfile();
+    }));
+    $('studio-profile-true').addEventListener('change',()=>drawStudioProfile());
+    $('studio-profile-cut').addEventListener('change',event=>{profileCut=event.target.checked;applyMaterials();rebuildGhosts();updateProfileLine();setCamera(cameraMode);});
+    const chart=$('studio-profile-chart');
+    chart.addEventListener('pointermove',event=>drawStudioProfile(event.clientX-chart.getBoundingClientRect().left));
+    chart.addEventListener('pointerleave',()=>{drawStudioProfile();$('studio-profile-readout').textContent="Shares its slice with the map page's elevation profile. Point at the chart for heights.";});
+    new ResizeObserver(()=>drawStudioProfile()).observe(chart);
   }
 
   // ---------- picking and dragging ----------
@@ -1075,9 +1235,11 @@ export function createStudio(ctx) {
       const view=button.dataset.studioView;
       if(view==='xray'){xray=!xray;applyMaterials();setCamera(cameraMode);}
       else if(view==='section'){section=!section;applyMaterials();setCamera(section?'perspective':cameraMode);}
+      else if(view==='profile')setProfile(!profileOn);
       else setCamera(view);
     }));
     $('studio-preview').addEventListener('click',previewCuts);
+    wireProfile();
     $('studio-undo').addEventListener('click',undo);$('studio-redo').addEventListener('click',redo);
     $('studio-project').addEventListener('change',event=>{activate(event.target.value);save();changed();});
     document.querySelectorAll('[data-project-action]').forEach(button=>button.addEventListener('click',()=>projectAction(button.dataset.projectAction)));
