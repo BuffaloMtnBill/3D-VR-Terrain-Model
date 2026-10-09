@@ -490,6 +490,58 @@ def ridge_glow(count=3, **extra):
                           layers=[{"position": 50, "base_mm": 14+8*index, "color": "#234e40"} for index in range(count)]) | extra
 
 
+@pytest.mark.parametrize("fit", ["lamp", "box"])
+def test_cloud_panel_is_extra_rear_piece_with_a_slot_and_closed_exports(fit):
+    terrain = ridge_terrain()
+    payload = ridge_glow(fit=fit, box_depth=70, box_height=180, clouds=True, cloud_color="#f0ead6")
+    choice = SilhouetteOptions.from_dict(payload)
+    plain = outline_json(terrain, SilhouetteOptions.from_dict(payload | {"clouds": False}))
+    data = outline_json(terrain, choice)
+    assert len(data["layers"]) == len(plain["layers"])+1
+    cloud = data["layers"][-1]
+    assert cloud["kind"] == "cloud" and "Clouds (back)" in cloud["name"]
+    assert "distance_m" not in cloud and "distance_range_m" not in cloud
+    assert cloud["color"] == "#f0ead6" and cloud["thickness_mm"] == plain["layers"][-1]["thickness_mm"]
+    for before, after in zip(plain["layers"], data["layers"]):
+        assert before["outline"] == after["outline"] and before["thickness_mm"] == after["thickness_mm"]
+    assert cloud["z"] < min(layer["z"] for layer in data["layers"][:-1])
+    slots = data["fit"]["comb_base"]["slots"] if fit == "lamp" else [slot for slot in data["fit"]["combs"]["slots"] if slot["kind"] == "layer"]
+    assert len(slots) == 4
+    assert len(cloud["outline"]["outer"]) > 80 and cloud["outline"]["holes"] == []
+    for name, _, solid in solids(terrain, choice):
+        vertices, faces = mesh(solid)
+        assert_closed(vertices, faces)
+        assert solid.volume() > 0
+    content, _, _ = silhouette_export(terrain, choice, "stl", "Synthetic test terrain")
+    with ZipFile(BytesIO(content)) as archive:
+        assert any("cloud" in name.lower() and name.endswith('.stl') for name in archive.namelist())
+
+
+def test_clouds_require_separate_layers_and_validate_color():
+    with pytest.raises(ValueError, match="Clouds need separate"):
+        options(clouds=True)
+    with pytest.raises(ValueError, match="Cloud background"):
+        options(clouds="yes")
+    with pytest.raises(ValueError, match="hex color"):
+        options(cloud_color="white")
+
+
+def test_distance_regions_match_the_ridges_and_bands():
+    terrain = ridge_terrain()
+    ridges_data = outline_json(terrain, SilhouetteOptions.from_dict(ridge_glow()))
+    ranges = [layer["distance_range_m"] for layer in ridges_data["layers"]]
+    assert ranges[0][0] == 0 and ranges[-1][1] == ridges_data["view_farthest_m"]
+    assert all(left[1] == right[0] for left, right in zip(ranges, ranges[1:]))
+    assert all(near <= layer["distance_m"] <= far for layer, (near, far) in zip(ridges_data["layers"], ranges))
+    payload = ridge_glow(view_ridges=False, view_min_radius_m=1000,
+                         layers=[{"position": value, "base_mm": 14+8*index} for index, value in enumerate((11.1,44.4,100))])
+    bands = outline_json(terrain, SilhouetteOptions.from_dict(payload))
+    maximum = bands["view_farthest_m"]
+    assert bands["layers"][0]["distance_range_m"][0] >= min(1000, maximum*.111)-.1
+    assert bands["layers"][1]["distance_range_m"] == pytest.approx([maximum*.111,maximum*.444],abs=.1)
+    assert bands["layers"][-1]["distance_range_m"][1] == maximum
+
+
 def test_ridge_layers_are_thicker_when_closer():
     terrain = ridge_terrain()
     data = outline_json(terrain, SilhouetteOptions.from_dict(ridge_glow()))

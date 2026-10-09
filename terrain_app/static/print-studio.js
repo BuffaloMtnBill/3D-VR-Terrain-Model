@@ -4,6 +4,7 @@
  */
 import * as THREE from 'three';
 import {OrbitControls} from './vendor/OrbitControls.js';
+import {createTurntable} from './turntable.js';
 
 const $=id=>document.getElementById(id);
 const STORE_PREFIX='terrain-studio-projects:v1:';
@@ -129,7 +130,7 @@ export function createStudio(ctx) {
         if(isHex(catalog.marker_ball?.color))$('studio-marker-color').value=catalog.marker_ball.color;
       } catch(error){catalogError=error.message;}
       finally{catalogRequest=null;}
-      renderPalette();renderTemplates();renderMarker();renderSettings();
+      renderPalette();renderTemplates();renderMarker();renderSettings();schedulePreview(0);
       return catalog;
     })();
     return catalogRequest;
@@ -251,7 +252,7 @@ export function createStudio(ctx) {
     exitPreview();
     rebuildGhosts();renderList();renderProjects();if(form)renderSettings();
     $('studio-undo').disabled=!undoStack.length;$('studio-redo').disabled=!redoStack.length;
-    ctx.updatePrintPalette();scheduleCheck();requestRender();
+    ctx.updatePrintPalette();scheduleCheck();requestRender();schedulePreview();
   }
 
   // ---------- 3D view ----------
@@ -319,33 +320,38 @@ export function createStudio(ctx) {
   // The studio owns copies of the main model's meshes so X-ray and Section never change the main preview.
   function syncModel() {
     frame=computeFrame();if(!frame)return;
-    dirtyModel=false;
+    dirtyModel=false;schedulePreview(0);
     $('studio-title').textContent=ctx.state.loadedName||ctx.state.name||'Your landscape';
     ctx.updateExportDimensions();
     $('studio-dimensions').textContent=$('export-dimensions').textContent;
     $('studio-exaggeration').textContent=`Elevation multiplier ${number(frame.exaggeration)}× · change it on the geography selection page.`;
     $('studio-base').value=ctx.options().base_percent;
     if(!renderer)return;
-    disposeGroup(terrainGroup);terrainMesh=null;
-    const {topMesh,baseMesh,featureGroup,routeGroup}=ctx.meshes;
-    const terrainMaterial=()=>new THREE.MeshStandardMaterial({vertexColors:true,roughness:.93,metalness:0,side:THREE.DoubleSide,map:topMesh?.material.map||null});
-    if(topMesh) {
-      const geometry=topMesh.geometry.clone();
-      terrainMesh=new THREE.Mesh(geometry,terrainMaterial());terrainMesh.name='Studio terrain';terrainGroup.add(terrainMesh);
-    }
-    if(baseMesh)terrainGroup.add(new THREE.Mesh(baseMesh.geometry.clone(),new THREE.MeshStandardMaterial({color:baseMesh.material.color,roughness:1,side:THREE.DoubleSide})));
-    for(const group of [featureGroup,routeGroup]) {
-      if(!group)continue;
-      const copy=group.clone(true);
-      // Feature geometry stays shared with the main scene (never disposed here); materials are the studio's own.
-      copy.traverse(object=>{if(object.isMesh){object.material=object.material.clone();object.userData.sharedGeometry=true;}});
-      terrainGroup.add(copy);
-    }
+    disposeGroup(terrainGroup);
+    const copies=terrainCopies(false);terrainMesh=copies.terrain;
+    if(terrainMesh)terrainMesh.name='Studio terrain';
+    terrainGroup.add(...copies.parts);
     applyMaterials();rebuildGhosts();
     if(profileOn)syncProfileControls();
     const fitKey=`${ctx.state.id}:${frame.width.toFixed(3)}:${frame.height.toFixed(3)}`;
     if(fitKey!==lastFitKey){lastFitKey=fitKey;setCamera(cameraMode);}
     requestRender();
+  }
+  // Copies of the main model's terrain, base, features and route with their own materials. The studio view clones the terrain
+  // and base geometry (its picking and section cuts use them); the Start from preview shares it (share), never disposing it.
+  function terrainCopies(share) {
+    const {topMesh,baseMesh,featureGroup,routeGroup}=ctx.meshes,parts=[];
+    const copy=(geometry,material)=>{const mesh=new THREE.Mesh(share?geometry:geometry.clone(),material);mesh.userData.sharedGeometry=share;parts.push(mesh);return mesh;};
+    const terrain=topMesh?copy(topMesh.geometry,new THREE.MeshStandardMaterial({vertexColors:true,roughness:.93,metalness:0,side:THREE.DoubleSide,map:topMesh.material.map||null})):null;
+    if(baseMesh)copy(baseMesh.geometry,new THREE.MeshStandardMaterial({color:baseMesh.material.color,roughness:1,side:THREE.DoubleSide}));
+    for(const group of [featureGroup,routeGroup]) {
+      if(!group)continue;
+      const features=group.clone(true);
+      // Feature geometry stays shared with the main scene (never disposed here); materials are the copy's own.
+      features.traverse(object=>{if(object.isMesh){object.material=object.material.clone();object.userData.sharedGeometry=true;}});
+      parts.push(features);
+    }
+    return {terrain,parts};
   }
   function applyMaterials() {
     if(!renderer)return;
@@ -415,7 +421,7 @@ export function createStudio(ctx) {
         if(!response.ok)throw new Error(await errorMessage(response));
         Object.assign(entry,await response.json(),{state:'ready'});
       } catch{entry.state='error';}
-      rebuildGhosts();requestRender();
+      rebuildGhosts();requestRender();schedulePreview();
     })();
     return entry;
   }
@@ -518,24 +524,33 @@ export function createStudio(ctx) {
     }
     return parts;
   }
-  function ghostMaterial(role,addon,active,through=false) {
+  // owner: the project whose marker settings color the balls (the active one, or a template previewed in Start from).
+  function ghostMaterial(role,addon,active,through=false,owner=project,clip=profileCut) {
     const fillColor=addon.color||ctx.printColors().dirt||'#b99570';
-    const color=role==='cut'?CUT_COLOR:role==='ball'?new THREE.Color(project.marker_balls.color):role==='plate'?0xf3d592:new THREE.Color(fillColor);
-    const opacity=through?(active?.22:.12):role==='ball'?(project.marker_balls.include?.85:.3):role==='fill'?.78:active?.7:.5;
+    const color=role==='cut'?CUT_COLOR:role==='ball'?new THREE.Color(owner.marker_balls.color):role==='plate'?0xf3d592:new THREE.Color(fillColor);
+    const opacity=through?(active?.22:.12):role==='ball'?(owner.marker_balls.include?.85:.3):role==='fill'?.78:active?.7:.5;
     return new THREE.MeshStandardMaterial({color,transparent:true,opacity,depthWrite:false,depthTest:!through,roughness:.6,
       emissive:active?new THREE.Color(0x553311):new THREE.Color(0),side:THREE.DoubleSide,
-      clippingPlanes:profileCut?[clipPlane]:null});  // a profile cut hides the ghosts in front of the slice too
+      clippingPlanes:clip?[clipPlane]:null});  // a profile cut hides the ghosts in front of the slice too
+  }
+  // One add-on's ghost meshes, placed and scaled into the model's units.
+  function addonGroup(addon,active=false,owner=project,clip=profileCut) {
+    const group=new THREE.Group();
+    for(const part of ghostParts(addon)) {
+      const mesh=new THREE.Mesh(part.geometry,ghostMaterial(part.role,addon,active,false,owner,clip));mesh.userData.addonId=addon.id;mesh.userData.role=part.role;mesh.renderOrder=2;group.add(mesh);
+      if(part.role==='cut'){const through=new THREE.Mesh(part.geometry,ghostMaterial('cut',addon,active,true,owner,clip));through.userData.addonId=addon.id;through.renderOrder=3;group.add(through);}
+    }
+    // The geometry is in millimeters relative to the center; heights were already absolute.
+    group.position.set((addon.u-.5)*frame.width,0,(addon.v-.5)*frame.height);
+    group.rotation.y=rad(addon.rotation_deg||0);group.scale.setScalar(frame.mmUnit);
+    return group;
   }
   function rebuildGhosts() {
     if(!renderer||!frame||!project)return;
     disposeGroup(ghostGroup);ring=null;
     for(const addon of project.addons) {
       if(hidden.has(addon.id))continue;
-      const group=new THREE.Group(),active=addon.id===selectedId;
-      for(const part of ghostParts(addon)) {
-        const mesh=new THREE.Mesh(part.geometry,ghostMaterial(part.role,addon,active));mesh.userData.addonId=addon.id;mesh.userData.role=part.role;mesh.renderOrder=2;group.add(mesh);
-        if(part.role==='cut'){const through=new THREE.Mesh(part.geometry,ghostMaterial('cut',addon,active,true));through.userData.addonId=addon.id;through.renderOrder=3;group.add(through);}
-      }
+      const active=addon.id===selectedId,group=addonGroup(addon,active);
       if(active) {
         const {hx,hy}=footprint(addon),radius=Math.hypot(hx,hy)+4,zref=heightMm(addon.u,addon.v);
         const torus=new THREE.TorusGeometry(radius,Math.max(.7,radius*.035),8,64);torus.rotateX(Math.PI/2);torus.translate(0,zref+1.2,0);
@@ -544,9 +559,6 @@ export function createStudio(ctx) {
         const knob=new THREE.SphereGeometry(Math.max(1.4,radius*.07),12,8);knob.translate(radius,zref+1.2,0);
         const handle=new THREE.Mesh(knob,new THREE.MeshBasicMaterial({color:0xfff6c7,depthTest:false}));handle.renderOrder=5;handle.userData.ring=true;group.add(handle);
       }
-      group.position.set((addon.u-.5)*frame.width,0,(addon.v-.5)*frame.height);
-      group.rotation.y=rad(addon.rotation_deg||0);group.scale.setScalar(frame.mmUnit);
-      // The geometry is in millimeters relative to the center; heights were already absolute.
       ghostGroup.add(group);
     }
     if(clipping())updateSectionPlane();
@@ -855,13 +867,18 @@ export function createStudio(ctx) {
       return {addons:[marker],balls:true};
     },
   };
+  // A template as a new project beside the active one (which is untouched): applied by applyTemplate, shown by the Start from preview.
+  function templateProject(name) {
+    const result=templates[name](),built={...emptyProject(name),marker_balls:{...project.marker_balls,include:result.balls}};
+    result.addons.forEach(addon=>{addon.id=nextId(built.addons);built.addons.push(fitParams(addon));});
+    return built;
+  }
   function applyTemplate(name) {
     if(!frame)return;
     if(name!=='Print as is'&&!catalog)return ctx.notify(catalogError||'Add-ons are still loading.',true);
-    const result=templates[name]();
+    const built=templateProject(name);
     mutate(()=>{
-      project.addons=[];result.addons.forEach(addon=>{addon.id=nextId();project.addons.push(fitParams(addon));});
-      project.marker_balls.include=result.balls;
+      project.addons=built.addons;project.marker_balls.include=built.marker_balls.include;
       if(!undoStack.length||/^(Print as is|Untitled|Project \d+)$/.test(project.name)||Object.keys(templates).includes(project.name))project.name=name;
       selectedId=null;
     });
@@ -869,12 +886,37 @@ export function createStudio(ctx) {
     $('studio-place-hint').textContent=name==='Print as is'?'No add-ons: the model exports exactly as on the geography selection page.':`${name} applied. Drag add-ons to adjust them; Undo restores the previous layout.`;
   }
 
+  // ---------- Start from preview: the hovered (or keyboard-focused) template on a turntable, or the active project ----------
+  const turntable=createTurntable($('studio-turntable-view'),{label:'Template preview: drag to orbit',elevation:36,
+    configure:preview=>{preview.toneMapping=THREE.ACESFilmicToneMapping;preview.toneMappingExposure=1.1;}});
+  let hoverTemplate=null,focusTemplate=null,previewTimer=null;
+  function schedulePreview(delay=120) {clearTimeout(previewTimer);if(dialog.open)previewTimer=setTimeout(renderPreview,delay);}
+  function renderPreview() {
+    if(!dialog.open||!project||!frame)return;
+    const name=hoverTemplate??focusTemplate,error=name&&name!=='Print as is'&&!catalog?catalogError||'Add-ons are still loading.':null;
+    const shown=name?(error?null:templateProject(name)):project,count=shown?.addons.length;
+    $('studio-turntable-title').textContent=`Preview · ${name||project.name}${shown?` · ${count?`${count} add-on${count>1?'s':''}`:'no add-ons'}`:''}`;
+    const line=$('studio-turntable-size');line.classList.toggle('error',Boolean(error));
+    line.textContent=error||`${number(frame.W,0)} × ${number(frame.H,0)} × ${number(frame.peak/frame.mmUnit,0)} mm${shown.marker_balls.include&&shown.addons.some(addon=>addon.type==='nail_marker')?' · with marker balls':''}`;
+    turntable.show(group=>{
+      group.add(...terrainCopies(true).parts);
+      for(const addon of shown?.addons||[])if(shown!==project||!hidden.has(addon.id))group.add(addonGroup(addon,false,shown,false));
+    });
+  }
+  // Mouse or pen hover and keyboard focus preview a template; a tap (no hover) just applies it.
+  function wirePreview(button,name) {
+    button.addEventListener('pointerenter',event=>{if(event.pointerType!=='touch'){hoverTemplate=name;schedulePreview();}});
+    button.addEventListener('pointerleave',()=>{if(hoverTemplate===name){hoverTemplate=null;schedulePreview();}});
+    button.addEventListener('focus',()=>{if(button.matches(':focus-visible')){focusTemplate=name;schedulePreview();}});
+    button.addEventListener('blur',()=>{if(focusTemplate===name){focusTemplate=null;schedulePreview();}});
+  }
+
   // ---------- panels ----------
   function renderTemplates() {
     const box=$('studio-templates');
     box.replaceChildren(...Object.keys(templates).map(name=>{
       const button=document.createElement('button');button.type='button';button.className='studio-template';button.dataset.template=name;button.textContent=name;
-      button.addEventListener('click',()=>applyTemplate(name));return button;
+      button.addEventListener('click',()=>applyTemplate(name));wirePreview(button,name);return button;
     }));
   }
   function renderPalette() {
@@ -1228,7 +1270,10 @@ export function createStudio(ctx) {
     dialog.addEventListener('cancel',event=>{
       if(placing||dragging){event.preventDefault();if(dragging)endDrag(false);startPlacing(null);}
     });
-    dialog.addEventListener('close',()=>{renderer?.setAnimationLoop(null);startPlacing(null);clearTimeout(checkTimer);ctx.updatePrintPalette();});
+    dialog.addEventListener('close',()=>{
+      renderer?.setAnimationLoop(null);startPlacing(null);clearTimeout(checkTimer);ctx.updatePrintPalette();
+      clearTimeout(previewTimer);hoverTemplate=focusTemplate=null;turntable.setActive(false);
+    });
     document.addEventListener('keydown',keydown);
     document.querySelectorAll('[data-export]').forEach(button=>button.addEventListener('click',()=>exportFormat(button.dataset.export)));
     document.querySelectorAll('[data-studio-view]').forEach(button=>button.addEventListener('click',()=>{
@@ -1256,7 +1301,7 @@ export function createStudio(ctx) {
         $('studio-place-hint').textContent=`Imported “${imported.name}”.`;
       } catch(error){ctx.notify(error instanceof SyntaxError?'This file is not valid JSON.':error.message,true);}
     });
-    $('export-size').addEventListener('input',()=>{const next=computeFrame();if(next&&dialog.open){frame=next;rebuildGhosts();renderSettings();$('studio-dimensions').textContent=$('export-dimensions').textContent;scheduleCheck();}});
+    $('export-size').addEventListener('input',()=>{const next=computeFrame();if(next&&dialog.open){frame=next;rebuildGhosts();renderSettings();$('studio-dimensions').textContent=$('export-dimensions').textContent;scheduleCheck();schedulePreview();}});
     $('studio-base').addEventListener('change',()=>{
       const input=$('base'),value=clamp(Math.round(Number($('studio-base').value)*2)/2||Number(input.value),Number(input.min),Number(input.max));
       $('studio-base').value=value;input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));scheduleCheck();
@@ -1298,6 +1343,7 @@ export function createStudio(ctx) {
       if(!ctx.state.data)return;
       loadStore();
       if(!dialog.open)dialog.showModal();
+      turntable.setActive(true);
       const hasView=setupView();
       if(hasView)resize();
       syncModel();

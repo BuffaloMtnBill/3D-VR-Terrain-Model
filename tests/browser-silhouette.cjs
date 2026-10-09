@@ -112,6 +112,25 @@ function routeGPX() {
     assert.deepEqual(await page.locator('.silhouette-preset-heading').allInnerTexts(),['GLOW LAMPS','SHADOW BOXES','FLAT PIECES','RACE PROFILE']);
     assert.equal(await page.locator('[data-silhouette-preset]').count(),11);
     assert.equal(await page.locator('#silhouette-fit-card').isVisible(),false,'Custom has no preset settings');
+    // The preview: hovering a preset shows it turning in the Start from card without applying it.
+    assert.equal(await page.locator('.silhouette-start #silhouette-turntable-view canvas').count(),1,'The preview has its own canvas in the Start from card');
+    await page.waitForFunction(()=>/^Preview · Custom$/.test(document.getElementById('silhouette-turntable-title').textContent)&&/ mm · 1 piece$/.test(document.getElementById('silhouette-turntable-size').textContent));
+    const before=await page.evaluate(()=>localStorage.getItem(Object.keys(localStorage).find(key=>key.startsWith('terrain-silhouette:v1:'))));
+    const previewed=outlineAfter(page,body=>body.preset==='glow-layers'&&body.fit==='lamp'&&body.layers?.length===3);
+    await page.locator('[data-silhouette-preset="glow-layers"]').hover();
+    await previewed;
+    await page.waitForFunction(()=>document.getElementById('silhouette-turntable-title').textContent==='Preview · Layered glow'&&/ × [\d.–]+ mm · 3 layers$/.test(document.getElementById('silhouette-turntable-size').textContent));
+    assert.equal(await page.locator('[data-silhouette-preset="custom"]').getAttribute('aria-checked'),'true','Hovering does not apply the preset');
+    assert.equal(await page.locator('[data-silhouette-preset="glow-layers"]').getAttribute('aria-checked'),'false');
+    assert.equal(await page.locator('#silhouette-fit-card').isVisible(),false);
+    assert.equal(await page.evaluate(()=>localStorage.getItem(Object.keys(localStorage).find(key=>key.startsWith('terrain-silhouette:v1:')))),before,'Hovering leaves the saved settings alone');
+    await page.mouse.move(5,900);
+    await page.waitForFunction(()=>document.getElementById('silhouette-turntable-title').textContent==='Preview · Custom');
+    // Keyboard focus previews too (served from the cache this time).
+    await page.locator('[data-silhouette-preset="custom"]').focus();await page.keyboard.press('Tab');
+    await page.waitForFunction(()=>document.getElementById('silhouette-turntable-title').textContent!=='Preview · Custom');
+    await page.locator('#silhouette-text').focus();
+    await page.waitForFunction(()=>document.getElementById('silhouette-turntable-title').textContent==='Preview · Custom');
     // A glow lamp: layered panels in a comb base with the lamp-base slot fields.
     let next=outlineAfter(page,body=>body.preset==='glow-layers'&&body.fit==='lamp'&&body.layers?.length===3);
     await page.locator('[data-silhouette-preset="glow-layers"]').click();
@@ -126,11 +145,24 @@ function routeGPX() {
     assert.match(await page.locator('#silhouette-preset-hint').innerText(),/translucent PETG/);
     await page.waitForSelector('#silhouette-svg rect.sil-fit');
     assert.equal(await page.locator('#silhouette-svg path.sil-layer').count(),2,'The rear layers are drawn behind the front one');
+    await page.waitForFunction(()=>document.querySelectorAll('#silhouette-layer-axis rect[data-layer]').length===3);
+    assert.deepEqual(await page.locator('#silhouette-layer-axis rect[data-layer]').evaluateAll(elements=>elements.map(element=>Number(element.dataset.start))),body.layers.map(layer=>layer.position));
+    assert.match(await page.locator('#silhouette-layer-axis-hint').innerText(),/slice positions/);
     await page.screenshot({path:path.join(output,'silhouette-glow-layers.png')});
+    next=outlineAfter(page,body=>body.preset==='glow-layers'&&body.clouds===true);
+    await page.locator('#silhouette-clouds').check();
+    const cloudData=await (await next).json();
+    assert.equal(cloudData.layers.length,4);assert.equal(cloudData.layers[3].kind,'cloud');
+    assert.equal(cloudData.fit.comb_base.slots.length,4);
+    await page.waitForFunction(()=>!document.getElementById('silhouette-cloud-key').hidden);
+    assert.equal(await page.locator('#silhouette-layer-axis rect[data-layer]').count(),3,'The decorative cloud panel has no terrain region');
+    assert.match(await page.locator('#silhouette-cloud-key').innerText(),/decorative rear panel/);
+    await page.screenshot({path:path.join(output,'silhouette-cloud-background.png')});
     request=exportRequest(page,'stl');downloading=page.waitForEvent('download');
     await page.locator('[data-silhouette-export="stl"]').click();
     body=(await request).postDataJSON();file=await downloading;
     assert.equal(body.layers.length,3);assert.equal(body.slot_width,4);
+    assert.equal(body.clouds,true,'The cloud option is included in the exported model');
     assert.equal(file.suggestedFilename(),'roan-mountain-silhouette-parts.zip','Several parts download as a ZIP of STLs');
     assert.equal((await fs.readFile(await file.path())).subarray(0,2).toString(),'PK');
     await page.waitForFunction(()=>!document.querySelector('[data-silhouette-export="stl"]').disabled);
@@ -203,6 +235,9 @@ function routeGPX() {
     await setup(mobile);
     const phone=await mobile.newPage();
     await openSilhouette(phone);
+    const mobileLayers=outlineAfter(phone,body=>body.preset==='glow-layers');
+    await phone.locator('[data-silhouette-preset="glow-layers"]').click();await mobileLayers;
+    await phone.waitForFunction(()=>document.querySelectorAll('#silhouette-layer-axis rect[data-layer]').length===3);
     assert.equal(await phone.evaluate(()=>document.getElementById('silhouette').scrollWidth<=innerWidth),true,'No horizontal scroll on a phone');
     await phone.screenshot({path:path.join(output,'silhouette-mobile.png')});
     await mobile.close();

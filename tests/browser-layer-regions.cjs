@@ -1,0 +1,52 @@
+/* Focused test for the viewpoint distance number line and decorative clouds. */
+const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright');
+const assert=require('node:assert/strict');
+const url=process.env.TERRAIN_TEST_URL||'http://127.0.0.1:8021';
+(async()=>{
+  const browser=await chromium.launch({headless:true,executablePath:process.env.TERRAIN_CHROMIUM_PATH,args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+  try{
+    const page=await browser.newPage({viewport:{width:1500,height:950}}),errors=[];
+    page.on('pageerror',error=>errors.push(error.message));
+    await page.route(/^https:\/\/tile\./,route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"/>'}));
+    await page.goto(url);
+    await page.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('160 × 117'));
+    await page.locator('#profile-mode').selectOption('viewpoint');
+    await page.evaluate(()=>window.scrollTo(0,0));
+    const frame=await page.locator('#selection-frame').boundingBox();
+    await page.mouse.click(frame.x+frame.width*.35,frame.y+frame.height*.55);
+    await page.locator('#view-bearing').evaluate(element=>{element.value='60';element.dispatchEvent(new Event('input',{bubbles:true}));});
+    await page.waitForFunction(()=>/to the frame's edge/.test(document.getElementById('profile-mode-status').textContent));
+    await page.locator('#silhouette-button').click();
+    const outline=page.waitForResponse(response=>/\/api\/silhouette\/[^/]+\/outline$/.test(response.url())&&response.request().postDataJSON()?.preset==='glow-layers');
+    await page.locator('[data-silhouette-preset="glow-layers"]').click();
+    const data=await (await outline).json();
+    await page.waitForFunction(()=>document.querySelectorAll('#silhouette-layer-axis rect[data-layer]').length===3);
+    const regions=await page.locator('#silhouette-layer-axis rect[data-layer]').evaluateAll(elements=>elements.map(element=>[Number(element.dataset.start),Number(element.dataset.end),element.getAttribute('fill')]));
+    assert.deepEqual(regions,data.layers.map(layer=>[...layer.distance_range_m,layer.color]));
+    assert.match(await page.locator('#silhouette-layer-axis-hint').innerText(),/distance bands/);
+    assert.ok(regions[0][1]-regions[0][0]<regions[2][1]-regions[2][0],'Nearer distance bands are narrower');
+    const cloudRequest=page.waitForResponse(response=>/\/api\/silhouette\/[^/]+\/outline$/.test(response.url())&&response.request().postDataJSON()?.clouds);
+    await page.locator('#silhouette-clouds').check();
+    const clouds=await (await cloudRequest).json();
+    assert.equal(clouds.layers.at(-1).kind,'cloud');
+    await page.waitForFunction(()=>!document.getElementById('silhouette-cloud-key').hidden);
+    assert.equal(await page.locator('#silhouette-layer-axis rect[data-layer]').count(),3);
+    assert.match(await page.locator('#silhouette-parts').innerText(),/3 terrain layers, cloud background/);
+    await page.screenshot({path:require('node:path').resolve(__dirname,'../test-results/layer-distance-regions.png'),fullPage:true});
+    await page.locator('#silhouette-back').click();
+    await page.locator('#view-radius').selectOption('1000');
+    await page.locator('#view-ridges').check();
+    await page.waitForFunction(()=>/1 ridge at/.test(document.getElementById('profile-mode-status').textContent));
+    await page.locator('#silhouette-button').click();
+    await page.waitForFunction(()=>document.getElementById('silhouette-check-list').textContent.includes('Only 1 ridge was detected'));
+    assert.match(await page.locator('#silhouette-layer-axis-hint').innerText(),/distance bands/);
+    await page.locator('#silhouette-back').click();
+    await page.locator('#view-radius').selectOption('0');
+    await page.waitForFunction(()=>/[2-7] ridges at/.test(document.getElementById('profile-mode-status').textContent));
+    await page.locator('#silhouette-button').click();
+    await page.waitForFunction(()=>/ridge distance groups/.test(document.getElementById('silhouette-layer-axis-hint').textContent));
+    assert.ok(await page.locator('#silhouette-layer-axis rect[data-layer]').count()>=2);
+    assert.deepEqual(errors,[]);
+    console.log('Viewpoint distance bands, ridge groups, model colors, cloud background, and layer-region display passed.');
+  }finally{await browser.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -160,7 +160,10 @@
     </header>
     <div class="studio-body">
       <aside class="studio-left" aria-label="Templates and add-ons">
-        <section class="studio-card"><h3>Start from</h3><div id="studio-templates" class="studio-templates"></div></section>
+        <section class="studio-card"><h3>Start from</h3><div id="studio-templates" class="studio-templates"></div>
+          <figure id="studio-turntable" class="design-preview" aria-live="polite"><div id="studio-turntable-view" class="design-preview-view"><span class="design-preview-busy" aria-hidden="true"></span></div>
+            <figcaption><strong id="studio-turntable-title">Preview</strong><span id="studio-turntable-size">Point at a template to preview it.</span></figcaption></figure>
+        </section>
         <section class="studio-card"><h3>Add to the model</h3><div id="studio-palette" class="studio-palette"><span class="small-hint">Loading add-ons…</span></div><span id="studio-place-hint" class="small-hint" role="status"></span></section>
         <section class="studio-card"><h3>Placed <span id="studio-addon-count" class="studio-count"></span></h3><ul id="studio-addons" class="studio-addons"></ul>
           <div class="studio-history"><button type="button" id="studio-undo" class="button secondary" title="Undo (Ctrl+Z)">Undo</button><button type="button" id="studio-redo" class="button secondary" title="Redo (Ctrl+Shift+Z)">Redo</button></div>
@@ -282,6 +285,8 @@
           <script id="silhouette-presets" type="application/json">{{ silhouette_presets|tojson }}</script>
           <div id="silhouette-preset-list" class="silhouette-presets" role="radiogroup" aria-label="Design preset"></div>
           <p id="silhouette-preset-summary" class="small-hint"></p>
+          <figure id="silhouette-turntable" class="design-preview" aria-live="polite"><div id="silhouette-turntable-view" class="design-preview-view"><span class="design-preview-busy" aria-hidden="true"></span></div>
+            <figcaption><strong id="silhouette-turntable-title">Preview</strong><span id="silhouette-turntable-size">Point at a design to preview it.</span></figcaption></figure>
         </section>
         <section id="silhouette-fit-card" class="studio-card silhouette-fit" hidden><h3 id="silhouette-fit-title">Preset settings</h3>
           <div data-fit-block="lamp" hidden>
@@ -313,6 +318,15 @@
             <label class="studio-inline" for="silhouette-thickness-far">Farthest (mm) <input id="silhouette-thickness-far" type="number" min="1.2" max="30" step="0.1" value="1.5"></label>
             <span id="silhouette-thickness-hint" class="small-hint"></span>
             <ul id="silhouette-layer-list" class="silhouette-layer-list" aria-label="Layers, front to back"></ul>
+            <label class="studio-check" for="silhouette-clouds"><input id="silhouette-clouds" type="checkbox"> Puffy clouds behind the terrain</label>
+            <label class="studio-inline" for="silhouette-cloud-color">Cloud color <input id="silhouette-cloud-color" type="color" value="#f0ead6"></label>
+            <span id="silhouette-cloud-hint" class="small-hint">Adds a separate cartoon-cloud panel and a rear slot in the base.</span>
+            <figure id="silhouette-layer-line" class="silhouette-layer-line" aria-label="Terrain layers on a number line">
+              <strong>Terrain regions</strong>
+              <svg id="silhouette-layer-axis" role="img" aria-label="Layer positions and shaded terrain regions"></svg>
+              <figcaption id="silhouette-layer-axis-hint" class="small-hint">Generate the layers to see their positions.</figcaption>
+              <span id="silhouette-cloud-key" hidden></span>
+            </figure>
           </div>
           <div data-fit-block="buildings" hidden>
             <label class="studio-check" for="silhouette-buildings"><input id="silhouette-buildings" type="checkbox"> Include buildings along the slice</label>

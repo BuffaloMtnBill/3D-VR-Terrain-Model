@@ -78,8 +78,23 @@ const CATALOG={font:'DejaVu Sans Bold',marker_ball:{name:'Push-pin marker ball',
     assert.match(await page.locator('#studio-title').innerText(),/Roan Mountain/);
     assert.match(await page.locator('#studio-dimensions').innerText(),/mm/);
 
+    // The Start from preview: hovering a template shows it turning, without placing anything.
+    assert.equal(await page.locator('#studio-turntable-view canvas').count(),1,'The preview has its own canvas in the Start from card');
+    const caption=()=>page.locator('#studio-turntable-title').innerText();
+    await page.waitForFunction(()=>document.getElementById('studio-turntable-title').textContent==='Preview · Print as is · no add-ons');
+    const placedBefore=await page.locator('#studio-addons').innerText();
+    await page.locator('[data-template="Desk set"]').hover();
+    await page.waitForFunction(()=>document.getElementById('studio-turntable-title').textContent==='Preview · Desk set · 2 add-ons');
+    assert.match(await page.locator('#studio-turntable-size').innerText(),/^\d+ × \d+ × \d+ mm$/);
+    assert.equal(await page.locator('#studio-addons').innerText(),placedBefore,'Hovering leaves the placed list alone');
+    assert.equal(await page.locator('#studio-undo').isDisabled(),true,'Hovering records no undo step');
+    await page.mouse.move(750,40);
+    await page.waitForFunction(()=>document.getElementById('studio-turntable-title').textContent==='Preview · Print as is · no add-ons');
     await page.locator('[data-template="Desk set"]').click();
     assert.equal(await page.locator('#studio-addons li').count(),2,'Desk set places a pencil holder and a pocket');
+    await page.mouse.move(750,40);
+    await page.waitForFunction(()=>document.getElementById('studio-turntable-title').textContent==='Preview · Desk set · 2 add-ons');
+    assert.ok((await caption()).startsWith('Preview · Desk set'),'The preview follows the applied template');
     assert.match(await page.locator('#studio-addons').innerText(),/Pencil holder[\s\S]*Pocket/);
 
     // Profile: the geography selection page's cross section, drawn as the printed silhouette and sharing one slice with the geography selection page.

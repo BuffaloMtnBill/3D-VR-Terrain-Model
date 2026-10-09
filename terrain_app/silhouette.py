@@ -123,6 +123,8 @@ class SilhouetteOptions:
     color_by_distance: bool = False  # layers take distance_colors in contiguous groups, nearest first; fit parts and feet the farthest used
     distance_colors: tuple = DISTANCE_COLORS  # 1–4 colors, nearest first
     color_zones: bool = False  # a viewpoint's layers become color zones of one flat piece instead of separate layers
+    clouds: bool = False  # a decorative, separate panel behind the terrain layers
+    cloud_color: str = "#f0ead6"
 
     @classmethod
     def from_dict(cls, value):
@@ -186,7 +188,7 @@ class SilhouetteOptions:
         for name, label in (("mirror", "Mirror"), ("photo_slot", "The photo slot"), ("led_channel", "The LED channel"),
                             ("include_buildings", "Include buildings"), ("summit_pin", "The summit pin hole"),
                             ("ticks", "Distance ticks"), ("start_finish", "START and FINISH labels"), ("thickness_by_distance", "Thicker when closer"),
-                            ("color_by_distance", "Color by distance"), ("color_zones", "Color zones")):
+                            ("color_by_distance", "Color by distance"), ("color_zones", "Color zones"), ("clouds", "Cloud background")):
             flags[name] = value.get(name, getattr(defaults, name))
             if not isinstance(flags[name], bool):
                 raise ValueError(f"{label} must be true or false.")
@@ -201,7 +203,7 @@ class SilhouetteOptions:
         if len(lines) > 3 or any(len(line) > 60 for line in lines):
             raise ValueError("The caption must be at most 3 lines of at most 60 characters each.")
         colors = {}
-        for name in ("body_color", "text_color"):
+        for name in ("body_color", "text_color", "cloud_color"):
             color = value.get(name, getattr(defaults, name))
             if not isinstance(color, str) or not HEX.fullmatch(color):
                 raise ValueError(f"Choose a six-digit hex color for the {name.split('_')[0]}.")
@@ -264,6 +266,8 @@ class SilhouetteOptions:
             raise ValueError(f"A {options.source} profile makes a single layer. Use one layer.")
         if options.fit != "none" and options.mount != "none":
             raise ValueError("A lamp base or shadow box holds the piece, so set the mount to none.")
+        if options.clouds and (count < 2 or options.fit not in ("lamp", "box") or options.color_zones):
+            raise ValueError("Clouds need separate terrain layers in a lamp base or shadow box.")
         if options.fit == "lamp":
             if tab_thickness(options) < .8 or options.slot_length-2*options.slot_clearance < 10:
                 raise ValueError("The lamp slot is too small for a tab. Check its width, length, and clearance.")
@@ -515,20 +519,24 @@ def view_layers(terrain, options):
     seen = view["angles"][view["angles"] > -90]
     floor = (float(seen.min()) if len(seen) else 0.0)-1
     if len(specs) == 1:
-        return {"angles": [np.maximum(view["angles"], floor)], "distances": [float(np.median(view["skyline_m"]))], "ridges": None}
+        return {"angles": [np.maximum(view["angles"], floor)], "distances": [float(np.median(view["skyline_m"]))], "ridges": None,
+                "ranges": [(options.view_min_radius_m, float(view["farthest"]))], "farthest_m": float(view["farthest"])}
     if options.view_ridges:
         found = ridges(view, len(specs))
         if len(found) < len(specs):
             k = len(found)
             raise ValueError(f"Only {k} separate ridge{'s are' if k > 1 else ' is'} visible from this viewpoint; "
                              f"use {k} layer{'s' if k > 1 else ''} or lower the minimum distance.")
-        return {"angles": [np.maximum(ridge["angles"], floor) for ridge in found], "distances": [ridge["distance_m"] for ridge in found], "ridges": found}
-    nearest, angles, distances = max(float(view["steps"][0]), options.view_min_radius_m), [], []
+        return {"angles": [np.maximum(ridge["angles"], floor) for ridge in found], "distances": [ridge["distance_m"] for ridge in found], "ridges": found,
+                "ranges": [(ridge["near_m"], ridge["far_m"]) for ridge in found], "farthest_m": float(view["farthest"])}
+    nearest, angles, distances, ranges = max(float(view["steps"][0]), options.view_min_radius_m), [], [], []
     for far, *_ in specs:
         near = max((spec[0] for spec in specs if spec[0] < far), default=0.0)
         angles.append(np.maximum(band(view, near/100, far/100), floor))
         distances.append(math.sqrt(max(near/100*view["farthest"], nearest)*max(far/100*view["farthest"], nearest)))
-    return {"angles": angles, "distances": distances, "ridges": None}
+        far_m = float(far/100*view["farthest"])
+        ranges.append((min(far_m, max(near/100*view["farthest"], options.view_min_radius_m)), far_m))
+    return {"angles": angles, "distances": distances, "ridges": None, "ranges": ranges, "farthest_m": float(view["farthest"])}
 
 
 def view_heights(terrain, options, index=0):
@@ -667,6 +675,15 @@ def tick_marks(options, start, span, scale, y):
     return unary_union(ticks+labels), len(ticks)
 
 
+def cloud_panel(width, height):
+    """Connected cartoon-cloud silhouette with a flat base, printable as one panel."""
+    radius = min(width*.09, height*.24)
+    baseline = height-1.6*radius
+    puffs = [Point(width*x, baseline).buffer(radius*scale, quad_segs=24)
+             for x, scale in zip((0, .13, .29, .48, .68, .86, 1), (.9, 1.3, 1.05, 1.6, 1.1, 1.4, .9))]
+    return orient(unary_union([box(0, 0, width, baseline), *puffs]).intersection(box(0, 0, width, height)))
+
+
 def layout(terrain, options, sources=None):
     """Everything drawn or cut in 2D: each layer's body (with wall holes and stencil cuts), the front layer's text and
     markings, mount marks, the fit's parts, and warnings."""
@@ -696,10 +713,29 @@ def layout(terrain, options, sources=None):
             height = limit
         layers.append({"name": name, "position": position, "base": base, "color": color, "outline": outline, "body": outline, "thickness": thicknesses[index],
                        "distance_m": None if views is None else float(views["distances"][index]),
+                       "distance_range_m": None if views is None else views["ranges"][index], "kind": "terrain",
                        "points": points, "height": height, "lowest": float(points[:, 1].min()), "span_m": span, "start_m": start, "scale": scale})
     palette = distance_palette(options, len(layers)) if by_color(options) else None
     for layer, color in zip(layers, palette or []):
         layer["color"] = color
+    if options.clouds:
+        rear = layers[-1]
+        step = rear["base"]-layers[-2]["base"]
+        cloud_base = min(120, rear["base"]+max(0, step))
+        terrain_height = max(layer["height"] for layer in layers)
+        cloud_height = max(terrain_height+width*.16, cloud_base+width*.12)
+        if limit is not None:
+            cloud_height = min(cloud_height, limit)
+            if cloud_height-terrain_height < width*.08:
+                warnings.append("The box leaves little sky above the terrain for clouds. Lower the vertical scale or use a taller box.")
+        cloud = cloud_panel(width, cloud_height)
+        rear["name"] = rear["name"].replace(" (back)", "")
+        layers.append({**rear, "name": f"Layer {len(layers)+1} · Clouds (back)", "kind": "cloud", "position": None,
+                       "base": cloud_base, "color": options.cloud_color, "outline": cloud, "body": cloud,
+                       "thickness": rear["thickness"], "distance_m": None, "distance_range_m": None,
+                       "points": np.asarray(cloud.exterior.coords), "height": cloud_height, "lowest": cloud_base})
+        check_thickness(options, [layer["thickness"] for layer in layers])
+        notes.append("Clouds are a decorative rear panel, not mapped terrain; the base includes an extra slot for it.")
     zones = None
     if options.color_zones:
         piece, zones = zone_layout(layers)
@@ -830,6 +866,7 @@ def layout(terrain, options, sources=None):
             "mounts": mounts+peg_marks+([pin] if pin else []), "pegs": peg_marks, "pin": pin, "ticks": ticks, "fit": fit,
             "warnings": warnings, "notes": notes, "width": width, "height": max(layer["height"] for layer in layers),
             "lowest": front["lowest"], "span_m": front["span_m"], "ridges": views["ridges"] if views else None,
+            "view_farthest_m": None if views is None else views["farthest_m"],
             "zones": zones, "colors": colors, "fit_color": fit_color}
 
 
@@ -925,9 +962,10 @@ def outline_json(terrain, options, sources=None):
     assembly, plus size and hints. No solids are built here: it answers every slider move."""
     shapes = layout(terrain, options, sources)
     fit = shapes["fit"]
-    layers = [{"name": layer["name"], "outline": largest(layer["outline"]), "color": layer["color"], "position": layer["position"],
+    layers = [{"name": layer["name"], "outline": largest(layer["outline"]), "color": layer["color"], "position": layer["position"], "kind": layer["kind"],
                "base_mm": layer["base"], "height_mm": round(layer["height"], 3), "thickness_mm": layer["thickness"], **placement,
-               **({} if layer["distance_m"] is None else {"distance_m": round(layer["distance_m"], 1)})}
+               **({} if layer["distance_m"] is None else {"distance_m": round(layer["distance_m"], 1),
+                                                          "distance_range_m": [round(value, 1) for value in layer["distance_range_m"]]})}
               for layer, placement in zip(shapes["layers"], fit["placements"])]
     return {"outline": largest(shapes["outline"]), "text": rings(shapes["text"]), "markings": rings(shapes["markings"]),
             "text_style": options.text_style, "mount": shapes["mounts"], "layers": layers,
@@ -937,6 +975,7 @@ def outline_json(terrain, options, sources=None):
                        **({} if zone["distance_m"] is None else {"distance_m": round(zone["distance_m"], 1)})} for zone in shapes["zones"] or []],
             "colors": shapes["colors"],
             "ridges": [{"distance_m": round(ridge["distance_m"], 1), "coverage": round(ridge["coverage"], 3)} for ridge in shapes["ridges"] or []],
+            "view_farthest_m": None if shapes["view_farthest_m"] is None else round(shapes["view_farthest_m"], 1),
             "min_profile_mm": round(shapes["lowest"], 3), "slice_length_m": round(shapes["span_m"], 2), "ticks": shapes["ticks"],
             "profile": options.source if options.source in ("route", "ridgeline", "viewpoint") else "slice", "points": len(shapes["points"]),
             "warnings": shapes["warnings"], "notes": shapes["notes"]}

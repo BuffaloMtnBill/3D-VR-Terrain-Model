@@ -293,7 +293,9 @@ adds parametric add-ons to the printed model: holes, nail markers, pencil holder
 slots, pockets, coaster recesses, stand grooves, magnet pockets and wall hangers in the
 underside, plaques (flatten, level or raise a pad, with optional engraved or raised text),
 and text labels. Sizes are millimeters of the exported model. "Print as is" (a project
-without add-ons) exports exactly as before.
+without add-ons) exports exactly as before. The **Start from** card's preview turns the model slowly in 3D (drag to
+orbit): point at a template, or Tab to it, to see its add-ons placed without changing the project;
+otherwise it shows the active project.
 
 Its right column holds the **Colors** card: the surface palette (Alpine, Earth, Desert,
 Print), the Print palette's six surface colors with the surface-map status and color count,
@@ -427,7 +429,9 @@ four hex colors, nearest first), and `color_zones`; outlines add `zones` (each w
 **Start from** at the top of the left panel sets everything a design needs; **Custom** is the plain
 piece above. Each preset keeps your slice, caption, and colors where they still make sense and shows
 its own settings below the picker. Every size is editable: **measure your lamp's slot and your box's
-inside** and type them in.
+inside** and type them in. Under the picker, a **preview** turns the design slowly in 3D (drag to orbit): point at a preset, or
+Tab to it, to see it built from your current slice and settings without applying it; otherwise it shows
+your current design, with its size and number of layers below.
 
 **Glow lamps** stand in an LED lamp base, the kind with a slot on top that lights a panel from its
 edge. They share a **lamp-base fit**: slot width (4.0 mm), length (160 mm), depth (8 mm), and
@@ -444,6 +448,14 @@ itself may be wider than the slot. Checks warn when the piece is narrower than t
   6 mm apart with at least 1.2 mm between them, 5 mm deep (the caption stays above them), and each panel's base is a step (8 mm) higher
   than the one in front so rear ridges rise above front ones. Print the panels translucent, the front
   darkest; print the comb base clear.
+  Beneath the layer options, a number line shows slice locations or shaded
+  viewpoint distance groups, with each layer's color, distance, and thickness.
+  Ridge groups are approximate; decorative layers are labelled separately.
+  **Puffy clouds behind the terrain** adds a rounded cartoon-cloud panel as
+  the final rear layer, with a selectable color. The lamp base or shadow-box
+  spacer combs include its extra slot; it is a separate printable part in the
+  STL ZIP and 3MF. Clouds do not count toward the terrain-layer count and are
+  available for separate layered lamp/box designs.
 - **Skyline night-light:** a slice through town that **includes buildings**: along the slice, the
   profile rises to the tallest mapped building within a corridor (30 m wide), standing on its lowest
   ground. Turn on the Buildings map layer and let it load first. Shaped heights, a stencil name, and

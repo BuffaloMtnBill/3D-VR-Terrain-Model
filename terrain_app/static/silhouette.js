@@ -9,6 +9,7 @@
  */
 import * as THREE from 'three';
 import {OrbitControls} from './vendor/OrbitControls.js';
+import {createTurntable} from './turntable.js';
 
 const $=id=>document.getElementById(id);
 const STORE_PREFIX='terrain-silhouette:v1:';
@@ -36,21 +37,21 @@ const CHOICES={source:['silhouette-source',['true','shaped','route','ridgeline',
   text_align:['silhouette-text-align',['left','center','right']],mount:['silhouette-mount',['none','stand','holes','keyholes']]};
 const CHECKS={mirror:'silhouette-mirror',include_buildings:'silhouette-buildings',ticks:'silhouette-ticks',start_finish:'silhouette-start-finish',
   summit_pin:'silhouette-pin',photo_slot:'silhouette-photo',led_channel:'silhouette-led',thickness_by_distance:'silhouette-thickness-distance',
-  color_by_distance:'silhouette-color-distance'};
+  color_by_distance:'silhouette-color-distance',clouds:'silhouette-clouds'};
 const DISTANCE_IDS=[1,2,3,4].map(index=>`silhouette-distance-color-${index}`);
-const COLORS={text_color:'silhouette-text-color',body_color:'silhouette-body-color'};
+const COLORS={text_color:'silhouette-text-color',body_color:'silhouette-body-color',cloud_color:'silhouette-cloud-color'};
 const DEFAULTS={width_mm:180,vertical_scale:2,base_mm:8,thickness_mm:4,smoothing:0,text_size:5,text_depth:.8,hole_diameter:4,source:'true',
   text_style:'engrave',text_align:'center',mount:'none',mirror:false,trim:[0,100],text:'',text_color:'#f0ead6',body_color:'#234e40',
   preset:'custom',fit:'none',slot_width:4,slot_length:160,slot_depth:8,slot_clearance:.2,box_width:200,box_height:150,box_depth:40,
   layer_count:1,layer_positions:[],layer_step:6,layer_spacing:6,include_buildings:false,building_corridor_m:30,ticks:false,tick_every:1,
   start_finish:false,peg_count:0,peg_diameter:6,peg_length:20,summit_pin:false,pin_diameter:1.8,pin_depth:10,photo_slot:false,photo_gap:1,
   led_channel:false,led_width:5,led_depth:2,race_kind:'running',finish_time:'',thickness_by_distance:false,thickness_near_mm:3,thickness_far_mm:1.5,
-  color_by_distance:false,distance_colors:['#234e40','#678272','#acb6a4','#f0ead6'],color_zones:false};
+  color_by_distance:false,distance_colors:['#234e40','#678272','#acb6a4','#f0ead6'],color_zones:false,clouds:false,cloud_color:'#f0ead6'};
 // What a preset decides: choosing another preset (or Custom) resets these before applying its own. Slice, caption, colors, and the
 // lamp and box measurements are kept.
 const PRESET_OWNED=['fit','layer_count','layer_positions','layer_step','layer_spacing','include_buildings','ticks','tick_every','start_finish',
   'peg_count','summit_pin','photo_slot','led_channel','mount','text_style','text_depth','text_size','thickness_mm','base_mm','thickness_by_distance',
-  'thickness_near_mm','thickness_far_mm','color_zones'];
+  'thickness_near_mm','thickness_far_mm','color_zones','clouds'];
 const CLIENT_ONLY=['layer_count','layer_positions','layer_step','race_kind','finish_time'];
 const MOUNT_HINTS={none:'',stand:'Two feet print beside the piece, each with a slot the thickness plus 0.2 mm wide; the piece stands upright in them.',
   holes:'Two holes through the base, for nails or screws.',keyholes:'Slide the piece down onto two screw heads. Keyholes need about 14 mm of height at each end.'};
@@ -82,15 +83,17 @@ const longDate=date=>new Date(`${date}T12:00:00`).toLocaleDateString(undefined,{
 
 export function createSilhouette(ctx) {
   const dialog=$('silhouette');
-  let settings=structuredClone(DEFAULTS),storeKey=null,result=null,timer=null,request=null,view='front',busy=false,three=null,followed=null;
-  const preset=()=>PRESETS.presets[settings.preset]||PRESETS.presets.custom;
+  let settings=structuredClone(DEFAULTS),storeKey=null,result=null,resultKey=null,timer=null,request=null,view='front',busy=false,three=null,followed=null;
+  // These read the current settings, or a candidate's (s) when the Start from preview shows a preset before it is applied.
+  const preset=(s=settings)=>PRESETS.presets[s.preset]||PRESETS.presets.custom;
   // One piece in color zones: a viewpoint's ridges (or bands) on one base strip, each zone its own color; not in a shadow box.
-  const zonesAllowed=()=>settings.source==='viewpoint'&&drawn('viewpoint')&&settings.layer_count>1&&settings.fit!=='box';
-  const zoned=()=>settings.color_zones&&zonesAllowed();
-  const layered=()=>settings.layer_count>1&&(settings.fit!=='none'||zoned());
-  const distanceColored=()=>settings.color_by_distance||zoned();
+  const zonesAllowed=(s=settings)=>s.source==='viewpoint'&&drawn('viewpoint')&&s.layer_count>1&&s.fit!=='box';
+  const zoned=(s=settings)=>s.color_zones&&zonesAllowed(s);
+  const layered=(s=settings)=>s.layer_count>1&&(s.fit!=='none'||zoned(s));
+  const distanceColored=(s=settings)=>s.color_by_distance||zoned(s);
   // Thicker when closer applies to a viewpoint's layers only.
   const byDistance=()=>layered()&&settings.thickness_by_distance&&settings.source==='viewpoint';
+  const cloudsAllowed=(s=settings)=>layered(s)&&!zoned(s)&&['lamp','box'].includes(s.fit);
 
   // ---------- settings: per framed area, like the 3D model design page's projects ----------
   function areaKey() {
@@ -227,6 +230,9 @@ export function createSilhouette(ctx) {
     $('silhouette-thickness').disabled=byDistance();
     // A viewpoint's layers are set by distance (bands or detected ridges), not by slice positions.
     $('silhouette-layer-positions').disabled=viewpoint;
+    $('silhouette-clouds').disabled=!cloudsAllowed();
+    $('silhouette-cloud-color').disabled=!cloudsAllowed()||!settings.clouds;
+    $('silhouette-cloud-hint').textContent=cloudsAllowed()?'Adds a separate cartoon-cloud panel and a rear slot in the base.':'Clouds need separate layers in a lamp base or shadow box.';
     $('silhouette-layer-hint').textContent=zoned()?'One piece: each zone is what of a ridge (or band) shows above the nearer ones, all on one base strip; the nearest zone holds the caption.'
       :`Each layer's base is a step higher than the one in front, so every ridge shows. The front layer is ${viewpoint?'the nearest to the viewpoint':'the frame\'s near side'}.`;
     $('silhouette-thickness-hint').textContent=!viewpoint?'Thicker when closer needs the viewpoint skyline as the heights; until then every layer is the Shape thickness.'
@@ -239,50 +245,58 @@ export function createSilhouette(ctx) {
       ?`Route: ${route.name} · ${number(route.distance_m/u.distance,1)} ${u.distanceLabel}${route.has_elevation===false?' · no GPX elevations, so the terrain is sampled (the whole route must be framed)':''}`
       :'Upload a GPX route on the geography selection page to use its elevation profile. Until then the slice is used.';
     document.querySelectorAll('[data-race-kind]').forEach(button=>{const active=button.dataset.raceKind===settings.race_kind;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));});
-    const parts=(layered()&&!zoned()?settings.layer_count:1)+(settings.fit==='lamp'&&layered()&&!zoned()?1:settings.fit==='box'?2:0);
+    const parts=(layered()&&!zoned()?settings.layer_count:1)+(cloudsAllowed()&&settings.clouds?1:0)+(settings.fit==='lamp'&&layered()&&!zoned()?1:settings.fit==='box'?2:0);
     $('silhouette-stl-note').textContent=parts>1?`A ZIP of ${parts} STL parts`:'One solid, lying flat';
+    renderLayerLine();
   }
   // Layer positions spread across the frame, front (the near side) first: looking north at a west → east slice the near side
   // is the south (high %), looking east at a north → south slice it is the west (low %); mirroring turns the view around.
-  function spread(count) {
-    const rule=preset().rules?.layers||{low:25,high:75};
+  function spread(count,s=settings) {
+    const rule=preset(s).rules?.layers||{low:25,high:75};
     const values=Array.from({length:count},(_,index)=>count===1?(rule.low+rule.high)/2:rule.low+(rule.high-rule.low)*index/(count-1));
-    const nearHigh=($('profile-direction').value==='ew')!==settings.mirror;
+    const nearHigh=($('profile-direction').value==='ew')!==s.mirror;
     return (nearHigh?values.reverse():values).map(value=>round(value,1));
   }
   // Front darkest, back palest (the body color fading toward paper); by distance, contiguous groups take the distance colors, as the server does.
-  const layerColors=count=>Array.from({length:count},(_,index)=>distanceColored()?settings.distance_colors[Math.floor(index*Math.min(count,4)/count)]
-    :count>1?mix(settings.body_color,'#f3eedf',index/(count-1)*.72):settings.body_color);
-  function caption(kind) {
+  const layerColors=(count,s=settings)=>Array.from({length:count},(_,index)=>distanceColored(s)?s.distance_colors[Math.floor(index*Math.min(count,4)/count)]
+    :count>1?mix(s.body_color,'#f3eedf',index/(count-1)*.72):s.body_color);
+  function caption(kind,s=settings) {
     const route=ctx.route,u=ctx.units(),date=route?.date?longDate(route.date):'';
     const name=(route?.name||placeName()||'').slice(0,60);
     if(kind==='route')return cleanText([name,date].filter(Boolean).join('\n'));
     if(kind==='stats')return cleanText((route?[name,`${number(route.distance_m/u.distance,1)} ${u.distanceLabel} · ${number(route.gain_m*u.height,0)} ${u.label} climbed`,date]:[name]).filter(Boolean).join('\n'));
     if(kind==='names')return `YOUR NAMES\n${longDate(new Date().toISOString().slice(0,10)).toUpperCase()}`;
-    if(kind==='race')return cleanText([route?.name||'RACE NAME',date,settings.finish_time].filter(Boolean).join('\n'));
-    return settings.text;
+    if(kind==='race')return cleanText([route?.name||'RACE NAME',date,s.finish_time].filter(Boolean).join('\n'));
+    return s.text;
   }
   // A route profile's vertical scale: its climb about 50 mm tall (less in a short box) at the piece's width.
-  function routeScale() {
+  function routeScale(s=settings) {
     const route=ctx.route;
     if(!route?.elevation_range_m||!route.distance_m)return null;
-    const width=settings.fit==='box'?settings.box_width-1:settings.width_mm;
-    const target=settings.fit==='box'?Math.min(50,settings.box_height-COMB_FLOOR-settings.base_mm-10):Math.min(50,width*.25);
+    const width=s.fit==='box'?s.box_width-1:s.width_mm;
+    const target=s.fit==='box'?Math.min(50,s.box_height-COMB_FLOOR-s.base_mm-10):Math.min(50,width*.25);
     return clamp(round(target/(route.elevation_range_m*width/route.distance_m),1),.5,100);
   }
+  // The settings a preset gives, from these (base) settings: a new object, so the Start from preview can show a preset unapplied.
+  function presetSettings(id,base=settings) {
+    const chosen=PRESETS.presets[id]||PRESETS.presets.custom,rules=chosen.rules||{},s=structuredClone(base);
+    for(const name of PRESET_OWNED)s[name]=structuredClone(DEFAULTS[name]);
+    if(s.source==='route'||(s.source==='shaped'&&s.preset==='glow-skyline'))s.source='true';
+    Object.assign(s,structuredClone(chosen.settings||{}),{preset:id});
+    if(rules.tab_thickness)s.thickness_mm=round(clamp(s.slot_width-s.slot_clearance,1.2,30));
+    if(rules.layers){s.layer_count=rules.layers.count;s.layer_step=rules.layers.step;s.layer_positions=spread(rules.layers.count,s);}
+    if(rules.distance_thickness)s.thickness_by_distance=s.source==='viewpoint';
+    // A layered viewpoint design takes one layer per detected ridge (as followRidges does once applied).
+    const plan=ridgePlan(s);
+    if(plan?.ridges&&s.layer_count!==plan.count){s.layer_count=plan.count;s.layer_positions=spread(plan.count,s);}
+    if(s.fit==='box')s.width_mm=clamp(s.box_width-1,40,400);
+    if(id==='race')s.tick_every=s.race_kind==='cycling'?10:1;
+    if(s.source==='route'){const scale=routeScale(s);if(scale)s.vertical_scale=scale;}
+    if(rules.caption)s.text=caption(rules.caption,s);
+    return s;
+  }
   function applyPreset(id) {
-    const chosen=PRESETS.presets[id]||PRESETS.presets.custom,rules=chosen.rules||{};
-    for(const name of PRESET_OWNED)settings[name]=structuredClone(DEFAULTS[name]);
-    if(settings.source==='route'||(settings.source==='shaped'&&settings.preset==='glow-skyline'))settings.source='true';
-    Object.assign(settings,structuredClone(chosen.settings||{}),{preset:id});
-    if(rules.tab_thickness)settings.thickness_mm=round(clamp(settings.slot_width-settings.slot_clearance,1.2,30));
-    if(rules.layers){settings.layer_count=rules.layers.count;settings.layer_step=rules.layers.step;settings.layer_positions=spread(rules.layers.count);}
-    if(rules.distance_thickness)settings.thickness_by_distance=settings.source==='viewpoint';
-    followed=null;followRidges(false);
-    if(settings.fit==='box')settings.width_mm=clamp(settings.box_width-1,40,400);
-    if(id==='race')settings.tick_every=settings.race_kind==='cycling'?10:1;
-    if(settings.source==='route'){const scale=routeScale();if(scale)settings.vertical_scale=scale;}
-    if(rules.caption)settings.text=caption(rules.caption);
+    settings=presetSettings(id);followed=null;followRidges(false);
     writeForm();save();if(three)three.fitted=false;schedule();
   }
   function buildPresetList() {
@@ -290,7 +304,7 @@ export function createSilhouette(ctx) {
     const button=(id,parent)=>{
       const item=document.createElement('button');item.type='button';item.className='silhouette-preset';item.dataset.silhouettePreset=id;
       item.setAttribute('role','radio');item.textContent=PRESETS.presets[id].name;item.title=PRESETS.presets[id].summary||'';
-      item.addEventListener('click',()=>{if(settings.preset!==id)applyPreset(id);});parent.append(item);
+      item.addEventListener('click',()=>{if(settings.preset!==id)applyPreset(id);updatePreview();});wirePreview(item,id);parent.append(item);
     };
     const custom=document.createElement('div');custom.className='silhouette-preset-group';list.append(custom);button('custom',custom);
     for(const group of PRESETS.groups) {
@@ -304,9 +318,9 @@ export function createSilhouette(ctx) {
   function drawn(mode) {const shown=ctx.profile?.settings.mode==='viewridge'?'viewpoint':ctx.profile?.settings.mode;return ['ridgeline','viewpoint'].includes(mode)&&shown===mode&&ctx.profile.ready;}
   // A layered viewpoint design with ridges detected on the geography page: one layer per ridge, as many as the preset allows.
   // Fewer ridges than the preset's minimum: distance bands instead (ridges is false).
-  function ridgePlan() {
-    const profile=ctx.profile?.settings,rule=preset().rules?.layers;
-    if(!rule||!layered()||settings.source!=='viewpoint'||!drawn('viewpoint')||!profile.ridges||!profile.found?.length)return null;
+  function ridgePlan(s=settings) {
+    const profile=ctx.profile?.settings,rule=preset(s).rules?.layers;
+    if(!rule||!layered(s)||s.source!=='viewpoint'||!drawn('viewpoint')||!profile.ridges||!profile.found?.length)return null;
     const found=profile.found.length,count=clamp(found,rule.min||2,rule.max||7);
     return {found,count,ridges:found>=count,min:rule.min||2,max:rule.max||7};
   }
@@ -319,25 +333,26 @@ export function createSilhouette(ctx) {
     followed=key;
     if(settings.layer_count!==plan.count){settings.layer_count=plan.count;settings.layer_positions=spread(plan.count);if(store){writeForm();save();}}
   }
-  function requestBody(extra={}) {
-    const opts=ctx.options(),body={...structuredClone(settings),trim:[...settings.trim],direction:$('profile-direction').value,
+  function requestBody(extra={},s=settings) {
+    const opts=ctx.options(),body={...structuredClone(s),trim:[...s.trim],direction:$('profile-direction').value,
       position:Number($('profile-position').value),relief:opts.relief,relief_strength:opts.relief_strength,units:ctx.state.units==='m'?'m':'ft'};
     for(const name of CLIENT_ONLY)delete body[name];
-    body.color_zones=zoned();
-    if(layered()) {
-      const colors=layerColors(settings.layer_count);
-      body.layers=settings.layer_positions.slice(0,settings.layer_count).map((position,index)=>({position,base_mm:Math.min(120,settings.base_mm+index*settings.layer_step),color:colors[index]}));
+    body.color_zones=zoned(s);
+    body.clouds=s.clouds&&cloudsAllowed(s);
+    if(layered(s)) {
+      const colors=layerColors(s.layer_count,s);
+      body.layers=s.layer_positions.slice(0,s.layer_count).map((position,index)=>({position,base_mm:Math.min(120,s.base_mm+index*s.layer_step),color:colors[index]}));
     }
-    if(settings.source==='route'){if(ctx.route)body.route_id=ctx.route.id;else body.source='true';}
-    if(['ridgeline','viewpoint'].includes(settings.source)) {
+    if(s.source==='route'){if(ctx.route)body.route_id=ctx.route.id;else body.source='true';}
+    if(['ridgeline','viewpoint'].includes(s.source)) {
       const profile=ctx.profile?.settings;
-      if(!drawn(settings.source))body.source='true';
-      else if(settings.source==='ridgeline')Object.assign(body,{ridge_start:profile.start,ridge_end:profile.end});
+      if(!drawn(s.source))body.source='true';
+      else if(s.source==='ridgeline')Object.assign(body,{ridge_start:profile.start,ridge_end:profile.end});
       else {
         Object.assign(body,{view_point:profile.point,view_bearing:profile.bearing,view_fov:profile.fov,view_eye_m:profile.eye_m,view_min_radius_m:profile.min_radius_m||0});
         // A viewpoint's layers are its detected ridges (the server ignores their positions), or distance bands, nearer bands
         // narrower (as profiles.band_edges), nearest at the front.
-        if(ridgePlan()?.ridges)body.view_ridges=true;
+        if(ridgePlan(s)?.ridges)body.view_ridges=true;
         if(body.layers)body.layers.forEach((layer,index,all)=>{layer.position=Math.round(((index+1)/all.length)**2*1000)/10;});
       }
     }
@@ -367,32 +382,41 @@ export function createSilhouette(ctx) {
   }
 
   // ---------- outline requests ----------
-  function schedule() {clearTimeout(timer);timer=setTimeout(refresh,120);}
+  function schedule() {renderLayerLine();clearTimeout(timer);timer=setTimeout(refresh,120);}
   async function refresh() {
     if(!dialog.open||!ctx.state.id)return;
     request?.abort();
-    const controller=request=new AbortController();
+    const controller=request=new AbortController(),body=requestBody();
     try {
-      const response=await postJSON(`/api/silhouette/${ctx.state.id}/outline`,requestBody(),controller.signal);
+      const response=await postJSON(`/api/silhouette/${ctx.state.id}/outline`,body,controller.signal);
       if(!response.ok)throw new Error(await errorMessage(response));
       result=await response.json();
       if(controller!==request)return;
-      draw();rebuild3d();renderChecks();sliceLabel();
+      resultKey=JSON.stringify(body);
+      remember(body,result);
+      draw();rebuild3d();renderChecks();sliceLabel();previewCurrent();
     } catch(error) {
       if(error.name==='AbortError')return;
-      renderChecks(error.message);
+      renderChecks(error.message);previewCurrent(error.message);
     }
   }
+  // Size and parts in a few words: 170 × 82 × 1.5–3 mm, and 3 layers (or zones).
+  function designSize(data) {
+    const thicknesses=(data.zones?.length?data.zones:data.layers).map(layer=>layer.thickness_mm),thinnest=Math.min(...thicknesses),thickest=Math.max(...thicknesses);
+    return `${number(data.width_mm)} × ${number(data.height_mm)} × ${thinnest===thickest?number(thickest):`${number(thinnest)}–${number(thickest)}`} mm`;
+  }
+  const pieceWords=data=>data.zones?.length?`1 piece · ${data.zones.length} color zones`:data.layers.length>1?`${data.layers.length} layers`:'1 piece';
   function partsSummary() {
     const parts=result.parts,layers=parts.filter(part=>/^(Layer|Silhouette)/.test(part.name)).length,zones=result.zones?.length||0;
-    const words=[zones?`1 piece in ${zones} color zone${zones>1?'s':''}`:layers===1?'1 piece':`${layers} layers`];
+    const clouds=result.layers.some(layer=>layer.kind==='cloud');
+    const words=[zones?`1 piece in ${zones} color zone${zones>1?'s':''}`:clouds?`${layers-1} terrain layers, cloud background`:layers===1?'1 piece':`${layers} layers`];
     for(const part of parts.filter(part=>!/^(Layer|Silhouette)/.test(part.name)))words.push(part.count>1?`${part.count} ${part.name.toLowerCase()}s`:part.name.toLowerCase());
     return `Parts: ${words.join(', ')}`;
   }
   function renderChecks(error=null) {
     const list=$('silhouette-check-list'),box=$('silhouette-checks');list.replaceChildren();
     const add=(level,text)=>{const item=document.createElement('li');item.className=level;item.textContent=text;list.append(item);};
-    if(error){add('error',error);box.dataset.level='error';return;}
+    if(error){add('error',error);box.dataset.level='error';resultKey=null;renderLayerLine();return;}
     if(!result)return;
     result.warnings.forEach(warning=>add('warning',warning));
     (result.notes||[]).forEach(note=>add('note',note));
@@ -405,8 +429,7 @@ export function createSilhouette(ctx) {
       if(plan.found>plan.count)add('note',`The geography page found ${plan.found} ridges; this design holds at most ${plan.max} layers, so they are grouped into ${plan.count}.`);
     } else if(plan)add('note',`Only ${plan.found} ridge${plan.found>1?'s were':' was'} detected; this design needs at least ${plan.min} layers, so it uses distance bands. Lower Beyond or face toward more mountains.`);
     else if(settings.source==='viewpoint'&&layered())add('note','Each layer is a distance band of the view, nearest ridges at the front; layer positions are set from the bands.');
-    const thicknesses=(result.zones?.length?result.zones:result.layers).map(layer=>layer.thickness_mm),thinnest=Math.min(...thicknesses),thickest=Math.max(...thicknesses);
-    const size=`${number(result.width_mm)} × ${number(result.height_mm)} × ${thinnest===thickest?number(thickest):`${number(thinnest)}–${number(thickest)}`} mm`;
+    const size=designSize(result);
     add(result.warnings.length?'note':'ok',`${size} · lowest point ${number(result.min_profile_mm)} mm tall`);
     if(settings.mount==='stand')add('note','The stand feet print beside the piece in the same file.');
     box.dataset.level=result.warnings.length?'warning':'ok';
@@ -439,6 +462,43 @@ export function createSilhouette(ctx) {
       const away=layer.distance_m/u.distance,where=layer.distance_m===undefined?'':` · ${result.ridges.length?'ridge':'band'} ${number(away,away<.1?2:1)} ${u.distanceLabel}`;
       item.append(swatch,`${layer.name}${where} · ${layer.thickness_mm.toFixed(1)} mm`);rows.append(item);
     }
+    renderLayerLine();
+  }
+
+  function renderLayerLine() {
+    const root=$('silhouette-layer-axis'),hint=$('silhouette-layer-axis-hint'),cloudKey=$('silhouette-cloud-key');
+    root.replaceChildren();cloudKey.replaceChildren();cloudKey.hidden=true;
+    if(!preset().fields?.includes('layers'))return;
+    if(!result||resultKey!==JSON.stringify(requestBody())){hint.textContent='Updating the layer regions…';return;}
+    const layers=result.layers.filter(layer=>layer.kind!=='cloud'),u=ctx.units();
+    const distance=result.profile==='viewpoint'&&Number.isFinite(result.view_farthest_m)&&result.view_farthest_m>0;
+    const maximum=distance?result.view_farthest_m:100;
+    const x=value=>16+208*clamp(value/maximum,0,1);
+    const label=value=>distance?`${number(value/u.distance,value/u.distance<.1?2:1)} ${u.distanceLabel}`:`${number(value)}%`;
+    root.setAttribute('viewBox',`0 0 240 ${52+layers.length*27}`);
+    root.setAttribute('aria-label',distance?'Shaded terrain distance ranges, nearest layer first':'Slice positions across the frame, front layer first');
+    svg('title',{},root).textContent=distance?'Terrain distance from the viewpoint':'Slice position across the frame';
+    svg('line',{x1:16,x2:224,y1:23,y2:23,class:'layer-axis-tick'},root);
+    for(let index=0;index<=4;index++){
+      const value=maximum*index/4;
+      svg('line',{x1:x(value),x2:x(value),y1:19,y2:27,class:'layer-axis-tick'},root);
+      svg('text',{x:x(value),y:12,'text-anchor':index===0?'start':index===4?'end':'middle'},root).textContent=label(value);
+    }
+    layers.forEach((layer,index)=>{
+      const y=45+index*27;
+      svg('rect',{x:16,y,width:208,height:11,rx:2,class:'layer-axis-track'},root);
+      const value=distance?layer.distance_m:layer.position,range=distance?layer.distance_range_m:null;
+      const start=range?.[0]??value,end=range?.[1]??value;
+      const region=svg('rect',{x:range?x(start):x(value)-2,y,width:range?Math.max(0,x(end)-x(start)):4,height:11,rx:1,
+        fill:layer.color,'fill-opacity':.85,'data-layer':index+1,'data-start':start,'data-end':end},root);
+      const empty=range&&end<=start;
+      if(!empty)svg('circle',{cx:x(value),cy:y+5.5,r:3,fill:layer.color,stroke:'#fff0c3','stroke-width':1},root);
+      svg('title',{},region).textContent=`Layer ${index+1}${index===0?' (front)':''}: ${range?`${label(start)}–${label(end)}`:label(value)} · ${layer.thickness_mm.toFixed(1)} mm`;
+      svg('text',{x:16,y:y+22},root).textContent=`L${index+1}${index===0?' · front':''} · ${empty?'outside distance limit':label(value)} · ${layer.thickness_mm.toFixed(1)} mm`;
+    });
+    hint.textContent=distance?(result.ridges.length?'Shading shows approximate ridge distance groups; dots mark ridge distances.':'Shading shows distance bands; dots mark their representative distances.'):'Markers show slice positions across the frame; rows run front to back.';
+    const cloud=result.layers.find(layer=>layer.kind==='cloud');
+    if(cloud){cloudKey.hidden=false;const swatch=document.createElement('i');swatch.style.background=cloud.color;cloudKey.append(swatch,'Clouds · decorative rear panel');}
   }
 
   // ---------- front view: the design to scale, layers overlapped front to back as assembled ----------
@@ -518,12 +578,9 @@ export function createSilhouette(ctx) {
     shape.holes=polygon.holes.map(ring=>new THREE.Path(ring.map(([x,y])=>new THREE.Vector2(x,y))));
     return shape;
   }
-  function rebuild3d(fit=false) {
-    if(view!=='3d'||!three||!result)return;
-    const group=three.group;
-    group.traverse(child=>{child.geometry?.dispose();child.material?.dispose();});
-    group.clear();
-    const depth=settings.text_depth,material=color=>new THREE.MeshStandardMaterial({color,roughness:.85});
+  // The assembled design from an outline result, built into a group: the 3D view's and the Start from preview's (s: their settings).
+  function fillDesign(group,result,s=settings) {
+    const depth=s.text_depth,material=color=>new THREE.MeshStandardMaterial({color,roughness:.85});
     const extrude=(parent,shapes,amount,z,color)=>{
       const geometry=new THREE.ExtrudeGeometry(shapes,{depth:amount,bevelEnabled:false,curveSegments:4});geometry.translate(0,0,z);
       parent.add(new THREE.Mesh(geometry,material(color)));
@@ -533,50 +590,57 @@ export function createSilhouette(ctx) {
       const mesh=new THREE.Mesh(geometry,material(color));if(opacity<1){mesh.material.transparent=true;mesh.material.opacity=opacity;}
       group.add(mesh);
     };
-    const wire=(x0,y0,z0,x1,y1,z1,color)=>{
+    const outlineBox=(x0,y0,z0,x1,y1,z1,color)=>{
       const geometry=new THREE.EdgesGeometry(new THREE.BoxGeometry(x1-x0,y1-y0,z1-z0));geometry.translate((x0+x1)/2,(y0+y1)/2,(z0+z1)/2);
       group.add(new THREE.LineSegments(geometry,new THREE.LineBasicMaterial({color,transparent:true,opacity:.45})));
     };
     const box=result.fit,layers=result.layers,W=result.width_mm;
     // Placements: each layer's bottom (y) and back face (z), each at its own thickness; a design without a fit stands with its middle at z = 0.
-    const thickness=layer=>layer.thickness_mm??settings.thickness_mm,shift=box.kind==='none'?-thickness(layers[0])/2:0;
+    const thickness=layer=>layer.thickness_mm??s.thickness_mm,shift=box.kind==='none'?-thickness(layers[0])/2:0;
     layers.forEach((layer,index)=>{
       const T=thickness(layer),piece=new THREE.Group();piece.position.set(0,layer.y,layer.z+shift);group.add(piece);
       // Color zones stand from the shared flat back, each at its own thickness, so thicker-when-closer shows as steps.
       if(!index&&result.zones?.length)result.zones.forEach(zone=>extrude(piece,zone.polygons.map(shapeOf),zone.thickness_mm,0,zone.color));
-      else extrude(piece,[shapeOf(index?layer.outline:result.outline)],T,0,layers.length>1||distanceColored()?layer.color:settings.body_color);
+      else extrude(piece,[shapeOf(index?layer.outline:result.outline)],T,0,layers.length>1||distanceColored(s)?layer.color:s.body_color);
       if(index)return;
       if(result.text.length) {
         const shapes=result.text.map(shapeOf);
-        if(result.text_style==='emboss')extrude(piece,shapes,depth,T,settings.text_color);
-        else if(result.text_style==='engrave')extrude(piece,shapes,depth,T-depth+.02,settings.text_color);
+        if(result.text_style==='emboss')extrude(piece,shapes,depth,T,s.text_color);
+        else if(result.text_style==='engrave')extrude(piece,shapes,depth,T-depth+.02,s.text_color);
         else extrude(piece,shapes,T+.1,-.05,'#101b14');  // cut through: shown as an opening
       }
-      if(result.markings?.length)extrude(piece,result.markings.map(shapeOf),.6,T-.58,settings.text_color);
+      if(result.markings?.length)extrude(piece,result.markings.map(shapeOf),.6,T-.58,s.text_color);
       for(const peg of result.mount.filter(item=>item.kind==='peg')) {
         const geometry=new THREE.CylinderGeometry(peg.d/2,peg.d/2,peg.length,24);geometry.rotateX(Math.PI/2);geometry.translate(peg.x,peg.y,T+peg.length/2);
-        piece.add(new THREE.Mesh(geometry,material(settings.body_color)));
+        piece.add(new THREE.Mesh(geometry,material(s.body_color)));
       }
     });
     const fitColor='#c8b48a';
-    if(box.tab&&layers.length===1)block(box.tab.x0,box.tab.y0,-box.tab.thickness/2,box.tab.x1,0,box.tab.thickness/2,layers[0].color||settings.body_color);
+    if(box.tab&&layers.length===1)block(box.tab.x0,box.tab.y0,-box.tab.thickness/2,box.tab.x1,0,box.tab.thickness/2,layers[0].color||s.body_color);
     if(box.comb_base) {
       const comb=box.comb_base,t=box.tab.thickness;
       block(0,0,-comb.depth/2,comb.width,comb.height,comb.depth/2,fitColor,.75);
       block(box.tab.x0,box.tab.y0,-t/2,box.tab.x1,0,t/2,fitColor,.75);
     }
-    if(box.tab)wire(W/2-settings.slot_length/2-25,-30,-35,W/2+settings.slot_length/2+25,0,35,'#d9c9a0');  // the lamp base, as a faint outline
+    if(box.tab)outlineBox(W/2-s.slot_length/2-25,-30,-35,W/2+s.slot_length/2+25,0,35,'#d9c9a0');  // the lamp base, as a faint outline
     if(box.combs) {
       const comb=box.combs,front=box.box.depth/2;
       for(const x of [-.5,W+.5-comb.width])block(x,0,front-comb.length,x+comb.width,comb.height,front,fitColor,.85);
-      wire(-.5,0,-front,W+.5,box.box.height,front,'#d9c9a0');  // the box's inside, as a faint outline
+      outlineBox(-.5,0,-front,W+.5,box.box.height,front,'#d9c9a0');  // the box's inside, as a faint outline
     }
     const reach=clamp(result.height_mm*.5,30,90);
     for(const foot of result.mount.filter(item=>item.kind==='foot'))block(foot.x0,foot.y0,-reach/2,foot.x1,foot.y1,reach/2,'#876749');
     group.position.set(-W/2,0,0);
+  }
+  function rebuild3d(fit=false) {
+    if(view!=='3d'||!three||!result)return;
+    const group=three.group;
+    group.traverse(child=>{child.geometry?.dispose();child.material?.dispose();});
+    group.clear();
+    fillDesign(group,result);
     if(fit||!three.fitted) {
       // Far enough back that the whole design (and its box) fits the view's width and height, seen from a little above and to the right.
-      const height=Math.max(result.height_mm,box.box?.height||0),width=Math.max(W,box.box?.width||0);
+      const box=result.fit,W=result.width_mm,height=Math.max(result.height_mm,box.box?.height||0),width=Math.max(W,box.box?.width||0);
       const tangent=Math.tan(THREE.MathUtils.degToRad(three.camera.fov/2));
       const distance=Math.max(height/2/tangent,width/2/(tangent*three.camera.aspect))*1.3;
       three.controls.target.set(0,height/2,0);
@@ -592,6 +656,64 @@ export function createSilhouette(ctx) {
     if(view==='3d'&&setup3d()){resize3d();rebuild3d(true);three.renderer.setAnimationLoop(()=>{three.controls.update();three.renderer.render(three.scene,three.camera);});}
     else if(three)three.renderer.setAnimationLoop(null);
     if(view==='front')draw();
+  }
+
+  // ---------- Start from preview: the hovered (or keyboard-focused) preset on a turntable, or the current design ----------
+  // A preset is previewed from an outline request with its settings applied to a copy of the current ones (nothing is saved).
+  // Results are cached by request body, so going back to a preset (or applying it) needs no new request.
+  const turntable=createTurntable($('silhouette-turntable-view'),{label:'Design preview: drag to orbit',elevation:16});
+  const previews=new Map();
+  let hoverPreset=null,focusPreset=null,previewTimer=null,previewRequest=null;
+  const previewKey=body=>`${ctx.state.id}:${JSON.stringify(body)}`;
+  function remember(body,data) {previews.set(previewKey(body),data);if(previews.size>16)previews.delete(previews.keys().next().value);}
+  function previewCaption(id,text,state='') {
+    $('silhouette-turntable-title').textContent=`Preview · ${(PRESETS.presets[id]||PRESETS.presets.custom).name}`;
+    const line=$('silhouette-turntable-size');line.textContent=text;line.classList.toggle('error',state==='error');
+    $('silhouette-turntable').dataset.state=state;
+  }
+  function showPreview(id,data,s) {
+    if(!data.layers?.length||!data.outline?.outer.length){turntable.clear();previewCaption(id,'Nothing to show for this slice.','error');return;}
+    turntable.show(group=>fillDesign(group,data,s));previewCaption(id,`${designSize(data)} · ${pieceWords(data)}`);
+  }
+  // The current design, once its outline is in (or the error that stopped it), unless a preset is being previewed.
+  function previewCurrent(error=null) {
+    const id=hoverPreset??focusPreset;
+    if(!dialog.open||(id!==null&&id!==settings.preset))return;
+    previewRequest?.abort();previewRequest=null;
+    const data=previews.get(previewKey(requestBody()));
+    if(data)showPreview(settings.preset,data,settings);
+    else if(error){turntable.clear();previewCaption(settings.preset,error,'error');}
+    else previewCaption(settings.preset,'Building preview…','loading');
+  }
+  function updatePreview() {
+    clearTimeout(previewTimer);
+    const id=hoverPreset??focusPreset;
+    if(id===null||id===settings.preset)previewCurrent();
+    else previewTimer=setTimeout(()=>previewPreset(id),150);
+  }
+  async function previewPreset(id) {
+    if(!dialog.open||!ctx.state.id)return;
+    const s=presetSettings(id),body=requestBody({},s),cached=previews.get(previewKey(body));
+    previewRequest?.abort();previewRequest=null;
+    if(cached)return showPreview(id,cached,s);
+    const controller=previewRequest=new AbortController();
+    previewCaption(id,'Building preview…','loading');
+    try {
+      const response=await postJSON(`/api/silhouette/${ctx.state.id}/outline`,body,controller.signal);
+      if(!response.ok)throw new Error(await errorMessage(response));
+      const data=await response.json();remember(body,data);
+      if(controller===previewRequest)showPreview(id,data,s);
+    } catch(error) {
+      if(error.name==='AbortError'||controller!==previewRequest)return;
+      turntable.clear();previewCaption(id,error.message,'error');
+    }
+  }
+  // Mouse or pen hover and keyboard focus preview a preset; a tap (no hover) just applies it.
+  function wirePreview(button,id) {
+    button.addEventListener('pointerenter',event=>{if(event.pointerType!=='touch'){hoverPreset=id;updatePreview();}});
+    button.addEventListener('pointerleave',()=>{if(hoverPreset===id){hoverPreset=null;updatePreview();}});
+    button.addEventListener('focus',()=>{if(button.matches(':focus-visible')){focusPreset=id;updatePreview();}});
+    button.addEventListener('blur',()=>{if(focusPreset===id){focusPreset=null;updatePreview();}});
   }
 
   // ---------- exports ----------
@@ -611,10 +733,15 @@ export function createSilhouette(ctx) {
     finally{busy=false;buttons.forEach(button=>{button.disabled=false;});dialog.removeAttribute('aria-busy');}
   }
 
+  // Colors only repaint (the outline is unchanged); the preview's cached outline is shown in the new colors.
+  function repaint() {draw();rebuild3d();if(result)remember(requestBody(),result);previewCurrent();}
   function wire() {
     buildPresetList();
     $('silhouette-back').addEventListener('click',()=>dialog.close());
-    dialog.addEventListener('close',()=>{clearTimeout(timer);request?.abort();if(three)three.renderer.setAnimationLoop(null);});
+    dialog.addEventListener('close',()=>{
+      clearTimeout(timer);clearTimeout(previewTimer);request?.abort();previewRequest?.abort();if(three)three.renderer.setAnimationLoop(null);
+      hoverPreset=focusPreset=null;turntable.setActive(false);
+    });
     // This page's slice controls drive the geography page's own, whose listeners redraw its chart and map line and refresh this page.
     $('silhouette-position').addEventListener('input',event=>{
       const main=$('profile-position');
@@ -634,10 +761,10 @@ export function createSilhouette(ctx) {
       element.addEventListener(settled?'change':'input',()=>{
         readForm(id);save();
         // Colors only repaint; everything else changes the outline.
-        if(id.endsWith('color')&&!layered()){draw();rebuild3d();}else schedule();
+        if(id.endsWith('color')&&!layered())repaint();else schedule();
       });
     }
-    for(const id of Object.values(COLORS))$(id).addEventListener('input',()=>{readForm(id);if(!layered()){draw();rebuild3d();}});
+    for(const id of Object.values(COLORS))$(id).addEventListener('input',()=>{readForm(id);if(!layered())repaint();});
     document.querySelectorAll('[data-race-kind]').forEach(button=>button.addEventListener('click',()=>{
       settings.race_kind=button.dataset.raceKind;settings.tick_every=settings.race_kind==='cycling'?10:1;
       writeForm();save();schedule();
@@ -662,6 +789,7 @@ export function createSilhouette(ctx) {
       followRidges();
       $('silhouette-title').textContent=placeName()||'Your landscape';
       if(!dialog.open)dialog.showModal();
+      turntable.setActive(true);previewCaption(settings.preset,'Building preview…','loading');
       setView(view);sliceLabel();refresh();
     },
     close(){if(dialog.open)dialog.close();},
