@@ -88,7 +88,7 @@ const longDate=date=>new Date(`${date}T12:00:00`).toLocaleDateString(undefined,{
 
 export function createSilhouette(ctx) {
   const dialog=$('silhouette');
-  let settings=structuredClone(DEFAULTS),storeKey=null,result=null,resultKey=null,timer=null,request=null,view='front',busy=false,three=null,followed=null;
+  let settings=structuredClone(DEFAULTS),storeKey=null,result=null,resultKey=null,timer=null,request=null,view='front',busy=false,three=null;
   // These read the current settings, or a candidate's (s) when the Start from preview shows a preset before it is applied.
   const preset=(s=settings)=>PRESETS.presets[s.preset]||PRESETS.presets.custom;
   // One piece in color zones: a viewpoint's ridges (or bands) on one base strip, each zone its own color; not in a shadow box.
@@ -178,7 +178,10 @@ export function createSilhouette(ctx) {
     if(end-start<5){if(changed==='silhouette-trim-end')start=Math.max(0,end-5);else end=Math.min(100,start+5);start=Math.min(start,end-5);}
     $('silhouette-trim-start').value=start;$('silhouette-trim-end').value=end;settings.trim=[start,end];
     // Layers: the count spreads fresh positions; edited positions set the count.
-    if(changed==='silhouette-layer-count'){settings.layer_positions=spread(settings.layer_count);$('silhouette-layer-positions').value=settings.layer_positions.join(', ');}
+    if(changed==='silhouette-layer-count'){
+      settings.layer_positions=spread(settings.layer_count);$('silhouette-layer-positions').value=settings.layer_positions.join(', ');
+      if(viewPlan())setGeographyLayers(settings.layer_count);  // the geography page's Layers follows, so both show the same layers
+    }
     else if(changed==='silhouette-layer-positions') {
       const values=$('silhouette-layer-positions').value.split(/[,;\s]+/).filter(Boolean).map(Number).filter(Number.isFinite).slice(0,7).map(value=>clamp(value,0,100));
       if(values.length>=2){settings.layer_positions=values;settings.layer_count=values.length;$('silhouette-layer-count').value=values.length;}
@@ -307,9 +310,9 @@ export function createSilhouette(ctx) {
     if(rules.tab_thickness)s.thickness_mm=round(clamp(s.slot_width-s.slot_clearance,1.2,30));
     if(rules.layers){s.layer_count=rules.layers.count;s.layer_step=rules.layers.step;s.layer_positions=spread(rules.layers.count,s);}
     if(rules.distance_thickness)s.thickness_by_distance=s.source==='viewpoint';
-    // A layered viewpoint design takes one layer per detected ridge (as followRidges does once applied).
-    const plan=ridgePlan(s);
-    if(plan?.ridges&&s.layer_count!==plan.count){s.layer_count=plan.count;s.layer_positions=spread(plan.count,s);}
+    // A layered viewpoint design takes the geography page's layers: its detected ridges or its distance bands.
+    const plan=viewPlan(s);
+    if(plan&&s.layer_count!==plan.count){s.layer_count=plan.count;s.layer_positions=spread(plan.count,s);}
     if(s.fit==='box')s.width_mm=clamp(s.box_width-1,40,400);
     if(id==='race')s.tick_every=s.race_kind==='cycling'?10:1;
     if(s.source==='route'){const scale=routeScale(s);if(scale)s.vertical_scale=scale;}
@@ -317,7 +320,7 @@ export function createSilhouette(ctx) {
     return s;
   }
   function applyPreset(id) {
-    settings=presetSettings(id);followed=null;followRidges(false);
+    settings=presetSettings(id);followRidges(false);
     writeForm();save();if(three)three.fitted=false;schedule();
   }
   function buildPresetList() {
@@ -345,14 +348,31 @@ export function createSilhouette(ctx) {
     const found=profile.found.length,count=clamp(found,rule.min||2,rule.max||7);
     return {found,count,ridges:found>=count,min:rule.min||2,max:rule.max||7};
   }
-  // The layer count follows newly detected ridges (the user may still lower it afterwards).
+  // A layered design from the viewpoint shows exactly the geography page's layers: one per ridge it detected, or its
+  // distance bands (at most 5 there). The two layer counts are linked both ways; a preset needing more layers than the
+  // geography page shows raises its count, which redraws the chart and map to match.
+  function viewPlan(s=settings) {
+    const profile=ctx.profile?.settings,rule=preset(s).rules?.layers;
+    if(!rule||!layered(s)||s.source!=='viewpoint'||!drawn('viewpoint'))return null;
+    const ridges=Boolean(profile.ridges&&profile.found?.length>=(rule.min||2));
+    const geo=ridges?profile.found.length:profile.bands,max=ridges?(rule.max||7):Math.min(rule.max||7,5);
+    const min=rule.min||2;  // a single geography layer gives the preset's own count instead
+    return {count:clamp(geo>=min?geo:(rule.count||min),min,max),geo,ridges};
+  }
+  function setGeographyLayers(count) {
+    const select=$('view-bands');
+    if(Number(select.value)===count)return;
+    select.value=String(count);select.dispatchEvent(new Event('change',{bubbles:true}));
+  }
   function followRidges(store=true) {
-    const plan=ridgePlan();
-    if(!plan?.ridges)return;
-    const key=JSON.stringify([settings.preset,ctx.profile.settings.found.map(ridge=>ridge.distance_m)]);
-    if(key===followed)return;
-    followed=key;
+    const plan=viewPlan();
+    if(!plan)return;
     if(settings.layer_count!==plan.count){settings.layer_count=plan.count;settings.layer_positions=spread(plan.count);if(store){writeForm();save();}}
+    // Fewer layers than the geography page shows would regroup its ridges differently: bring that page to the same count.
+    if(plan.geo!==plan.count&&!(plan.ridges&&plan.geo<plan.count)) {
+      if(plan.geo>plan.count)ctx.notify(`${preset().name} holds at most ${plan.count} layers, so the geography page now shows ${plan.count} ${plan.ridges?'ridges':'bands'} too.`);
+      setGeographyLayers(plan.count);
+    }
   }
   function requestBody(extra={},s=settings) {
     const opts=ctx.options(),body={...structuredClone(s),trim:[...s.trim],direction:$('profile-direction').value,
@@ -374,7 +394,7 @@ export function createSilhouette(ctx) {
           view_max_radius_m:profile.max_radius_m||0});
         // A viewpoint's layers are its detected ridges (the server ignores their positions), or distance bands, nearer bands
         // narrower (as profiles.band_edges), nearest at the front.
-        if(ridgePlan(s)?.ridges)body.view_ridges=true;
+        if(viewPlan(s)?.ridges)body.view_ridges=true;
         if(body.layers)body.layers.forEach((layer,index,all)=>{layer.position=Math.round(((index+1)/all.length)**2*1000)/10;});
       }
     }

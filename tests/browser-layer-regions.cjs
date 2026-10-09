@@ -35,11 +35,19 @@ const url=process.env.TERRAIN_TEST_URL||'http://127.0.0.1:8021';
     await page.screenshot({path:require('node:path').resolve(__dirname,'../test-results/layer-distance-regions.png'),fullPage:true});
     await page.locator('#silhouette-back').click();
     await page.locator('#view-radius').selectOption('1000');
+    // The two pages' layer counts are linked: the layered glow's 3 layers are what the geography page shows too.
+    assert.equal(await page.locator('#view-bands').inputValue(),'3','The geography page follows the silhouette layers');
     await page.locator('#view-ridges').check();
-    await page.waitForFunction(()=>/1 ridge at/.test(document.getElementById('profile-mode-status').textContent));
+    await page.waitForFunction(()=>/ridges? at/.test(document.getElementById('profile-mode-status').textContent));
+    const found=Number((await page.locator('#profile-mode-status').innerText()).match(/(\d+) ridges? at/)[1]);
     await page.locator('#silhouette-button').click();
-    await page.waitForFunction(()=>document.getElementById('silhouette-check-list').textContent.includes('Only 1 ridge was detected'));
-    assert.match(await page.locator('#silhouette-layer-axis-hint').innerText(),/distance bands/);
+    if(found>=2) {  // the silhouette uses exactly the ridges the geography page detected
+      await page.waitForFunction(()=>/ridge distance groups/.test(document.getElementById('silhouette-layer-axis-hint').textContent));
+      await page.waitForFunction(count=>document.querySelectorAll('#silhouette-layer-axis rect[data-layer]').length===count,found);
+    } else {
+      await page.waitForFunction(()=>document.getElementById('silhouette-check-list').textContent.includes('Only 1 ridge was detected'));
+      assert.match(await page.locator('#silhouette-layer-axis-hint').innerText(),/distance bands/);
+    }
     await page.locator('#silhouette-back').click();
     const ridgeRequest=page.waitForResponse(response=>/\/api\/profile\/[^/]+$/.test(response.url())&&response.request().postDataJSON()?.min_radius_m===0&&response.request().postDataJSON()?.bands===7);
     await page.locator('#view-radius').selectOption('0');
