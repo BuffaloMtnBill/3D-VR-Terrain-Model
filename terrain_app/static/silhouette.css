@@ -12,7 +12,34 @@
 #silhouette p{margin:0}
 #silhouette .studio-body{grid-template-columns:280px minmax(0,1fr) 300px}
 #silhouette input[type=number],#silhouette select,#silhouette input:not([type]){padding:7px 8px;font-size:11px}
-#silhouette input:not([type]){width:100%;margin-top:5px}
+#silhouette input:not([type]),#silhouette textarea{width:100%;margin-top:5px}
+#silhouette textarea{border:1px solid #49543c;background:#122118;color:var(--ink);padding:7px 8px;font:11px/1.45 var(--sans);resize:vertical;min-height:52px}
+#silhouette input:disabled,#silhouette select:disabled{opacity:.55}
+
+/* Start from: the preset picker, grouped under headings, and the selected preset's own settings. */
+.silhouette-presets{display:flex;flex-direction:column;gap:5px}
+.silhouette-preset-heading{font-size:9px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin:6px 0 0}
+.silhouette-preset-group{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.silhouette-preset{border:1px solid #49543c;background:#122118;color:var(--ink);padding:7px 8px;font-size:10px;line-height:1.3;text-align:left;border-radius:5px;min-width:0}
+.silhouette-preset:hover{background:#1d2d22}
+.silhouette-preset.active{background:#596b3e;border-color:var(--tan);color:#fff0c3}
+.silhouette-preset-group:first-child{grid-template-columns:1fr}
+.silhouette-subhead{display:block;font-size:9px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin:12px 0 0}
+[data-fit-block]:first-of-type .silhouette-subhead{margin-top:0}
+[data-fit-block]+[data-fit-block]:not([hidden]){border-top:1px solid #2c3a2c;margin-top:10px;padding-top:4px}
+.silhouette-print-hint{color:var(--sage)!important}
+.silhouette-print-hint:empty{display:none}
+.silhouette-route-status{color:var(--ink)!important}
+.silhouette-swatches{display:flex;gap:4px;margin-top:9px}
+.silhouette-swatches span{flex:1;height:10px;border-radius:2px;border:1px solid #0004}
+.silhouette-race-kind{height:auto;padding:0;background:transparent;border:0;margin:0 0 8px}
+.silhouette-race-kind button{padding:6px 7px}
+.silhouette-parts{font-size:10px;line-height:1.5;color:var(--muted);margin:10px 0 0}
+.silhouette-parts:empty{display:none}
+.silhouette-parts strong{display:block;color:var(--ink);font-weight:600;margin-bottom:2px}
+.silhouette-parts ul{list-style:none;margin:0;padding:0;font-variant-numeric:tabular-nums}
+#silhouette .silhouette-parts li{font-size:10px;line-height:1.5;padding:0;color:var(--muted)}
+#silhouette [data-fit-block] label:not(.studio-inline):not(.studio-check){display:block;margin-top:10px}
 #silhouette .studio-inline select{max-width:62%}
 #silhouette input[type=range]{width:100%;margin:2px 0 0}
 .silhouette-range{display:flex;align-items:center;justify-content:space-between;margin:12px 0 2px}
@@ -26,6 +53,11 @@
 #silhouette-svg .sil-grid line{stroke:#5a6748;stroke-opacity:.35;vector-effect:non-scaling-stroke;stroke-width:1}
 #silhouette-svg .sil-body{stroke:#fee0b0;stroke-opacity:.75;stroke-width:1.2;vector-effect:non-scaling-stroke}
 #silhouette-svg .sil-text{vector-effect:non-scaling-stroke}
+#silhouette-svg .sil-layer{stroke-opacity:.45}
+#silhouette-svg .sil-box{fill:none;stroke:#d9c9a0;stroke-opacity:.5;stroke-dasharray:6 4;stroke-width:1;vector-effect:non-scaling-stroke}
+#silhouette-svg .sil-fit{fill:#c8b48a;fill-opacity:.55;stroke:#e5d4a8;stroke-width:1;vector-effect:non-scaling-stroke}
+#silhouette-svg .sil-peg{fill:#d8c69a;stroke:#3a3020;stroke-width:1;vector-effect:non-scaling-stroke}
+#silhouette-svg .sil-pin{fill:#101b14;stroke:#e5d4a8;stroke-width:1;vector-effect:non-scaling-stroke}
 #silhouette-svg .sil-foot{fill:#876749;fill-opacity:.55;stroke:#c8a774;stroke-dasharray:4 3;stroke-width:1;vector-effect:non-scaling-stroke}
 #silhouette-svg .sil-dimension line{stroke:#a9ae99;stroke-width:1;vector-effect:non-scaling-stroke}
 #silhouette-svg .sil-label{fill:#c9c6ad;font-family:var(--sans)}

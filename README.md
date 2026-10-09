@@ -75,12 +75,13 @@ environment removes those too), and leaves downloaded data in the
 
 Terrain Studio starts on the **geography selection page**, where you find, frame, and style a place.
 Its **Design and export** section opens one of two design pages: **3D model design**, where you add
-markers and other add-ons to the whole landscape and export it, and **Silhouette design**, where one
-elevation-profile slice becomes a flat ridgeline piece to print, laser cut, or stand on a desk.
+markers and other add-ons to the whole landscape and export it, and **Silhouette design**, where
+elevation-profile slices (or an uploaded route's profile) become flat ridgeline pieces to print, laser
+cut, stand on a desk, light on an LED lamp base, or layer in a shadow box.
 
-1. Pick a preset, **search for an address, city, or place name**, or enter a
-   **US ZIP code** (five digits or ZIP+4). The search box zooms to fit the place
-   it finds; typing a `latitude, longitude` pair there jumps straight to it.
+1. Pick a preset, or type in the one search box: an **address, city, or place
+   name**, a **US ZIP code** (five digits or ZIP+4), or a `latitude, longitude`
+   pair. It zooms to fit the place it finds, or jumps straight to the coordinates.
    Search and ZIP navigation center the selected frame on the
    location while retaining its size, rotation, and aspect ratio. The selection frame
    stays fixed on screen while you pan the map beneath it. Zoom with the +/−
@@ -120,7 +121,7 @@ elevation-profile slice becomes a flat ridgeline piece to print, laser cut, or s
    Roads and Water also have detail sliders. Lower detail omits minor roads,
    creeks, and smaller water areas while retaining larger mapped features.
 5. Move the cross-section slider to inspect profiles along the frame's axes
-   (east–west or north–south at zero rotation). The section guide appears on
+   (east–west or north–south at zero rotation, chosen beside the slider). The section guide appears on
    the map only; the 3D preview stays clear.
    The orange line marks the section on both the map and model.
 6. Export your landscape or save a PNG of the preview.
@@ -292,27 +293,97 @@ and position sliders are the geography selection page's own profile controls, so
 dashed line on the map follow them; **Print from** and **Print to** keep only part of the slice.
 
 - **Shape:** width (the piece's length, 40–400 mm; the printed part of the slice fills it), vertical
-  scale (× true proportions at that width; it starts at the elevation multiplier), base height under the
-  lowest point, thickness, smoothing (a moving average plus a simplification that drops points), true
-  elevations or the model's shaped elevation profile, and mirror.
-- **Text:** a one-line caption on the base (DejaVu Sans Bold, starting as the place name), engraved,
-  raised from the front face, or cut through as a stencil (thin bridges keep the insides of O, A, and e
-  attached), at the left, center, or right.
+  scale (× true proportions at that width, 0.5–100; it starts at the elevation multiplier), base height
+  under the lowest point, thickness, smoothing (a moving average plus a simplification that drops
+  points), true elevations, the model's shaped elevation profile, or the **uploaded route**, and mirror.
+- **Text:** a caption of up to three lines on the base (DejaVu Sans Bold, starting as the place name),
+  engraved, raised from the front face, or cut through as a stencil (thin bridges keep the insides of
+  O, A, and e attached), at the left, center, or right.
 - **Mounting:** a desk stand (two feet with a slot the thickness plus 0.2 mm wide, printed beside the
   piece in the same file), two round wall holes, or two keyholes.
-- **Exports:** STL (one solid, lying flat with its front face up), 3MF (the body, the text when engraved
-  or raised, and the stand as colored parts), SVG (the outline, wall holes, and text as paths in
-  millimeters for laser cutting or vinyl), and the settings as JSON. Checks list the size, the lowest
-  point, text that is trimmed or too small, and pieces larger than a 256 mm bed.
+- **Exports:** STL (one solid, lying flat with its front face up; a design with several parts
+  downloads as a ZIP of one STL per part), 3MF (every part as a named color part, laid out flat side
+  by side), SVG (outlines, wall holes, and text as paths in millimeters for laser cutting or vinyl;
+  several layers and the combs' side views each get their own group), and the settings as JSON.
+  Checks list the size, the lowest point, text that is trimmed or too small, pegs that overlap the
+  text, pieces that miss their tab or box, and parts larger than a 256 mm bed; the Export card lists
+  the parts and their sizes.
 
-Settings are saved in the browser for each framed area. The API is
-`POST /api/silhouette/<id>/outline` (the preview: outline, text, and mount marks in mm, x from 0 at
-the left and y up, with size and warnings) and `POST /api/silhouette/<id>/export` with the same JSON
-body plus `format` (`stl`, `3mf`, `svg`, or `json`), `thickness_mm`, `body_color`, and `text_color`.
-The body takes `direction` (`ew` or `ns`), `position` and `trim` (percent), `width_mm`,
-`vertical_scale`, `base_mm`, `smoothing`, `source` (`true` or `shaped`, with `relief` and
-`relief_strength`), `mirror`, `text`, `text_size`, `text_style` (`engrave`, `emboss`, `stencil`),
-`text_depth`, `text_align`, `mount` (`none`, `stand`, `holes`, `keyholes`), and `hole_diameter`.
+### Start from: design presets
+
+**Start from** at the top of the left panel sets everything a design needs; **Custom** is the plain
+piece above. Each preset keeps your slice, caption, and colors where they still make sense and shows
+its own settings below the picker. Every size is editable: **measure your lamp's slot and your box's
+inside** and type them in.
+
+**Glow lamps** stand in an LED lamp base, the kind with a slot on top that lights a panel from its
+edge. They share a **lamp-base fit**: slot width (4.0 mm), length (160 mm), depth (8 mm), and
+clearance (0.2 mm). A straight tab (slot width − clearance thick, slot length − 2 × clearance long,
+slot depth tall) is centered under the piece, flush with its back face so both print flat; the piece
+itself may be wider than the slot. Checks warn when the piece is narrower than the tab.
+
+- **Edge-lit ridgeline:** one panel exactly the tab's thickness, with a 0.6 mm engraved caption that
+  catches the light. Print it in clear or translucent PETG at 100 % infill and 0.12 mm layers.
+- **Stencil lamp:** an opaque 3 mm piece with a large cut-through caption; the lamp lights the letters.
+- **Layered glow:** 2–4 thin panels (3 by default) from slices at 25, 50, and 75 % of the frame stand
+  in a printed **comb base** whose tab drops into the lamp. Slots are the panel thickness + 0.3 mm,
+  6 mm apart, 5 mm deep (the caption stays above them), and each panel's base is a step (8 mm) higher
+  than the one in front so rear ridges rise above front ones. Print the panels translucent, the front
+  darkest; print the comb base clear.
+- **Skyline night-light:** a slice through town that **includes buildings**: along the slice, the
+  profile rises to the tallest mapped building within a corridor (30 m wide), standing on its lowest
+  ground. Turn on the Buildings map layer and let it load first. Shaped heights, a stencil name, and
+  the lamp tab.
+
+**Shadow boxes** share a **box fit**: inner width (200 mm), height (150 mm), and depth (40 mm). Pieces
+are the inner width less 1 mm, heights are cut flat at the inner height, and two printed **spacer
+combs** (12 mm wide, 8 mm tall, one per side, the box's depth less 0.5 mm long) hold every layer in a
+slot the thickness + 0.3 mm wide, evenly spaced from front to back. An optional **photo slot** (1 mm)
+behind the last layer holds a photo, card, or map.
+
+- **Layered mountain diorama:** 3–7 layers (5 by default) at slice positions spread across the frame
+  from its near side (the front layer) to its far side, each base a step higher, colored from the
+  body color at the front to palest at the back. An optional **LED channel** (5 × 2 mm) across the
+  combs behind the layers holds an LED strip.
+- **Trail memory box:** the uploaded route's elevation profile (the slice without a route), a photo
+  slot, a 1.8 mm **summit pin hole** 10 mm deep drilled down from the highest point for the bundled
+  brass-nail marker, and the route's name and date as the caption.
+- **Elevation chart box:** the route's profile with a caption of its name, distance and climb, and
+  date, and **distance ticks** engraved along the base every mile or kilometer (following the ft / m
+  switch), labeled where they have room.
+- **Anniversary box:** a stencil caption of names and a date, one layer at the chosen slice, and a
+  photo slot behind.
+
+**Race profile — running or cycling:** the race's elevation along its length from the uploaded GPX,
+distance ticks (running every 1 mile or kilometer, cycling every 10), START and FINISH engraved at the
+ends, a three-line caption of the race name, date, and your finish time (typed in its own field), and
+three round **medal pegs** (6 mm × 20 mm, standing out of the front face along the bottom of the
+base), with keyholes to hang it; the stand or mirror work too.
+
+**Route profiles** use the distance along the uploaded route against its elevation, segments joined
+in order, with the same vertical-scale meaning as a slice (true proportions at the piece's width, ×
+the scale; route presets pick a scale that makes the climb about 50 mm tall). Elevations come from
+the GPX's `<ele>` values, smoothed over about 100 m; a GPX without them samples the terrain, which
+needs the whole route inside the generated frame (otherwise: "This GPX file has no elevations;
+re-export it with elevation or frame the whole route."). Routes uploaded before elevations were
+kept need uploading again. Trim applies to the route too.
+
+Settings, the chosen preset, and its fields are saved in the browser for each framed area. The API
+is `POST /api/silhouette/<id>/outline` (the preview: outlines, text, markings, and mount marks in mm,
+x from 0 at the left and y up, every layer with its assembled position, the fit's parts, a parts list
+with sizes, and warnings) and `POST /api/silhouette/<id>/export` with the same JSON body plus
+`format` (`stl`, `3mf`, `svg`, or `json`). The body takes `direction` (`ew` or `ns`), `position` and
+`trim` (percent), `width_mm`, `vertical_scale`, `base_mm`, `smoothing`, `source` (`true`, `shaped`
+with `relief` and `relief_strength`, or `route` with `route_id`), `mirror`, `text` (up to three lines
+of 60 characters), `text_size`, `text_style` (`engrave`, `emboss`, `stencil`), `text_depth`,
+`text_align`, `mount` (`none`, `stand`, `holes`, `keyholes`), `hole_diameter`, `thickness_mm`,
+`body_color`, and `text_color`, and for presets `preset`, `layers` (1–7 of `{position, base_mm,
+color}`, front first), `fit` (`none`, `lamp`, `box`), `slot_width`, `slot_length`, `slot_depth`,
+`slot_clearance`, `layer_spacing`, `box_width`, `box_height`, `box_depth`, `photo_slot`, `photo_gap`,
+`led_channel`, `led_width`, `led_depth`, `include_buildings`, `building_corridor_m`, `summit_pin`,
+`pin_diameter`, `pin_depth`, `peg_count`, `peg_diameter`, `peg_length`, `ticks`, `tick_every`,
+`units` (`ft` for miles, `m` for kilometers), and `start_finish`. The presets themselves live in
+`terrain_app/data/silhouette-presets.json`.
 
 ## Elevation source and geographic limits
 
@@ -598,6 +669,8 @@ color picker work independently of Roads, including at low road detail.
 the 3D preview, and model exports. Export the activity as GPX from Strava
 ("Export GPX"), Garmin Connect ("Export to GPX"), or COROS. Tracks and routes
 are read with any GPX namespace; files must be under 15 MB and 500,000 points.
+Each point keeps its elevation (smoothed over about 100 m) for route profiles on the silhouette page,
+and the first point's time gives the route its date.
 
 The route is stored in geographic coordinates (cached under `routes/` in the
 cache folder), so moving or resizing the frame never rescales it: each frame

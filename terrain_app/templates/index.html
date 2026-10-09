@@ -32,10 +32,8 @@
         <div class="section-label"><h2>Your landscape</h2></div>
         <label for="place">Famous landscapes</label>
         <select id="place">{% for key, place in presets.items() %}<option value="{{ key }}"{% if key == default_place %} selected{% endif %}>{{ place.label }}</option>{% endfor %}<option value="custom">Custom selection</option></select>
-        <form id="place-form" class="coordinate-search" role="search"><label class="sr-only" for="place-search">Search for an address or city</label><input id="place-search" type="search" autocomplete="off" maxlength="200" placeholder="Search address or city" aria-describedby="place-status coordinate-hint"><button type="submit" title="Search for this place" aria-label="Search for this place">↗</button></form>
+        <form id="place-form" class="coordinate-search" role="search"><label class="sr-only" for="place-search">Search for an address, city, US ZIP code, or latitude and longitude</label><input id="place-search" type="search" autocomplete="off" maxlength="200" placeholder="Address, city, or US ZIP code" aria-describedby="place-status coordinate-hint"><button type="submit" title="Go to this place" aria-label="Go to this place">↗</button></form>
         <span id="place-status" class="small-hint" role="status" hidden></span>
-        <form id="zip-form" class="coordinate-search"><label class="sr-only" for="zip-code">Go to US ZIP code</label><input id="zip-code" type="text" inputmode="numeric" autocomplete="postal-code" placeholder="Go to US ZIP code" pattern="[0-9]{5}(-[0-9]{4})?" maxlength="10" required aria-describedby="zip-status"><button type="submit" title="Go to ZIP code" aria-label="Go to ZIP code">↗</button></form>
-        <span id="zip-status" class="small-hint" role="status" hidden></span>
         <span id="coordinate-hint" class="small-hint">Pan or zoom the map beneath the fixed frame.</span>
         <div id="route-block" class="route-block">
           <div class="route-heading"><span class="route-title">GPS route</span><button id="route-upload" type="button" class="button secondary route-upload">Upload GPX ↑</button></div>
@@ -116,7 +114,7 @@
 
       <section class="stats-strip" aria-label="Terrain statistics"><div><span class="stat-label">LOWEST POINT</span><strong id="stat-low">—<small> ft</small></strong></div><div><span class="stat-label">HIGHEST POINT</span><strong id="stat-high">—<small> ft</small></strong></div><div><span class="stat-label">ELEVATION RANGE</span><strong id="stat-range">—<small> ft</small></strong></div><div><span class="stat-label">GRID SPACING</span><strong id="stat-spacing">—<small> ft</small></strong></div></section>
 
-      <section class="profile-panel panel"><div class="profile-heading"><div><h3>Follow the ridgeline</h3><span class="profile-caption">Elevation profile</span></div><div class="profile-options"><div class="unit-toggle" role="group" aria-label="Elevation units"><button type="button" data-units="ft" aria-pressed="true" class="active" title="Show feet and miles">ft</button><button type="button" data-units="m" aria-pressed="false" title="Show meters and kilometers">m</button></div><select id="profile-direction" aria-label="Cross section direction"><option value="ew">West → East</option><option value="ns">North → South</option></select></div></div><div class="profile-controls"><label for="profile-position">Cross-section position</label><input id="profile-position" type="range" min="0" max="100" step="1" value="50"><output id="profile-position-value">50%</output></div><div class="profile-canvas-wrap"><canvas id="profile" aria-label="Elevation cross section in feet above sea level"></canvas><span id="profile-tooltip" hidden></span></div><div class="profile-foot"><span id="profile-units-note">Heights in feet above sea level</span><span id="profile-distance">— mi across</span></div></section>
+      <section class="profile-panel panel"><div class="profile-heading"><div><h3>Follow the ridgeline</h3><span class="profile-caption">Elevation profile</span></div><div class="profile-options"><div class="unit-toggle" role="group" aria-label="Elevation units"><button type="button" data-units="ft" aria-pressed="true" class="active" title="Show feet and miles">ft</button><button type="button" data-units="m" aria-pressed="false" title="Show meters and kilometers">m</button></div></div></div><div class="profile-controls"><label for="profile-position">Cross-section position</label><input id="profile-position" type="range" min="0" max="100" step="1" value="50"><output id="profile-position-value">50%</output><select id="profile-direction" class="profile-direction" aria-label="Cross section direction"><option value="ew">West → East</option><option value="ns">North → South</option></select></div><div class="profile-canvas-wrap"><canvas id="profile" aria-label="Elevation cross section in feet above sea level"></canvas><span id="profile-tooltip" hidden></span></div><div class="profile-foot"><span id="profile-units-note">Heights in feet above sea level</span><span id="profile-distance">— mi across</span></div></section>
       <footer class="data-footer"><span>Elevation: <a id="elevation-credit" href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Mapzen / Tilezen · AWS Open Data ↗</a></span><a href="/api/attribution" target="_blank" rel="noopener">Source credits & licenses ↗</a><span>Terrain detail varies by region.</span></footer>
     </div>
     <aside id="style-sidebar" class="style-sidebar editing" aria-label="Make it yours">
@@ -250,7 +248,74 @@
       <div class="studio-heading"><span class="eyebrow">STEP 2 · SILHOUETTE DESIGN</span><h2 id="silhouette-title">Your landscape</h2><span id="silhouette-dimensions" class="studio-dimensions"></span></div>
     </header>
     <div class="studio-body">
-      <aside class="studio-left" aria-label="Slice and shape">
+      <aside class="studio-left" aria-label="Design preset, slice, and shape">
+        <section class="studio-card silhouette-start"><h3>Start from</h3>
+          <script id="silhouette-presets" type="application/json">{{ silhouette_presets|tojson }}</script>
+          <div id="silhouette-preset-list" class="silhouette-presets" role="radiogroup" aria-label="Design preset"></div>
+          <p id="silhouette-preset-summary" class="small-hint"></p>
+        </section>
+        <section id="silhouette-fit-card" class="studio-card silhouette-fit" hidden><h3 id="silhouette-fit-title">Preset settings</h3>
+          <div data-fit-block="lamp" hidden>
+            <span class="silhouette-subhead">Lamp base slot</span>
+            <label class="studio-inline" for="silhouette-slot-width">Slot width (mm) <input id="silhouette-slot-width" type="number" min="1" max="20" step="0.1" value="4"></label>
+            <label class="studio-inline" for="silhouette-slot-length">Slot length (mm) <input id="silhouette-slot-length" type="number" min="20" max="400" step="1" value="160"></label>
+            <label class="studio-inline" for="silhouette-slot-depth">Slot depth (mm) <input id="silhouette-slot-depth" type="number" min="2" max="30" step="0.5" value="8"></label>
+            <label class="studio-inline" for="silhouette-slot-clearance">Clearance (mm) <input id="silhouette-slot-clearance" type="number" min="0" max="1" step="0.05" value="0.2"></label>
+            <span id="silhouette-tab-hint" class="small-hint">Measure your lamp base's slot. The tab is the slot less the clearance.</span>
+          </div>
+          <div data-fit-block="box" hidden>
+            <span class="silhouette-subhead">Shadow box inside</span>
+            <label class="studio-inline" for="silhouette-box-width">Inner width (mm) <input id="silhouette-box-width" type="number" min="41" max="500" step="1" value="200"></label>
+            <label class="studio-inline" for="silhouette-box-height">Inner height (mm) <input id="silhouette-box-height" type="number" min="20" max="400" step="1" value="150"></label>
+            <label class="studio-inline" for="silhouette-box-depth">Inner depth (mm) <input id="silhouette-box-depth" type="number" min="8" max="200" step="1" value="40"></label>
+            <span class="small-hint">Measure inside the frame, from the glass to the back. Pieces are the inner width less 1 mm; two spacer combs hold them.</span>
+          </div>
+          <div data-fit-block="layers" hidden>
+            <span class="silhouette-subhead">Layers</span>
+            <label class="studio-inline" for="silhouette-layer-count">Layers <input id="silhouette-layer-count" type="number" min="2" max="7" step="1" value="3"></label>
+            <label for="silhouette-layer-positions">Slice positions, front to back (%)</label><input id="silhouette-layer-positions" autocomplete="off" spellcheck="false">
+            <label class="studio-inline" for="silhouette-layer-step">Base step (mm) <input id="silhouette-layer-step" type="number" min="0" max="20" step="0.5" value="6"></label>
+            <div id="silhouette-spacing-block"><label class="studio-inline" for="silhouette-layer-spacing">Slot spacing (mm) <input id="silhouette-layer-spacing" type="number" min="2" max="30" step="0.5" value="6"></label></div>
+            <div id="silhouette-layer-swatches" class="silhouette-swatches" aria-hidden="true"></div>
+            <span id="silhouette-layer-hint" class="small-hint">Each layer's base is a step higher than the one in front, so every ridge shows. The front layer is the frame's near side.</span>
+          </div>
+          <div data-fit-block="buildings" hidden>
+            <label class="studio-check" for="silhouette-buildings"><input id="silhouette-buildings" type="checkbox"> Include buildings along the slice</label>
+            <label class="studio-inline" for="silhouette-corridor">Corridor width (m) <input id="silhouette-corridor" type="number" min="5" max="200" step="5" value="30"></label>
+            <span class="small-hint">The tallest mapped building within the corridor raises the profile. Needs the Buildings map layer.</span>
+          </div>
+          <div data-fit-block="route" hidden><span id="silhouette-route-status" class="small-hint silhouette-route-status"></span></div>
+          <div data-fit-block="race" hidden>
+            <div class="view-tabs silhouette-race-kind" role="group" aria-label="Race kind"><button type="button" data-race-kind="running" aria-pressed="true" class="active">Running</button><button type="button" data-race-kind="cycling" aria-pressed="false">Cycling</button></div>
+            <label for="silhouette-finish-time">Finish time</label><input id="silhouette-finish-time" maxlength="20" autocomplete="off" placeholder="e.g. 3:42:15">
+          </div>
+          <div data-fit-block="ticks" hidden>
+            <label class="studio-check" for="silhouette-ticks"><input id="silhouette-ticks" type="checkbox"> Distance ticks along the base</label>
+            <label class="studio-inline" for="silhouette-tick-every"><span>Every (<span id="silhouette-tick-unit">mi</span>)</span> <input id="silhouette-tick-every" type="number" min="0.1" max="100" step="0.5" value="1"></label>
+            <label class="studio-check" for="silhouette-start-finish"><input id="silhouette-start-finish" type="checkbox"> START and FINISH at the ends</label>
+          </div>
+          <div data-fit-block="pegs" hidden>
+            <span class="silhouette-subhead">Medal pegs</span>
+            <label class="studio-inline" for="silhouette-peg-count">Pegs <input id="silhouette-peg-count" type="number" min="0" max="8" step="1" value="3"></label>
+            <label class="studio-inline" for="silhouette-peg-diameter">Diameter (mm) <input id="silhouette-peg-diameter" type="number" min="3" max="12" step="0.5" value="6"></label>
+            <label class="studio-inline" for="silhouette-peg-length">Length (mm) <input id="silhouette-peg-length" type="number" min="5" max="40" step="1" value="20"></label>
+          </div>
+          <div data-fit-block="pin" hidden>
+            <label class="studio-check" for="silhouette-pin"><input id="silhouette-pin" type="checkbox"> Summit pin hole for a nail marker</label>
+            <label class="studio-inline" for="silhouette-pin-diameter">Hole (mm) <input id="silhouette-pin-diameter" type="number" min="1" max="4" step="0.1" value="1.8"></label>
+            <label class="studio-inline" for="silhouette-pin-depth">Depth (mm) <input id="silhouette-pin-depth" type="number" min="3" max="30" step="1" value="10"></label>
+          </div>
+          <div data-fit-block="photo" hidden>
+            <label class="studio-check" for="silhouette-photo"><input id="silhouette-photo" type="checkbox"> Photo or map slot behind</label>
+            <label class="studio-inline" for="silhouette-photo-gap">Slot (mm) <input id="silhouette-photo-gap" type="number" min="0.3" max="5" step="0.1" value="1"></label>
+          </div>
+          <div data-fit-block="led" hidden>
+            <label class="studio-check" for="silhouette-led"><input id="silhouette-led" type="checkbox"> LED strip channel in the combs</label>
+            <label class="studio-inline" for="silhouette-led-width">Width (mm) <input id="silhouette-led-width" type="number" min="2" max="20" step="0.5" value="5"></label>
+            <label class="studio-inline" for="silhouette-led-depth">Depth (mm) <input id="silhouette-led-depth" type="number" min="0.5" max="5" step="0.5" value="2"></label>
+          </div>
+          <p id="silhouette-preset-hint" class="small-hint silhouette-print-hint"></p>
+        </section>
         <section class="studio-card"><h3>Slice</h3>
           <label class="studio-inline" for="silhouette-direction">Direction <select id="silhouette-direction"><option value="ew">West → East</option><option value="ns">North → South</option></select></label>
           <div class="silhouette-range"><label for="silhouette-position">Position across the frame</label><output id="silhouette-position-value">50%</output></div>
@@ -268,7 +333,7 @@
           <label class="studio-inline" for="silhouette-thickness">Thickness (mm) <input id="silhouette-thickness" type="number" min="1.2" max="30" step="0.2" value="4"></label>
           <div class="silhouette-range"><label for="silhouette-smoothing">Smoothing</label><output id="silhouette-smoothing-value">0%</output></div>
           <input id="silhouette-smoothing" type="range" min="0" max="100" step="5" value="0">
-          <label class="studio-inline" for="silhouette-source">Heights <select id="silhouette-source"><option value="true">True elevation</option><option value="shaped">Model's elevation profile</option></select></label>
+          <label class="studio-inline" for="silhouette-source">Heights <select id="silhouette-source"><option value="true">True elevation</option><option value="shaped">Model's elevation profile</option><option value="route">Uploaded route</option></select></label>
           <label class="studio-check" for="silhouette-mirror"><input id="silhouette-mirror" type="checkbox"> Mirror (flip left and right)</label>
           <span class="small-hint">The vertical scale multiplies true proportions at this width; 1× is the land's real shape.</span>
         </section>
@@ -287,7 +352,7 @@
       </section>
       <aside class="studio-right" aria-label="Text, mounting, and export">
         <section class="studio-card"><h3>Text</h3>
-          <label for="silhouette-text">Caption on the base</label><input id="silhouette-text" maxlength="60" autocomplete="off" placeholder="No text">
+          <label for="silhouette-text">Caption on the base (up to 3 lines)</label><textarea id="silhouette-text" rows="3" maxlength="184" autocomplete="off" spellcheck="false" placeholder="No text"></textarea>
           <label class="studio-inline" for="silhouette-text-style">Style <select id="silhouette-text-style"><option value="engrave">Engraved</option><option value="emboss">Raised (emboss)</option><option value="stencil">Cut through (stencil)</option></select></label>
           <label class="studio-inline" for="silhouette-text-size">Size (mm, capitals) <input id="silhouette-text-size" type="number" min="2" max="30" step="0.5" value="5"></label>
           <label class="studio-inline" for="silhouette-text-depth">Depth (mm) <input id="silhouette-text-depth" type="number" min="0.2" max="5" step="0.1" value="0.8"></label>
@@ -301,10 +366,11 @@
         </section>
         <section class="studio-card studio-export"><h3>Export</h3>
           <label class="studio-inline" for="silhouette-body-color">Body color (3MF) <input id="silhouette-body-color" type="color" value="#234e40"></label>
+          <div id="silhouette-parts" class="silhouette-parts" aria-live="polite"></div>
           <div class="export-choices silhouette-exports">
-            <button type="button" data-silhouette-export="stl"><strong>STL <span>↓</span></strong><span>One solid, lying flat</span></button>
-            <button type="button" data-silhouette-export="3mf"><strong>3MF <span>↓</span></strong><span>Body and text as color parts</span></button>
-            <button type="button" data-silhouette-export="svg"><strong>SVG <span>↓</span></strong><span>Outline in mm for laser or vinyl</span></button>
+            <button type="button" data-silhouette-export="stl"><strong>STL <span>↓</span></strong><span id="silhouette-stl-note">One solid, lying flat</span></button>
+            <button type="button" data-silhouette-export="3mf"><strong>3MF <span>↓</span></strong><span>Every part in color, laid flat</span></button>
+            <button type="button" data-silhouette-export="svg"><strong>SVG <span>↓</span></strong><span>Outlines in mm for laser or vinyl</span></button>
             <button type="button" data-silhouette-export="json"><strong>Settings <span>↓</span></strong><span>These choices as JSON</span></button>
           </div>
           <div id="silhouette-status" class="silhouette-status" role="status"></div>

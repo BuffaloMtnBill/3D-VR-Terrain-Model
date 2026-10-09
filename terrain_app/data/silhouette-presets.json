@@ -1,0 +1,70 @@
+{
+  "about": "Silhouette design page presets (\"Start from\"). settings are applied over the page's defaults; fields name the extra setting groups shown; rules are handled in silhouette.js: tab_thickness (thickness follows the lamp tab), layers (spread positions near side first), caption (filled from the route).",
+  "groups": [
+    {"name": "Glow lamps", "presets": ["glow-edge", "glow-stencil", "glow-layers", "glow-skyline"]},
+    {"name": "Shadow boxes", "presets": ["box-diorama", "box-trail", "box-chart", "box-anniversary"]},
+    {"name": "Race profile", "presets": ["race"]}
+  ],
+  "presets": {
+    "custom": {"name": "Custom", "summary": "One piece with your own caption and mount.", "fields": [], "settings": {}},
+    "glow-edge": {
+      "name": "Edge-lit ridgeline", "summary": "One clear panel the lamp's slot thickness; the engraved caption catches the edge light.",
+      "hint": "Print in clear or translucent PETG at 100 % infill and 0.12 mm layers, front face up.",
+      "fields": ["lamp"], "rules": {"tab_thickness": true},
+      "settings": {"fit": "lamp", "text_style": "engrave", "text_depth": 0.6, "text_size": 6, "base_mm": 12, "width_mm": 180}
+    },
+    "glow-stencil": {
+      "name": "Stencil lamp", "summary": "An opaque 3 mm piece with a large cut-through caption the light shines through.",
+      "hint": "Print in an opaque color; the lamp lights the letters and the ridgeline's edge.",
+      "fields": ["lamp"],
+      "settings": {"fit": "lamp", "thickness_mm": 3, "text_style": "stencil", "text_size": 9, "base_mm": 16, "width_mm": 180}
+    },
+    "glow-layers": {
+      "name": "Layered glow", "summary": "Thin panels from several slices stand in a comb base that drops into the lamp; rear ridges rise above front ones.",
+      "hint": "Print the panels in translucent PETG, the front panel darkest (or most opaque) and the back palest; print the comb base clear so the lamp shines up through it.",
+      "fields": ["lamp", "layers"], "rules": {"layers": {"count": 3, "min": 2, "max": 4, "low": 25, "high": 75, "step": 8}},
+      "settings": {"fit": "lamp", "thickness_mm": 2, "layer_spacing": 6, "base_mm": 14, "width_mm": 170, "text_style": "engrave", "text_depth": 0.6}
+    },
+    "glow-skyline": {
+      "name": "Skyline night-light", "summary": "A slice through town with the mapped buildings standing on the ground, a stencil name, and a lamp tab.",
+      "hint": "Print opaque. Turn on the Buildings map layer on the geography page so the slice can include them.",
+      "fields": ["lamp", "buildings"],
+      "settings": {"fit": "lamp", "include_buildings": true, "building_corridor_m": 30, "source": "shaped", "thickness_mm": 3,
+                   "text_style": "stencil", "text_size": 8, "base_mm": 14, "width_mm": 180}
+    },
+    "box-diorama": {
+      "name": "Layered mountain diorama", "summary": "Layers from the near side of the frame to the far side stand in two spacer combs, each base a step higher so every ridge shows.",
+      "hint": "Print each layer in its own color, palest at the back, darkest at the front. Measure the box's inside.",
+      "fields": ["box", "layers", "led"], "rules": {"layers": {"count": 5, "min": 3, "max": 7, "low": 15, "high": 85, "step": 8}},
+      "settings": {"fit": "box", "thickness_mm": 2, "base_mm": 9, "text_style": "engrave", "text_depth": 0.6}
+    },
+    "box-trail": {
+      "name": "Trail memory box", "summary": "The uploaded route's elevation along its length, a slot for a photo or map behind it, and a pin hole at the summit for a brass nail marker.",
+      "hint": "Without an uploaded route it uses the slice. The 1.8 mm summit hole fits the bundled nail marker's nail.",
+      "fields": ["box", "route", "pin", "photo"], "rules": {"caption": "route"},
+      "settings": {"fit": "box", "source": "route", "photo_slot": true, "summit_pin": true, "thickness_mm": 4, "base_mm": 20,
+                   "text_size": 5, "text_style": "engrave", "text_depth": 0.8}
+    },
+    "box-chart": {
+      "name": "Elevation chart box", "summary": "The route's profile with its distance, climb, and date as a caption and distance ticks along the base.",
+      "hint": "Ticks follow the ft / m switch: every mile or every kilometer.",
+      "fields": ["box", "route", "ticks", "photo"], "rules": {"caption": "stats"},
+      "settings": {"fit": "box", "source": "route", "ticks": true, "tick_every": 1, "thickness_mm": 4, "base_mm": 32, "text_size": 5,
+                   "text_style": "engrave", "text_depth": 0.8}
+    },
+    "box-anniversary": {
+      "name": "Anniversary box", "summary": "A stencil caption of names and a date, with a photo slot behind one layer at the chosen slice.",
+      "hint": "Light or a photo behind the piece shows through the cut-out letters.",
+      "fields": ["box", "photo"], "rules": {"caption": "names"},
+      "settings": {"fit": "box", "photo_slot": true, "thickness_mm": 3, "text_style": "stencil", "text_size": 8, "base_mm": 30}
+    },
+    "race": {
+      "name": "Running or cycling race profile", "summary": "The race's elevation along its length with distance ticks, START and FINISH, a caption with your finish time, and pegs to hang medals.",
+      "hint": "Running ticks every mile or kilometer, cycling every ten. Pegs stand out of the front face; print front face up.",
+      "fields": ["route", "ticks", "pegs", "race"], "rules": {"caption": "race"},
+      "settings": {"fit": "none", "source": "route", "ticks": true, "tick_every": 1, "start_finish": true, "peg_count": 3, "peg_diameter": 6,
+                   "peg_length": 20, "mount": "keyholes", "thickness_mm": 5, "base_mm": 40, "width_mm": 220, "text_size": 5,
+                   "text_style": "engrave", "text_depth": 0.8}
+    }
+  }
+}

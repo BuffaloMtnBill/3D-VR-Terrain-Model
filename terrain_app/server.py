@@ -24,7 +24,7 @@ from .printing import export_3mf
 from .addons import BALL_COLOR, catalog as studio_catalog, check_project, platform_top, project_options, text_outline
 from .studio import marker_ball_file, marker_platform_file, studio_export, studio_format
 from .hydrography import HydrographyClient, HYDROGRAPHY_URL, water_source
-from .silhouette import SilhouetteOptions, outline_json, silhouette_export
+from .silhouette import PRESET_DATA as SILHOUETTE_PRESETS, SilhouetteOptions, Sources, outline_json, silhouette_export
 from .routes import MAX_GPX_BYTES, RouteStore, public_route, route_lines, route_options, with_route
 
 ROOT = Path(__file__).parent
@@ -197,7 +197,7 @@ def create_app(test_config=None):
 
     @app.get("/")
     def index():
-        return render_template("index.html", presets=presets, default_place=default_place)
+        return render_template("index.html", presets=presets, default_place=default_place, silhouette_presets=SILHOUETTE_PRESETS)
 
     @app.get("/api/config")
     def config():
@@ -541,13 +541,27 @@ def create_app(test_config=None):
         content, mimetype, filename = marker_platform_file(request.args.get("format", "stl"), color.lower())
         return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True, download_name=filename)
 
-    # Silhouette design page: one profile slice as a flat ridgeline piece. Small and fast, so answered synchronously.
+    # Silhouette design page: profile slices (or the uploaded route's profile) as flat pieces. Small and fast, so answered synchronously.
+    def silhouette_sources(identifier, options):
+        """The uploaded route for a route profile, and the loaded building layer for a skyline (None while not loaded)."""
+        route = buildings = None
+        if options.source == "route":
+            route = route_store.load(options.route_id)
+            if route is None:
+                raise ValueError("The uploaded route is no longer available. Upload the GPX file again.")
+        if options.include_buildings:
+            with lock:
+                record = building_jobs.get(identifier)
+                buildings = record["data"]["layers"]["buildings"] if record and record["state"] == "ready" else None
+        return Sources(route, buildings)
+
     @app.post("/api/silhouette/<identifier>/outline")
     def silhouette_outline(identifier):
         terrain = find_terrain(identifier)
         if terrain is None:
             return jsonify(error="Terrain is unavailable. Generate the area again."), 404
-        return jsonify(outline_json(terrain, SilhouetteOptions.from_dict(request.get_json())))
+        options = SilhouetteOptions.from_dict(request.get_json())
+        return jsonify(outline_json(terrain, options, silhouette_sources(identifier, options)))
 
     @app.post("/api/silhouette/<identifier>/export")
     def silhouette_file(identifier):
@@ -557,7 +571,8 @@ def create_app(test_config=None):
         payload = request.get_json()
         options = SilhouetteOptions.from_dict(payload)
         attribution = (ROOT / "data" / "ATTRIBUTION.txt").read_text(encoding="utf-8")
-        content, mimetype, filename = silhouette_export(terrain, options, payload.get("format", "stl"), attribution)
+        content, mimetype, filename = silhouette_export(terrain, options, payload.get("format", "stl"), attribution,
+                                                        silhouette_sources(identifier, options))
         return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True, download_name=filename)
 
     @app.post("/api/routes")

@@ -1,13 +1,20 @@
-"""Silhouette pieces: one elevation-profile slice cut as a flat ridgeline piece with a caption and an optional mount.
+"""Silhouette pieces: elevation-profile slices (or an uploaded route's profile) cut as flat ridgeline pieces.
 
-The piece is drawn in millimeters with x from 0 at its left end and y up from its flat bottom; exports lay it flat
-on the bed with its front face up (z = thickness), so engraved and raised text print without supports.
+A design is one or more layers, each a piece drawn in millimeters with x from 0 at its left end and y up from its flat
+bottom, plus what holds them: a tab for an LED lamp base's slot, a comb base for several layers on one lamp, or two
+spacer combs for a shadow box. Exports lay every part flat on the bed (layers front face up, z = thickness), so
+engraved and raised text, ticks, and medal pegs print without supports.
+
+The assembled arrangement (the preview's 3D view) uses x along the pieces, y up, and z toward the viewer.
 """
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from io import BytesIO
 import json
 import math
+from pathlib import Path
+import re
 from xml.sax.saxutils import escape, quoteattr
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import manifold3d as mf
 import numpy as np
@@ -19,35 +26,47 @@ from shapely.ops import unary_union
 
 from .addons import HEX, finite, text_shape
 from .elevation import SOURCES
-from .features import parts as geometry_parts
+from .features import parts as geometry_parts, to_selection
 from .mesh import ModelOptions, binary_stl, model_elevations, relief_method
 from .printing import model_xml, package_3mf
+from .routes import ROUTE_ID, along
 
 BED_MM = 256  # the common printer bed the size hint is measured against
 WALL = 1.2  # mm of material kept around wall holes and engraved or stencil text
 STAND_SLOT_DEPTH, STAND_FLOOR, STAND_GAP, CLEARANCE = 4.0, 2.0, 6.0, .2
 KEYHOLE_HEAD, KEYHOLE_SLOT, KEYHOLE_TRAVEL = 7.6, 3.8, 6.0  # mm: a screw head passes the head, its shank rests in the slot
+# Combs (the lamp's comb base and the shadow box's spacer combs): a solid floor under slots the layers stand in.
+COMB_FLOOR, COMB_SLOT, COMB_WALL, COMB_STRIP, COMB_CLEARANCE, SLOT_WALL = 3.0, 5.0, 2.5, 12.0, .3, 1.2
+BOX_SIDE, BOX_BACK = 1.0, .5  # pieces are the box's inner width less BOX_SIDE; combs its inner depth less BOX_BACK
+PART_GAP = 6.0  # between parts laid out on the bed
+TICK_WIDTH, TICK_LENGTH, TICK_LABEL, MARK_DEPTH = .6, 3.0, 3.0, .6
+MILE_M = 1609.344
 FORMATS = {"stl": ("model/stl", "silhouette.stl"), "3mf": ("model/3mf", "silhouette.3mf"),
            "svg": ("image/svg+xml", "silhouette.svg"), "json": ("application/json", "silhouette-settings.json")}
+PARTS_ZIP = ("application/zip", "silhouette-parts.zip")  # STL of a design with more than one part
 TEXT_STYLES = ("engrave", "emboss", "stencil")
 MOUNTS = ("none", "stand", "holes", "keyholes")
+FITS = ("none", "lamp", "box")
+PRESET_DATA = json.loads((Path(__file__).parent / "data" / "silhouette-presets.json").read_text(encoding="utf-8"))
+PRESETS = tuple(PRESET_DATA["presets"])
+MAX_LAYERS = 7
 
 
 @dataclass(frozen=True)
 class SilhouetteOptions:
     direction: str = "ew"  # ew: along grid rows (left → right); ns: along columns (top → bottom)
     position: float = 50.0  # percent across the frame, as the geography selection page's profile slider
-    trim: tuple = (0.0, 100.0)  # percent of the slice printed
+    trim: tuple = (0.0, 100.0)  # percent of the slice (or route) printed
     width_mm: float = 180.0  # length of the piece; the trimmed slice fills it
     vertical_scale: float = 2.0  # × true proportions at that width
     base_mm: float = 8.0  # solid strip under the lowest point
     smoothing: float = 0.0  # percent
-    source: str = "true"  # true elevations, or "shaped" by the model's elevation profile
+    source: str = "true"  # true elevations, "shaped" by the model's elevation profile, or the uploaded "route"
     relief: str = "standard"
     relief_strength: float = 50.0
     mirror: bool = False
     thickness_mm: float = 4.0
-    text: str = ""
+    text: str = ""  # up to three lines
     text_size: float = 5.0  # cap height, mm
     text_style: str = "engrave"
     text_align: str = "center"
@@ -56,6 +75,35 @@ class SilhouetteOptions:
     hole_diameter: float = 4.0
     body_color: str = "#234e40"
     text_color: str = "#f0ead6"
+    preset: str = "custom"  # recorded in the settings file; the client applies a preset's fields
+    layers: tuple = ()  # ((position %, base mm, color), ...) front to back; empty: one layer at position and base_mm
+    fit: str = "none"  # lamp: a tab (or comb base) for an LED lamp base's slot; box: spacer combs for a shadow box
+    slot_width: float = 4.0
+    slot_length: float = 160.0
+    slot_depth: float = 8.0
+    slot_clearance: float = .2
+    layer_spacing: float = 6.0  # between layer slots in a lamp's comb base
+    box_width: float = 200.0  # inner size of the shadow box
+    box_height: float = 150.0
+    box_depth: float = 40.0
+    photo_slot: bool = False
+    photo_gap: float = 1.0
+    led_channel: bool = False
+    led_width: float = 5.0
+    led_depth: float = 2.0
+    include_buildings: bool = False
+    building_corridor_m: float = 30.0
+    route_id: str = ""
+    summit_pin: bool = False
+    pin_diameter: float = 1.8
+    pin_depth: float = 10.0
+    peg_count: int = 0
+    peg_diameter: float = 6.0
+    peg_length: float = 20.0
+    ticks: bool = False
+    tick_every: float = 1.0  # miles or kilometers, as units
+    units: str = "ft"  # the app's switch: ft ticks every mile, m every kilometer
+    start_finish: bool = False
 
     @classmethod
     def from_dict(cls, value):
@@ -64,24 +112,44 @@ class SilhouetteOptions:
         defaults, numbers = cls(), {}
         limits = {"position": (0, 100, "The slice position must be between 0 and 100 percent."),
                   "width_mm": (40, 400, "The piece width must be between 40 and 400 mm."),
-                  "vertical_scale": (.5, 10, "The vertical scale must be between 0.5 and 10 times."),
+                  "vertical_scale": (.5, 100, "The vertical scale must be between 0.5 and 100 times."),
                   "base_mm": (2, 40, "The base height must be between 2 and 40 mm."),
                   "smoothing": (0, 100, "Smoothing must be between 0 and 100 percent."),
                   "relief_strength": (0, 100, "The elevation profile strength must be between 0 and 100 percent."),
                   "thickness_mm": (1.2, 30, "The thickness must be between 1.2 and 30 mm."),
                   "text_size": (2, 30, "The text size must be between 2 and 30 mm."),
                   "text_depth": (.2, 5, "The text depth must be between 0.2 and 5 mm."),
-                  "hole_diameter": (2, 10, "The wall hole diameter must be between 2 and 10 mm.")}
+                  "hole_diameter": (2, 10, "The wall hole diameter must be between 2 and 10 mm."),
+                  "slot_width": (1, 20, "The lamp slot width must be between 1 and 20 mm."),
+                  "slot_length": (20, 400, "The lamp slot length must be between 20 and 400 mm."),
+                  "slot_depth": (2, 30, "The lamp slot depth must be between 2 and 30 mm."),
+                  "slot_clearance": (0, 1, "The lamp slot clearance must be between 0 and 1 mm."),
+                  "layer_spacing": (2, 30, "The layer spacing must be between 2 and 30 mm."),
+                  "box_width": (41, 500, "The box's inner width must be between 41 and 500 mm."),
+                  "box_height": (20, 400, "The box's inner height must be between 20 and 400 mm."),
+                  "box_depth": (8, 200, "The box's inner depth must be between 8 and 200 mm."),
+                  "photo_gap": (.3, 5, "The photo slot must be between 0.3 and 5 mm wide."),
+                  "led_width": (2, 20, "The LED channel must be between 2 and 20 mm wide."),
+                  "led_depth": (.5, 5, "The LED channel must be between 0.5 and 5 mm deep."),
+                  "building_corridor_m": (5, 200, "The building corridor must be between 5 and 200 m wide."),
+                  "pin_diameter": (1, 4, "The summit pin hole must be between 1 and 4 mm across."),
+                  "pin_depth": (3, 30, "The summit pin hole must be between 3 and 30 mm deep."),
+                  "peg_diameter": (3, 12, "The medal pegs must be between 3 and 12 mm across."),
+                  "peg_length": (5, 40, "The medal pegs must be between 5 and 40 mm long."),
+                  "tick_every": (.1, 100, "Distance ticks must be between 0.1 and 100 miles or kilometers apart.")}
         for name, (low, high, message) in limits.items():
             number = value.get(name, getattr(defaults, name))
             if not finite(number) or not low <= number <= high:
                 raise ValueError(message)
             numbers[name] = float(number)
         choices = {"direction": (("ew", "ns"), "Choose ew (left to right) or ns (top to bottom) as the slice direction."),
-                   "source": (("true", "shaped"), "Choose true or shaped as the profile source."),
+                   "source": (("true", "shaped", "route"), "Choose true, shaped, or route as the profile source."),
                    "text_style": (TEXT_STYLES, "Choose engrave, emboss, or stencil as the text style."),
                    "text_align": (("left", "center", "right"), "Choose left, center, or right as the text position."),
-                   "mount": (MOUNTS, "Choose none, stand, holes, or keyholes as the mount.")}
+                   "mount": (MOUNTS, "Choose none, stand, holes, or keyholes as the mount."),
+                   "fit": (FITS, "Choose none, lamp, or box as the fit."),
+                   "units": (("ft", "m"), "Choose ft (miles) or m (kilometers) as the units."),
+                   "preset": (PRESETS, "Choose one of the listed design presets.")}
         picked = {}
         for name, (allowed, message) in choices.items():
             picked[name] = value.get(name, getattr(defaults, name))
@@ -93,35 +161,146 @@ class SilhouetteOptions:
             raise ValueError("Trim must be a start and an end percentage between 0 and 100, the start before the end.")
         if trim[1]-trim[0] < 5:
             raise ValueError("Trim must keep at least 5 percent of the slice.")
-        mirror = value.get("mirror", False)
-        if not isinstance(mirror, bool):
-            raise ValueError("Mirror must be true or false.")
+        flags = {}
+        for name, label in (("mirror", "Mirror"), ("photo_slot", "The photo slot"), ("led_channel", "The LED channel"),
+                            ("include_buildings", "Include buildings"), ("summit_pin", "The summit pin hole"),
+                            ("ticks", "Distance ticks"), ("start_finish", "START and FINISH labels")):
+            flags[name] = value.get(name, getattr(defaults, name))
+            if not isinstance(flags[name], bool):
+                raise ValueError(f"{label} must be true or false.")
         text = value.get("text", "")
-        if not isinstance(text, str) or len(text) > 60 or "\n" in text:
-            raise ValueError("The text must be one line of at most 60 characters.")
+        if not isinstance(text, str):
+            raise ValueError("The caption must be text.")
+        lines = [line.strip() for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+        while lines and not lines[-1]:
+            lines.pop()
+        while lines and not lines[0]:
+            lines.pop(0)
+        if len(lines) > 3 or any(len(line) > 60 for line in lines):
+            raise ValueError("The caption must be at most 3 lines of at most 60 characters each.")
         colors = {}
         for name in ("body_color", "text_color"):
             color = value.get(name, getattr(defaults, name))
             if not isinstance(color, str) or not HEX.fullmatch(color):
                 raise ValueError(f"Choose a six-digit hex color for the {name.split('_')[0]}.")
             colors[name] = color.lower()
-        options = cls(**numbers, **picked, **colors, trim=(float(trim[0]), float(trim[1])), mirror=mirror, text=text.strip(),
-                      relief=relief_method(value.get("relief", "standard")))
+        pegs = value.get("peg_count", 0)
+        if not finite(pegs) or pegs != int(pegs) or not 0 <= pegs <= 8:
+            raise ValueError("The number of medal pegs must be a whole number from 0 to 8.")
+        layers = value.get("layers", [])
+        if not isinstance(layers, (list, tuple)) or len(layers) > MAX_LAYERS:
+            raise ValueError("Supply 1 to 7 layers, each with a slice position, a base height, and a color.")
+        parsed = []
+        for index, layer in enumerate(layers, 1):
+            if not isinstance(layer, dict):
+                raise ValueError("Supply 1 to 7 layers, each with a slice position, a base height, and a color.")
+            position, base, color = layer.get("position"), layer.get("base_mm", numbers["base_mm"]), layer.get("color", colors["body_color"])
+            if not finite(position) or not 0 <= position <= 100:
+                raise ValueError(f"Layer {index}'s slice position must be between 0 and 100 percent.")
+            if not finite(base) or not 2 <= base <= 120:
+                raise ValueError(f"Layer {index}'s base height must be between 2 and 120 mm.")
+            if not isinstance(color, str) or not HEX.fullmatch(color):
+                raise ValueError(f"Choose a six-digit hex color for layer {index}.")
+            parsed.append((float(position), float(base), color.lower()))
+        route_id = value.get("route_id", "")
+        if picked["source"] == "route" and (not isinstance(route_id, str) or not ROUTE_ID.fullmatch(route_id)):
+            raise ValueError("Upload a GPX route on the geography selection page to use its elevation profile.")
+        options = cls(**numbers, **picked, **colors, **flags, trim=(float(trim[0]), float(trim[1])), text="\n".join(lines),
+                      relief=relief_method(value.get("relief", "standard")), layers=tuple(parsed), peg_count=int(pegs),
+                      route_id=route_id if picked["source"] == "route" else "")
+        if options.fit == "box":
+            options = replace(options, width_mm=options.box_width-BOX_SIDE)  # pieces fill the box's width
+        count = len(layer_specs(options))
         if options.text and options.text_style == "engrave" and options.text_depth > options.thickness_mm-.4:
             raise ValueError("Engraved text must leave at least 0.4 mm behind it. Make the text shallower or the piece thicker.")
+        if count > 1 and options.fit == "none":
+            raise ValueError("Several layers need a lamp-base or shadow-box fit to stand in. Choose one, or use a single layer.")
+        if count > 1 and options.source == "route":
+            raise ValueError("A route profile makes a single layer. Use one layer.")
+        if options.fit != "none" and options.mount != "none":
+            raise ValueError("A lamp base or shadow box holds the piece, so set the mount to none.")
+        if options.fit == "lamp":
+            if tab_thickness(options) < .8 or options.slot_length-2*options.slot_clearance < 10:
+                raise ValueError("The lamp slot is too small for a tab. Check its width, length, and clearance.")
+            if count > 1 and options.layer_spacing-(options.thickness_mm+COMB_CLEARANCE) < SLOT_WALL:
+                raise ValueError("The layer spacing must leave at least 1.2 mm between the comb's slots. Space the layers further apart or make them thinner.")
+        if options.fit == "box":
+            box_slots(options, count)  # raises when the box is too shallow
         return options
 
 
-# --- Profile ----------------------------------------------------------------------------------------------
+def layer_specs(options):
+    """(position %, base mm, color) for each layer, front to back."""
+    return options.layers or ((options.position, options.base_mm, options.body_color),)
 
-def slice_heights(terrain, options):
+
+def tab_thickness(options):
+    return options.slot_width-options.slot_clearance
+
+
+def tab_span(options, width):
+    """The lamp tab's x range under a piece (or comb base) of this width: centered, never longer than the piece."""
+    length = min(options.slot_length-2*options.slot_clearance, width)
+    return (width-length)/2, (width+length)/2
+
+
+def box_slots(options, count):
+    """Slots along each spacer comb, front to back: (kind, center from the comb's front end, width, depth), evenly spaced."""
+    length = options.box_depth-BOX_BACK
+    items = [("layer", options.thickness_mm+COMB_CLEARANCE, COMB_SLOT)]*count
+    if options.led_channel:
+        items.append(("led", options.led_width, options.led_depth))
+    if options.photo_slot:
+        items.append(("photo", options.photo_gap, COMB_SLOT))
+    room = length-2*COMB_WALL-sum(width for _, width, _ in items)
+    gap = room/(len(items)-1) if len(items) > 1 else 0
+    if room < 0 or (len(items) > 1 and gap < SLOT_WALL):
+        extras = " and its photo and LED slots" if options.photo_slot and options.led_channel else " and its photo slot" if options.photo_slot else " and its LED channel" if options.led_channel else ""
+        raise ValueError(f"The box's inner depth of {options.box_depth:g} mm is too shallow for {count} layer{'s' if count > 1 else ''}{extras}. "
+                         "Make the box deeper, the layers thinner, or use fewer layers.")
+    slots, cursor = [], COMB_WALL if len(items) > 1 else (length-items[0][1])/2
+    for kind, width, depth in items:
+        slots.append((kind, cursor+width/2, width, depth))
+        cursor += width+gap
+    return slots
+
+
+def lamp_comb(options, count):
+    """The comb base's depth and its layer slots' centers from its front edge."""
+    slot = options.thickness_mm+COMB_CLEARANCE
+    depth = max((count-1)*options.layer_spacing+slot+2*COMB_WALL, tab_thickness(options)+2*COMB_WALL)
+    first = depth/2-(count-1)*options.layer_spacing/2
+    return depth, [first+index*options.layer_spacing for index in range(count)]
+
+
+# --- Profiles ---------------------------------------------------------------------------------------------
+
+@dataclass
+class Sources:
+    """Data a design can draw on beyond the terrain: the uploaded route, and the loaded OSM building layer (None: not loaded)."""
+    route: dict = None
+    buildings: list = None
+
+
+def grid_sample(grid, uv):
+    """Bilinear heights at frame coordinates (u right, v down, 0–1 across the grid)."""
+    rows, columns = grid.shape
+    x, y = np.clip(uv[:, 0], 0, 1)*(columns-1), np.clip(uv[:, 1], 0, 1)*(rows-1)
+    x0, y0 = np.minimum(np.floor(x).astype(int), columns-2), np.minimum(np.floor(y).astype(int), rows-2)
+    fx, fy = x-x0, y-y0
+    top = grid[y0, x0]*(1-fx)+grid[y0, x0+1]*fx
+    bottom = grid[y0+1, x0]*(1-fx)+grid[y0+1, x0+1]*fx
+    return top*(1-fy)+bottom*fy
+
+
+def slice_heights(terrain, options, position=None):
     """Heights (m) along the slice and their distances (m), sampled exactly as the geography page's profile chart."""
-    heights = (terrain.elevations.astype(np.float64) if options.source == "true"
+    heights = (terrain.elevations.astype(np.float64) if options.source != "shaped"
                else model_elevations(terrain, ModelOptions(relief=options.relief, relief_strength=options.relief_strength)))
     rows, columns = heights.shape
     horizontal = options.direction == "ew"
     last = rows-1 if horizontal else columns-1
-    cross = options.position/100*last
+    cross = (options.position if position is None else position)/100*last
     a = math.floor(cross)
     b, mix = min(a+1, last), cross-a
     values = heights[a]*(1-mix)+heights[b]*mix if horizontal else heights[:, a]*(1-mix)+heights[:, b]*mix
@@ -129,27 +308,118 @@ def slice_heights(terrain, options):
     return np.linspace(0, length, len(values)), values, length
 
 
-def profile_points(terrain, options):
-    """The ridgeline in mm, left to right: the trimmed slice fills width_mm; its lowest point sits on the base.
+def route_profile(terrain, route):
+    """Distance along the route (m) and its elevation, segments joined in order.
 
-    Trim endpoints are interpolated, so the piece starts and ends exactly where asked. Smoothing is a moving
-    average over up to 8% of the samples on each side, then a Douglas–Peucker simplification whose tolerance
-    grows with it (a tiny one at 0% drops collinear points on flat ground)."""
-    distances, values, length = slice_heights(terrain, options)
+    Elevations are the GPX's own, smoothed when the route was stored; without them the terrain is sampled, which needs
+    the whole route inside the frame. Kept points are densified to the grid spacing so the samples follow the ground."""
+    grid = terrain.elevations.astype(np.float64)
+    rows, columns = grid.shape
+    step = max(min(terrain.width/(columns-1), terrain.height/(rows-1)), 1.0)
+    distances, heights, offset = [], [], 0.0
+    for segment in route["segments"]:
+        points = np.asarray([point[:2] for point in segment], dtype=np.float64)
+        d = along(points)
+        elevations = np.asarray([np.nan if len(point) < 3 or point[2] is None else point[2] for point in segment], dtype=np.float64)
+        if np.isnan(elevations).any():
+            dense = np.unique(np.concatenate((d, np.arange(0, d[-1], step))))
+            uv = to_selection(terrain.bounds, np.column_stack((np.interp(dense, d, points[:, 0]), np.interp(dense, d, points[:, 1]))))
+            if not ((uv > -1e-6) & (uv < 1+1e-6)).all():
+                if route.get("schema_version", 1) < 2:
+                    raise ValueError("This route was stored before elevations were kept. Upload the GPX file again, or frame the whole route.")
+                raise ValueError("This GPX file has no elevations; re-export it with elevation or frame the whole route.")
+            d, elevations = dense, grid_sample(grid, uv)
+        distances.append(d+offset)
+        heights.append(elevations)
+        offset += float(d[-1])
+    distances, heights = np.concatenate(distances), np.concatenate(heights)
+    distances, keep = np.unique(distances, return_index=True)
+    if offset < 10 or len(distances) < 2:
+        raise ValueError("The route is too short for a profile.")
+    return distances, heights[keep], offset
+
+
+def with_buildings(terrain, options, position, distances, values, buildings):
+    """The slice raised to the tops of the mapped buildings within the corridor: each footprint's span along the slice
+    stands at its lowest ground plus the building's height, with straight walls. Returns distances, heights, count."""
+    width, height, half = terrain.width, terrain.height, options.building_corridor_m/2
+    horizontal = options.direction == "ew"
+    cross = position/100*(height if horizontal else width)
+    strip = box(0, cross-half, width, cross+half) if horizontal else box(cross-half, 0, cross+half, height)
+    low, high = cross-half, cross+half
+    spans = []
+    for feature in buildings or []:
+        top = feature.get("height_m")
+        if not finite(top) or top <= 0:
+            continue
+        for polygon in feature.get("polygons", []):
+            outer = np.asarray(polygon.get("outer") or [], dtype=np.float64)
+            if len(outer) < 4:
+                continue
+            outer = outer*(width, height)
+            across = outer[:, 1] if horizontal else outer[:, 0]
+            if across.max() < low or across.min() > high:
+                continue
+            shape = make_valid(Polygon(outer, [np.asarray(ring, dtype=np.float64)*(width, height) for ring in polygon.get("holes", []) if len(ring) >= 4]))
+            piece = shape.intersection(strip)
+            if piece.is_empty:
+                continue
+            x0, y0, x1, y1 = piece.bounds
+            spans.append((x0, x1, top) if horizontal else (y0, y1, top))
+    if not spans:
+        return distances, values, 0
+    length = distances[-1]
+    edges = np.clip([edge for a0, a1, _ in spans for edge in (a0-.01, a0, a1, a1+.01)], 0, length)
+    samples = np.unique(np.concatenate((distances, edges)))
+    ground = np.interp(samples, distances, values)
+    tops = ground.copy()
+    for a0, a1, top in spans:
+        inside = (samples >= a0) & (samples <= a1)
+        if inside.any():
+            tops[inside] = np.maximum(tops[inside], ground[inside].min()+top)
+    return samples, tops, len(spans)
+
+
+def profile_heights(terrain, options, position=None, sources=None):
+    """The trimmed, smoothed profile: x (mm, before mirroring), heights (m), span (m), start (m), and mm per meter.
+
+    Trim endpoints are interpolated, so the piece starts and ends exactly where asked. Smoothing is a moving average
+    over up to 8% of the samples on each side."""
+    sources = sources or Sources()
+    if options.source == "route":
+        if sources.route is None:
+            raise ValueError("The uploaded route is no longer available. Upload the GPX file again.")
+        distances, values, length = route_profile(terrain, sources.route)
+    else:
+        position = options.position if position is None else position
+        distances, values, length = slice_heights(terrain, options, position)
+        if options.include_buildings and sources.buildings:
+            distances, values, _ = with_buildings(terrain, options, position, distances, values, sources.buildings)
     start, end = options.trim[0]/100*length, options.trim[1]/100*length
-    along = np.concatenate(([start], distances[(distances > start) & (distances < end)], [end]))
-    heights = np.interp(along, distances, values)
+    samples = np.concatenate(([start], distances[(distances > start) & (distances < end)], [end]))
+    heights = np.interp(samples, distances, values)
     radius = round(options.smoothing/100*len(heights)*.08)
     if radius:
         padded = np.pad(heights, radius, mode="edge")
         heights = np.convolve(padded, np.ones(2*radius+1)/(2*radius+1), mode="valid")
     scale = options.width_mm/(end-start)
-    x = (along-start)*scale
-    y = (heights-heights.min())*scale*options.vertical_scale+options.base_mm
+    return (samples-start)*scale, heights, end-start, start, scale
+
+
+def ridge_points(x, heights, datum, base, scale, options):
+    """The ridgeline in mm, left to right, with the datum elevation on the base; simplification grows with smoothing
+    (a tiny tolerance at 0% drops collinear points on flat ground)."""
+    y = (heights-datum)*scale*options.vertical_scale+base
     if options.mirror:
         x, y = options.width_mm-x[::-1], y[::-1]
     line = LineString(np.column_stack((x, y))).simplify(.005+options.smoothing/100*.6, preserve_topology=False)
-    return np.asarray(line.coords), end-start
+    return np.asarray(line.coords)
+
+
+def profile_points(terrain, options, position=None, sources=None):
+    """One layer's ridgeline in mm with its own lowest point on the base, and the length of ground it spans (m)."""
+    x, heights, span, _, scale = profile_heights(terrain, options, position, sources)
+    return ridge_points(x, heights, heights.min(), options.base_mm, scale, options), span
 
 
 # --- 2D layout --------------------------------------------------------------------------------------------
@@ -199,12 +469,102 @@ def stencil_bridges(shape, size):
     return shape.difference(unary_union(bars)) if bars else shape
 
 
-def layout(terrain, options):
-    """Everything drawn or cut in 2D: the body (with wall holes and stencil cuts), the text, mount marks, and warnings."""
-    points, span_m = profile_points(terrain, options)
-    width, height = options.width_mm, float(points[:, 1].max())
-    outline = orient(make_valid(Polygon([(0, 0), *points.tolist(), (width, 0)])).buffer(0))
-    warnings, mounts = [], []
+def caption(options, width, margin, center):
+    """The caption's lines stacked about `center` (lines 1.6 × the cap height apart), aligned left, center, or right."""
+    lines = options.text.split("\n")
+    if options.text_align == "center" or len(lines) == 1:
+        shape, missing = text_shape(options.text, options.text_size)
+        if shape.is_empty:
+            return shape, missing, 0.0
+        x0, _, x1, _ = shape.bounds
+        x = {"left": margin+(x1-x0)/2, "center": width/2, "right": width-margin-(x1-x0)/2}[options.text_align]
+        return translate(shape, x, center), missing, x1-x0
+    pitch, shapes, missing, widest = options.text_size*1.6, [], [], 0.0
+    for index, line in enumerate(lines):
+        shape, lost = text_shape(line, options.text_size)
+        missing.extend(lost)
+        if shape.is_empty:
+            continue
+        x0, _, x1, _ = shape.bounds
+        widest = max(widest, x1-x0)
+        x = margin+(x1-x0)/2 if options.text_align == "left" else width-margin-(x1-x0)/2
+        shapes.append(translate(shape, x, center+((len(lines)-1)/2-index)*pitch))
+    return unary_union(shapes) if shapes else Polygon(), tuple(dict.fromkeys(missing)), widest
+
+
+def block_height(options):
+    lines = len(options.text.split("\n")) if options.text else 0
+    return lines*options.text_size+max(lines-1, 0)*.6*options.text_size
+
+
+def label(text, size, x, y):
+    shape, _ = text_shape(text, size)
+    return translate(shape, x, y) if not shape.is_empty else shape
+
+
+def tick_marks(options, start, span, scale, y):
+    """Engraved ticks every tick_every miles or kilometers from the route's start, labeled where they have room."""
+    unit = MILE_M if options.units == "ft" else 1000.0
+    step = options.tick_every*unit
+    ticks, labels, positions = [], [], []
+    for count in range(1, int((start+span)/step+1e-9)+1):
+        distance = count*step
+        if distance <= start:
+            continue
+        x = (distance-start)*scale
+        if options.mirror:
+            x = options.width_mm-x
+        if not WALL+TICK_WIDTH < x < options.width_mm-WALL-TICK_WIDTH:
+            continue
+        positions.append((x, count))
+        ticks.append(box(x-TICK_WIDTH/2, y, x+TICK_WIDTH/2, y+TICK_LENGTH))
+    if not positions:
+        return Polygon(), 0
+    pitch = step*scale
+    names = [f"{count*options.tick_every:g}" for _, count in positions]
+    room = max(len(name) for name in names)*TICK_LABEL*.75+2
+    every = next(value for value in (1, 2, 5, 10, 20, 50, 100, 10**9) if pitch*value >= room)
+    unit = " mi" if options.units == "ft" else " km"
+    for (x, count), name in zip(positions, names):
+        if count % every and (x, count) != positions[-1]:
+            continue
+        if not labels:
+            name += unit  # the first label carries the unit
+        shape = label(name, TICK_LABEL, x, y-.8-TICK_LABEL/2)
+        x0, _, x1, _ = shape.bounds
+        if x0 > WALL and x1 < options.width_mm-WALL and not any(shape.intersects(other) for other in labels):
+            labels.append(shape)
+    return unary_union(ticks+labels), len(ticks)
+
+
+def layout(terrain, options, sources=None):
+    """Everything drawn or cut in 2D: each layer's body (with wall holes and stencil cuts), the front layer's text and
+    markings, mount marks, the fit's parts, and warnings."""
+    sources = sources or Sources()
+    warnings, notes = [], []
+    specs = layer_specs(options)
+    curves = [profile_heights(terrain, options, position, sources) for position, _, _ in specs]
+    # Layers share one datum, so heights compare truly between them; a single layer sits its lowest point on the base.
+    datum = min(float(heights.min()) for _, heights, _, _, _ in curves)
+    width = options.width_mm
+    limit = options.box_height-COMB_FLOOR-.5 if options.fit == "box" else None
+    multi = len(specs) > 1
+    layers = []
+    for index, ((position, base, color), (x, heights, span, start, scale)) in enumerate(zip(specs, curves)):
+        points = ridge_points(x, heights, datum, base, scale, options)
+        outline = orient(make_valid(Polygon([(0, 0), *points.tolist(), (width, 0)])).buffer(0))
+        height = float(points[:, 1].max())
+        name = "Silhouette" if not multi else f"Layer {index+1}" + (" (front)" if index == 0 else " (back)" if index == len(specs)-1 else "")
+        if limit is not None and height > limit:
+            outline = orient(make_valid(outline.intersection(box(0, 0, width, limit))))
+            warnings.append(f"{name if multi else 'The piece'} is {height:.0f} mm tall, more than the box's inner height allows "
+                            f"({limit:.0f} mm above the combs), so its top is cut flat. Lower the vertical scale or the base heights.")
+            height = limit
+        layers.append({"name": name, "position": position, "base": base, "color": color, "outline": outline, "body": outline,
+                       "points": points, "height": height, "lowest": float(points[:, 1].min()), "span_m": span, "start_m": start, "scale": scale})
+    front = layers[0]
+    outline, base, height = front["outline"], front["base"], front["height"]
+    mounts = []
     holes = mount_shapes(options, height)
     if holes:
         if all(outline.buffer(-WALL).contains(hole) for hole in holes):
@@ -216,38 +576,138 @@ def layout(terrain, options):
             warnings.append(f"The wall holes do not fit inside the piece, so they are left out. Raise the base to at least {math.ceil(need)} mm.")
     elif options.mount == "stand":
         mounts = [{"kind": "foot", "x0": round(x0, 3), "x1": round(x1, 3), "y0": -STAND_FLOOR, "y1": STAND_SLOT_DEPTH} for x0, x1 in stand_feet(options)]
-    text = Polygon()
+    # The base holds, bottom to top: medal pegs, the caption (with START and FINISH at its ends), and distance ticks. Layers in a
+    # lamp's comb base hide their bottom in its slots, and a box's spacer combs hide their ends.
+    margin = max(text_margin(options), COMB_STRIP+2 if options.fit == "box" else 0)
+    pegs = options.peg_count > 0
+    hidden = COMB_SLOT+.5 if options.fit == "lamp" and multi else 0.0
+    bottom = options.peg_diameter+2*WALL if pegs else hidden
+    top = base-(WALL+TICK_LENGTH+.8+TICK_LABEL+.8) if options.ticks else base
+    banded = pegs or options.ticks or "\n" in options.text or options.start_finish or hidden
+    room = outline.buffer(-WALL) if options.text_style != "emboss" else outline
+    engrave_room = outline.buffer(-WALL)
+    text, markings, ticks = Polygon(), [], 0
     if options.text:
-        shape, missing = text_shape(options.text, options.text_size)
+        center = (bottom+top)/2 if banded else base/2
+        shape, missing, line_width = caption(options, width, margin, center)
         if missing:
             warnings.append(f"The font cannot draw {''.join(missing)}; those characters are left as spaces.")
         if not shape.is_empty:
-            x0, y0, x1, y1 = shape.bounds
-            margin = text_margin(options)
-            x = {"left": margin+(x1-x0)/2, "center": width/2, "right": width-margin-(x1-x0)/2}[options.text_align]
-            placed = translate(shape, x, options.base_mm/2)
-            if options.text_style == "stencil":
-                placed = stencil_bridges(placed, options.text_size)
-            room = outline.buffer(-WALL) if options.text_style != "emboss" else outline
+            placed = stencil_bridges(shape, options.text_size) if options.text_style == "stencil" else shape
             text = make_valid(placed.intersection(room))
-            if text.area < placed.area*.98:
+            need = bottom+block_height(options)+1.6+(base-top)
+            if banded and need > base+.01:
+                warnings.append(f"The caption{', ticks,' if options.ticks else ''}{' and pegs' if pegs else ''} need a base of at least {math.ceil(need)} mm. Raise the base height.")
+            elif text.area < placed.area*.98:
                 warnings.append("The text runs past the edge of the piece and is trimmed. Make it smaller or the base taller.")
-            if x1-x0 > width-2*margin:
+            if line_width > width-2*margin:
                 warnings.append("The text is wider than the space between the mounts. Shorten it or make it smaller.")
             if options.text_size < 3:
                 warnings.append("Text under 3 mm tall may not print clearly. Make it larger.")
+    if options.start_finish:
+        size = max(3.0, min(options.text_size*.7, 5.0))
+        center = (bottom+top)/2
+        ends = [label(word, size, 0, center) for word in ("START", "FINISH")]
+        left, right = (ends[1], ends[0]) if options.mirror else ends
+        left = translate(left, margin-left.bounds[0])
+        right = translate(right, width-margin-right.bounds[2])
+        if not text.is_empty and (text.intersects(left.buffer(1.5)) or text.intersects(right.buffer(1.5))):
+            warnings.append("The caption runs into the START and FINISH labels. Shorten it or make it smaller.")
+        markings.extend((left, right))
+    if options.ticks:
+        first = front["start_m"] if options.source == "route" else 0.0
+        shape, ticks = tick_marks(options, first, front["span_m"], front["scale"], base-WALL-TICK_LENGTH)
+        markings.append(shape)
+        if not ticks:
+            warnings.append("No distance ticks fall on the piece. Make the ticks closer together.")
+    marks = make_valid(unary_union(markings).intersection(engrave_room)) if markings else Polygon()
+    if not text.is_empty and options.text_style != "stencil":
+        marks = marks.difference(text.buffer(.3))  # never two engravings in one place
+    peg_marks = []
+    if pegs:
+        inset = margin+options.peg_diameter/2
+        span = width-2*inset
+        y = WALL+options.peg_diameter/2
+        circles = [Point(inset+(index+.5)*span/options.peg_count, y).buffer(options.peg_diameter/2, quad_segs=16) for index in range(options.peg_count)]
+        if span <= 0 or not all(outline.buffer(-.4).contains(circle) for circle in circles):
+            warnings.append(f"The medal pegs do not fit on the base, so they are left out. Raise the base to at least {math.ceil(options.peg_diameter+2*WALL)} mm or use fewer pegs.")
+        else:
+            near = unary_union([circle.buffer(.6) for circle in circles])
+            if near.intersects(text) or near.intersects(marks) or any(near.intersects(hole) for hole in holes):
+                warnings.append("A medal peg overlaps the caption, the markings, or a wall hole. Raise the base, shorten the caption, or use fewer pegs.")
+            peg_marks = [{"kind": "peg", "x": round(circle.centroid.x, 3), "y": round(y, 3), "d": options.peg_diameter, "length": options.peg_length}
+                         for circle in circles]
+    pin = None
+    if options.summit_pin:
+        index = int(np.argmax(front["points"][:, 1]))
+        x, r = float(front["points"][index, 0]), options.pin_diameter/2
+        x = min(max(x, r+WALL), width-r-WALL)
+        need = box(x-r-.6, height-options.pin_depth, x+r+.6, height-1.5)
+        if options.thickness_mm < options.pin_diameter+1.2:
+            warnings.append(f"The piece must be at least {options.pin_diameter+1.2:.1f} mm thick for the summit pin hole, so it is left out. Make it thicker.")
+        elif height-options.pin_depth < base or not outline.buffer(.01).contains(need):
+            warnings.append("The summit is too narrow or too low for the pin hole, so it is left out. Smooth the profile or raise the vertical scale.")
+        else:
+            pin = {"kind": "pin", "x": round(x, 3), "y0": round(height-options.pin_depth, 3), "y1": round(height, 3), "d": options.pin_diameter}
     body = outline.difference(text) if options.text_style == "stencil" and not text.is_empty else outline
     if len(geometry_parts(body, "Polygon")) > 1:
         warnings.append("The stencil text splits the piece into separate parts. Move or shrink the text.")
-    lowest = float(points[:, 1].min())
-    if lowest < 3:
-        warnings.append(f"The thinnest point of the piece is {lowest:.1f} mm tall and may snap. Raise the base.")
-    if max(width, height) > BED_MM:
-        warnings.append(f"The piece is {width:.0f} × {height:.0f} mm, larger than a {BED_MM} mm printer bed. Make it narrower or lower the vertical scale.")
+    front.update(outline=outline, body=body)
+    for layer in layers:
+        if layer["lowest"] < 3:
+            warnings.append(f"The thinnest point of {layer['name'].lower() if multi else 'the piece'} is {layer['lowest']:.1f} mm tall and may snap. Raise the base.")
+    fit = fit_layout(options, layers, warnings, notes)
+    for part in fit["parts"]:
+        if max(part["size"][:2]) > BED_MM:
+            warnings.append(f"{part['name']} is {part['size'][0]:.0f} × {part['size'][1]:.0f} mm, larger than a {BED_MM} mm printer bed. "
+                            "Make it narrower or lower the vertical scale.")
     if options.mount == "stand" and options.thickness_mm < 2.4:
         warnings.append("A piece thinner than 2.4 mm may wobble in its stand. Make it thicker.")
-    return {"body": body, "outline": outline, "text": text, "points": points, "mounts": mounts, "warnings": warnings,
-            "width": width, "height": height, "lowest": lowest, "span_m": span_m}
+    if options.include_buildings and options.source != "route" and sources.buildings is None:
+        warnings.append("Turn on the Buildings map layer and wait for it to load to include buildings.")
+    if min(len(layer["points"]) for layer in layers) < 8:
+        warnings.append("The profile has very few samples, so it looks coarse. Generate a denser grid or choose a longer slice.")
+    return {"layers": layers, "body": body, "outline": outline, "text": text, "markings": marks, "points": front["points"],
+            "mounts": mounts+peg_marks+([pin] if pin else []), "pegs": peg_marks, "pin": pin, "ticks": ticks, "fit": fit,
+            "warnings": warnings, "notes": notes, "width": width, "height": max(layer["height"] for layer in layers),
+            "lowest": front["lowest"], "span_m": front["span_m"]}
+
+
+def fit_layout(options, layers, warnings, notes):
+    """The lamp tab, comb base, or spacer combs, where each layer stands in the assembly (y: its bottom, z: its back face;
+    the lamp slot or the box's front-to-back center is z = 0), and the parts list."""
+    width, thickness, count = options.width_mm, options.thickness_mm, len(layers)
+    parts = [{"name": layer["name"], "size": [round(width, 1), round(layer["height"], 1), thickness], "count": 1} for layer in layers]
+    result = {"kind": options.fit, "parts": parts, "placements": [{"y": 0.0, "z": 0.0} for _ in layers], "tab": None, "comb_base": None, "combs": None, "box": None}
+    if options.fit == "lamp":
+        t = tab_thickness(options)
+        x0, x1 = tab_span(options, width)
+        result["tab"] = {"x0": round(x0, 3), "x1": round(x1, 3), "y0": -options.slot_depth, "y1": 0.0, "thickness": round(t, 3), "z": 0.0}
+        if x1-x0 < options.slot_length-2*options.slot_clearance-1e-6:
+            warnings.append(f"The piece is narrower than the lamp's slot, so its tab is only {x1-x0:.0f} mm long and may wobble. "
+                            f"Widen it to at least {math.ceil(options.slot_length-2*options.slot_clearance)} mm.")
+        if count == 1:
+            # The tab is flush with the piece's back face, so both print flat on the bed.
+            result["placements"] = [{"y": 0.0, "z": round(-t/2, 3)}]
+            parts[0]["name"] += " with lamp tab"
+            if thickness < t-1e-6:
+                notes.append(f"The piece is thinner than the {t:g} mm tab, so the tab stands {t-thickness:.1f} mm proud of its front face; it still prints flat.")
+        else:
+            depth, centers = lamp_comb(options, count)
+            result["comb_base"] = {"width": round(width, 3), "depth": round(depth, 3), "height": COMB_FLOOR+COMB_SLOT, "floor": COMB_FLOOR,
+                                   "slots": [round(center, 3) for center in centers], "slot_width": round(thickness+COMB_CLEARANCE, 3)}
+            result["placements"] = [{"y": COMB_FLOOR, "z": round(depth/2-center-thickness/2, 3)} for center in centers]
+            parts.append({"name": "Comb base with lamp tab", "size": [round(width, 1), round(depth, 1), COMB_FLOOR+COMB_SLOT+options.slot_depth], "count": 1})
+    elif options.fit == "box":
+        slots = box_slots(options, count)
+        length = options.box_depth-BOX_BACK
+        result["combs"] = {"length": round(length, 3), "width": COMB_STRIP, "height": COMB_FLOOR+COMB_SLOT, "floor": COMB_FLOOR,
+                           "slots": [{"kind": kind, "center": round(center, 3), "width": round(slot, 3), "depth": depth} for kind, center, slot, depth in slots]}
+        result["box"] = {"width": options.box_width, "height": options.box_height, "depth": options.box_depth}
+        centers = [center for kind, center, _, _ in slots if kind == "layer"]
+        result["placements"] = [{"y": COMB_FLOOR, "z": round(options.box_depth/2-center-thickness/2, 3)} for center in centers]
+        parts.append({"name": "Spacer comb", "size": [COMB_STRIP, round(length, 1), COMB_FLOOR+COMB_SLOT], "count": 2})
+    return result
 
 
 def rings(geometry):
@@ -255,15 +715,26 @@ def rings(geometry):
             for polygon in geometry_parts(geometry, "Polygon")]
 
 
-def outline_json(terrain, options):
-    """The client preview: outline, text, and mount marks in mm (y up, x from 0 at the left), plus size and hints."""
-    shapes = layout(terrain, options)
-    outline = rings(shapes["outline"])
-    return {"outline": max(outline, key=lambda ring: Polygon(ring["outer"]).area) if outline else {"outer": [], "holes": []},
-            "text": rings(shapes["text"]), "text_style": options.text_style, "mount": shapes["mounts"],
+def largest(geometry):
+    found = rings(geometry)
+    return max(found, key=lambda ring: Polygon(ring["outer"]).area) if found else {"outer": [], "holes": []}
+
+
+def outline_json(terrain, options, sources=None):
+    """The client preview: outlines, text, markings, and mount marks in mm (y up, x from 0 at the left), the fit and the
+    assembly, plus size and hints. No solids are built here: it answers every slider move."""
+    shapes = layout(terrain, options, sources)
+    fit = shapes["fit"]
+    layers = [{"name": layer["name"], "outline": largest(layer["outline"]), "color": layer["color"], "position": layer["position"],
+               "base_mm": layer["base"], "height_mm": round(layer["height"], 3), **placement}
+              for layer, placement in zip(shapes["layers"], fit["placements"])]
+    return {"outline": largest(shapes["outline"]), "text": rings(shapes["text"]), "markings": rings(shapes["markings"]),
+            "text_style": options.text_style, "mount": shapes["mounts"], "layers": layers,
+            "fit": {key: value for key, value in fit.items() if key not in ("parts", "placements")}, "parts": fit["parts"],
             "width_mm": round(shapes["width"], 3), "height_mm": round(shapes["height"], 3), "thickness_mm": options.thickness_mm,
-            "min_profile_mm": round(shapes["lowest"], 3), "slice_length_m": round(shapes["span_m"], 2),
-            "points": len(shapes["points"]), "warnings": shapes["warnings"]}
+            "min_profile_mm": round(shapes["lowest"], 3), "slice_length_m": round(shapes["span_m"], 2), "ticks": shapes["ticks"],
+            "profile": "route" if options.source == "route" else "slice", "points": len(shapes["points"]),
+            "warnings": shapes["warnings"], "notes": shapes["notes"]}
 
 
 # --- Solids -----------------------------------------------------------------------------------------------
@@ -285,6 +756,15 @@ def extrude(geometry, height, bottom=0.0):
     return closed(mf.CrossSection(contours).extrude(height).translate((0, 0, bottom)))
 
 
+def cube(x0, y0, z0, x1, y1, z1):
+    return mf.Manifold.cube((x1-x0, y1-y0, z1-z0)).translate((x0, y0, z0))
+
+
+def union(solids):
+    solids = [solid for solid in solids if not solid.is_empty()]
+    return closed(mf.Manifold.batch_boolean(solids, mf.OpType.Add)) if len(solids) > 1 else solids[0]
+
+
 def foot(options, x, y, depth):
     """One stand foot, flat on the bed: a block with a slot open along its length, the piece's thickness plus clearance wide."""
     length, height, slot = foot_length(options), STAND_FLOOR+STAND_SLOT_DEPTH, options.thickness_mm+CLEARANCE
@@ -293,23 +773,98 @@ def foot(options, x, y, depth):
     return closed(block-cutter)
 
 
-def solids(terrain, options, shapes=None):
-    """Named parts in print position (front face up): the body, the text when it is a separate color, and stand feet."""
-    shapes = shapes or layout(terrain, options)
-    thickness, text, depth = options.thickness_mm, shapes["text"], options.text_depth
-    body = extrude(shapes["body"], thickness)
-    parts = []
+def comb_base(options, fit):
+    """The lamp's comb base, printed upside down: its layer slots open on the bed, the tab standing on top."""
+    comb, t = fit["comb_base"], tab_thickness(options)
+    width, depth, height = comb["width"], comb["depth"], comb["height"]
+    block = cube(0, 0, 0, width, depth, height)
+    slot = comb["slot_width"]
+    # Slot centers are measured from the front edge, which is y = depth here (front ends up toward +z when turned over).
+    cutters = [cube(-1, depth-center-slot/2, -1, width+1, depth-center+slot/2, COMB_SLOT) for center in comb["slots"]]
+    x0, x1 = tab_span(options, width)
+    tab = cube(x0, depth/2-t/2, height-.01, x1, depth/2+t/2, height+options.slot_depth)
+    return closed(union([closed(block-union(cutters)), tab]))
+
+
+def spacer_comb(options, fit):
+    """One spacer comb, flat on the bed: slots across its top for the layers, the LED strip, and the photo; front end at y = 0."""
+    comb = fit["combs"]
+    block = cube(0, 0, 0, comb["width"], comb["length"], comb["height"])
+    cutters = [cube(-1, slot["center"]-slot["width"]/2, comb["height"]-slot["depth"], comb["width"]+1, slot["center"]+slot["width"]/2, comb["height"]+1)
+               for slot in comb["slots"]]
+    return closed(block-union(cutters))
+
+
+def layer_parts(options, shapes, index):
+    """One layer's named parts in print position (front face up): the body with its tab, pegs, and pin hole, and for the
+    front layer its text and markings when they are a separate color."""
+    layer, fit = shapes["layers"][index], shapes["fit"]
+    thickness = options.thickness_mm
+    body = extrude(layer["body"], thickness)
+    if fit["tab"] and len(shapes["layers"]) == 1:
+        tab = fit["tab"]
+        body = union([body, cube(tab["x0"], tab["y0"], 0, tab["x1"], .01, tab["thickness"])])
+    if index:
+        return [(layer["name"], layer["color"], body)]
+    if shapes["pegs"]:
+        body = union([body]+[mf.Manifold.cylinder(options.peg_length+.5, peg["d"]/2, peg["d"]/2, 40).translate((peg["x"], peg["y"], thickness-.5))
+                             for peg in shapes["pegs"]])
+    if shapes["pin"]:
+        pin = shapes["pin"]
+        drill = mf.Manifold.cylinder(pin["y1"]-pin["y0"]+1, pin["d"]/2, pin["d"]/2, 24).rotate((-90, 0, 0))
+        body = closed(body-drill.translate((pin["x"], pin["y0"], thickness/2)))
+    text, depth, parts = shapes["text"], options.text_depth, []
     if not text.is_empty and options.text_style == "engrave":
         body = closed(body-extrude(text, depth+1, thickness-depth))
         parts.append(("Text", options.text_color, extrude(text, depth, thickness-depth)))
     elif not text.is_empty and options.text_style == "emboss":
         parts.append(("Text", options.text_color, extrude(text, depth, thickness)))
-    parts.insert(0, ("Silhouette", options.body_color, body))
+    marks = shapes["markings"]
+    if not marks.is_empty:
+        mark = min(options.text_depth if options.text_style == "engrave" else MARK_DEPTH, thickness-.4)
+        body = closed(body-extrude(marks, mark+1, thickness-mark))
+        parts.append(("Markings", options.text_color, extrude(marks, mark, thickness-mark)))
+    parts.insert(0, (layer["name"], layer["color"], body))
     if options.mount == "stand":
         reach = float(np.clip(shapes["height"]*.5, 30, 90))
         feet = [foot(options, index*(foot_length(options)+STAND_GAP), -STAND_GAP-reach, reach) for index in range(2)]
         parts.append(("Stand feet", options.body_color, closed(mf.Manifold.batch_boolean(feet, mf.OpType.Add))))
     return parts
+
+
+def part_groups(terrain, options, shapes=None, sources=None):
+    """Each printed part with what prints in it (text and markings inlays): lists of (name, color, solid) in print position."""
+    shapes = shapes or layout(terrain, options, sources)
+    groups = [layer_parts(options, shapes, index) for index in range(len(shapes["layers"]))]
+    fit = shapes["fit"]
+    if fit["comb_base"]:
+        groups.append([("Comb base", options.body_color, comb_base(options, fit))])
+    if fit["combs"]:
+        comb = spacer_comb(options, fit)
+        groups.extend([[("Spacer comb (left)", options.body_color, comb)], [("Spacer comb (right)", options.body_color, comb)]])
+    return groups
+
+
+def laid_out(groups):
+    """Groups placed side by side on the bed in rows (a single group stays where it is), as one list of parts."""
+    if len(groups) == 1:
+        return groups[0]
+    boxes = [np.array([solid.bounding_box() for _, _, solid in group]) for group in groups]
+    row = max(BED_MM, max(float(bounds[:, 3].max()-bounds[:, 0].min()) for bounds in boxes))
+    x = y = height = 0.0
+    placed = []
+    for group, bounds in zip(groups, boxes):
+        x0, y0, x1, y1 = float(bounds[:, 0].min()), float(bounds[:, 1].min()), float(bounds[:, 3].max()), float(bounds[:, 4].max())
+        if x and x+x1-x0 > row:
+            x, y, height = 0.0, y+height+PART_GAP, 0.0
+        placed.extend((name, color, solid.translate((x-x0, y-y0, 0))) for name, color, solid in group)
+        x, height = x+x1-x0+PART_GAP, max(height, y1-y0)
+    return placed
+
+
+def solids(terrain, options, shapes=None, sources=None):
+    """Named parts in print position (front face up): layers, text and markings, stand feet, and comb parts, laid out flat."""
+    return laid_out(part_groups(terrain, options, shapes, sources))
 
 
 def mesh(solid):
@@ -320,10 +875,12 @@ def mesh(solid):
 # --- Files ------------------------------------------------------------------------------------------------
 
 def metadata(terrain, options, shapes):
-    return {"kind": "silhouette", "settings": asdict(options) | {"trim": list(options.trim)},
+    settings = asdict(options) | {"trim": list(options.trim), "layers": [{"position": p, "base_mm": b, "color": c} for p, b, c in options.layers]}
+    return {"kind": "silhouette", "preset": options.preset, "settings": settings,
             "size_mm": {"width": round(shapes["width"], 3), "height": round(shapes["height"], 3), "thickness": options.thickness_mm},
-            "slice_length_m": round(float(shapes["span_m"]), 2), "bounds": terrain.bounds.to_dict(), "source": SOURCES[terrain.source]["short"],
-            "units": "mm", "axes": "x along the piece, y up the piece, z out of its front face (printed front face up)"}
+            "parts": shapes["fit"]["parts"], "slice_length_m": round(float(shapes["span_m"]), 2), "bounds": terrain.bounds.to_dict(),
+            "source": SOURCES[terrain.source]["short"], "units": "mm",
+            "axes": "x along the piece, y up the piece, z out of its front face (printed front face up)"}
 
 
 def svg_path(geometry, height):
@@ -335,40 +892,105 @@ def svg_path(geometry, height):
     return " ".join(commands)
 
 
+def comb_profiles(options, fit):
+    """Side views of the comb parts in mm, for laser cutting them from sheet: [(id, name, shape, count)]."""
+    profiles = []
+    if fit["comb_base"]:
+        comb, t = fit["comb_base"], tab_thickness(options)
+        shape = box(0, 0, comb["depth"], comb["height"]).difference(unary_union(
+            [box(center-comb["slot_width"]/2, comb["floor"], center+comb["slot_width"]/2, comb["height"]+1) for center in comb["slots"]]))
+        shape = unary_union([shape, box(comb["depth"]/2-t/2, -options.slot_depth, comb["depth"]/2+t/2, 0)])
+        profiles.append(("comb-base", "Comb base (side view)", shape, 1))
+    if fit["combs"]:
+        comb = fit["combs"]
+        shape = box(0, 0, comb["length"], comb["height"]).difference(unary_union(
+            [box(slot["center"]-slot["width"]/2, comb["height"]-slot["depth"], slot["center"]+slot["width"]/2, comb["height"]+1) for slot in comb["slots"]]))
+        profiles.append(("spacer-comb", "Spacer comb (side view; cut two)", shape, 2))
+    return profiles
+
+
 def svg_file(options, shapes, attribution):
-    """A 2D drawing in millimeters for laser cutting or vinyl: outline with wall holes, then the text as its own paths."""
-    width, height = shapes["width"], shapes["height"]
+    """A 2D drawing in millimeters for laser cutting or vinyl: outlines with wall holes, then the text as its own paths.
+    A design with several parts puts each layer (and comb side view) in its own group, stacked with gaps."""
     cut = 'fill="none" stroke="#ff0000" stroke-width="0.1"'
     text_style = cut if options.text_style == "stencil" else f'fill="{options.text_color}" stroke="none"'
-    output = ['<?xml version="1.0" encoding="UTF-8"?>',
-              f'<svg xmlns="http://www.w3.org/2000/svg" width="{width:.3f}mm" height="{height:.3f}mm" viewBox="0 0 {width:.3f} {height:.3f}">',
-              f"<title>Terrain Studio silhouette</title><desc>{escape(attribution.splitlines()[0] if attribution else '')}</desc>",
-              f'<path id="outline" fill-rule="evenodd" fill="{options.body_color}" stroke="#ff0000" stroke-width="0.1" d="{svg_path(shapes["outline"], height)}"/>']
-    if not shapes["text"].is_empty:
-        output.append(f'<g id="text" data-style={quoteattr(options.text_style)}><path fill-rule="evenodd" {text_style} d="{svg_path(shapes["text"], height)}"/></g>')
-    output.append("</svg>")
+    fit = shapes["fit"]
+    profiles = comb_profiles(options, fit)
+    head = lambda width, height: ['<?xml version="1.0" encoding="UTF-8"?>',
+                                  f'<svg xmlns="http://www.w3.org/2000/svg" width="{width:.3f}mm" height="{height:.3f}mm" viewBox="0 0 {width:.3f} {height:.3f}">',
+                                  f"<title>Terrain Studio silhouette</title><desc>{escape(attribution.splitlines()[0] if attribution else '')}</desc>"]
+    def outline_of(index):
+        layer = shapes["layers"][index]
+        geometry = layer["outline"]
+        if fit["tab"] and len(shapes["layers"]) == 1:
+            tab = fit["tab"]
+            geometry = unary_union([geometry, box(tab["x0"], tab["y0"], tab["x1"], .01)])
+        return geometry
+    def front_paths(height):
+        output = []
+        if not shapes["text"].is_empty:
+            output.append(f'<g id="text" data-style={quoteattr(options.text_style)}><path fill-rule="evenodd" {text_style} d="{svg_path(shapes["text"], height)}"/></g>')
+        if not shapes["markings"].is_empty:
+            output.append(f'<g id="markings" data-style="engrave"><path fill-rule="evenodd" fill="{options.text_color}" stroke="none" d="{svg_path(shapes["markings"], height)}"/></g>')
+        return output
+    if len(shapes["layers"]) == 1 and not profiles:
+        geometry = outline_of(0)
+        x0, y0, x1, y1 = geometry.bounds
+        width, height = shapes["width"], shapes["height"]
+        output = head(width, height-min(y0, 0))  # y is flipped about the top, so a lamp tab below the piece extends the drawing down
+        output.append(f'<path id="outline" fill-rule="evenodd" fill="{options.body_color}" stroke="#ff0000" stroke-width="0.1" d="{svg_path(geometry, height)}"/>')
+        output.extend(front_paths(height))
+        output.append("</svg>")
+        return "\n".join(output).encode("utf-8")
+    items = [(f"layer-{index+1}", layer["name"], outline_of(index), layer["color"], index == 0) for index, layer in enumerate(shapes["layers"])]
+    items += [(name, title, shape, options.body_color, False) for name, title, shape, _ in profiles]
+    width = max(shape.bounds[2]-min(shape.bounds[0], 0) for _, _, shape, _, _ in items)
+    body, y = [], 0.0
+    for name, title, shape, color, front in items:
+        x0, y0, x1, y1 = shape.bounds
+        top = max(y1, 0)
+        body.append(f'<g id="{name}" data-name={quoteattr(title)} transform="translate({-min(x0, 0):.3f} {y:.3f})">'
+                    f'<path fill-rule="evenodd" fill="{color}" stroke="#ff0000" stroke-width="0.1" d="{svg_path(shape, top)}"/>')
+        if front:
+            body.extend(front_paths(top))
+        body.append("</g>")
+        y += top-min(y0, 0)+PART_GAP
+    output = head(width, y-PART_GAP)+body+["</svg>"]
     return "\n".join(output).encode("utf-8")
 
 
-def silhouette_export(terrain, options, format, attribution):
+def slug(name):
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def silhouette_export(terrain, options, format, attribution, sources=None):
     """Return (bytes, mimetype, filename) for one silhouette file."""
     if format not in FORMATS:
         raise ValueError("Choose stl, 3mf, svg, or json as the silhouette export format.")
-    shapes = layout(terrain, options)
+    shapes = layout(terrain, options, sources)
     info = metadata(terrain, options, shapes)
+    mimetype, filename = FORMATS[format]
     if format == "svg":
         content = svg_file(options, shapes, attribution)
     elif format == "json":
         content = json.dumps(info | {"warnings": shapes["warnings"], "attribution": attribution}, indent=2).encode()
     else:
-        parts = solids(terrain, options, shapes)
+        groups = part_groups(terrain, options, shapes)
         if format == "stl":
-            # STL has no colors: raised text joins the body, engraved text stays a cavity, and the feet lie beside it.
-            solids_ = [solid for name, _, solid in parts if not (name == "Text" and options.text_style == "engrave")]
-            vertices, faces = mesh(closed(mf.Manifold.batch_boolean(solids_, mf.OpType.Add)) if len(solids_) > 1 else solids_[0])
-            content = binary_stl(vertices, faces, SOURCES[terrain.source]["short"])
+            # STL has no colors: raised text joins its part, engraved text and markings stay cavities, stand feet lie beside it.
+            def merged(group):
+                kept = [solid for name, _, solid in group if not (name == "Markings" or (name == "Text" and options.text_style == "engrave"))]
+                return union(kept)
+            if len(groups) == 1:
+                content = binary_stl(*mesh(merged(groups[0])), SOURCES[terrain.source]["short"])
+            else:
+                buffer = BytesIO()
+                with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
+                    for number, group in enumerate(groups, 1):
+                        archive.writestr(f"{number:02d}-{slug(group[0][0])}.stl", binary_stl(*mesh(merged(group)), SOURCES[terrain.source]["short"]))
+                    archive.writestr("credits.txt", attribution)
+                content, (mimetype, filename) = buffer.getvalue(), PARTS_ZIP
         else:
-            colored = [{"name": name, "color": color, **dict(zip(("vertices", "faces"), mesh(solid)))} for name, color, solid in parts]
+            colored = [{"name": name, "color": color, **dict(zip(("vertices", "faces"), mesh(solid)))} for name, color, solid in laid_out(groups)]
             content = package_3mf(model_xml(colored, info, attribution, title="Terrain Studio silhouette")).getvalue()
-    mimetype, filename = FORMATS[format]
     return content, mimetype, filename

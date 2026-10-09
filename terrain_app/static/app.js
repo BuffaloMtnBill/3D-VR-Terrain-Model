@@ -20,7 +20,7 @@ const ramps = Object.fromEntries(Object.entries(paletteStops).map(([key, stops])
 const state = {selection:null, selectionError:null, palette:'alpine', view:'relief', mapStyle:'terrain', data:null, id:null, loading:false, name:'', surfaceVersion:0};
 let map, mapLayer, selectionFrame, profileMapLine, renderer, scene, camera, perspective, orthographic, controls, sun, grid, model, topMesh, baseMesh, mapTexture, featureGroup;
 let toastTimer, sceneReady = false, lastMapError = 0, studio = null, silhouette = null;
-let featureData=null,featureRequest=null,featureError=null,zipRequest=null,placeRequest=null;
+let featureData=null,featureRequest=null,featureError=null,placeRequest=null;
 let waterSourceChosen=false;
 const featureCache=new Map();
 let coverData=null,coverRequest=null,coverError=null;
@@ -147,20 +147,29 @@ function setupMap(config) {
     const preset=presets[event.target.value];
     if(preset) { state.name=preset.name; updateSelection(preset.bounds,true,false,preset.zoom); applyRenderingSettings(preset.settings); }
   });
+  // One search box: a US ZIP code (or ZIP+4), a "latitude, longitude" pair, or an address or place name.
   $('place-form').addEventListener('submit',async event=>{
     event.preventDefault();
     const query=$('place-search').value.trim(),status=$('place-status');
-    if(query.length<2)return notify('Enter an address, city, or place name.',true);
-    const parts=query.split(/[,\s]+/).filter(Boolean).map(Number);
-    if(parts.length===2&&parts.every(Number.isFinite)) {
+    if(query.length<2)return notify('Enter an address, city, place name, or US ZIP code.',true);
+    const parts=query.split(/[,\s]+/).filter(Boolean).map(Number),zip=/^[0-9]{5}(-[0-9]{4})?$/.test(query);
+    if(!zip&&parts.length===2&&parts.every(Number.isFinite)) {
       if(Math.abs(parts[0])>85||Math.abs(parts[1])>180)return notify('Latitude must be within ±85° and longitude within ±180°.',true);
       placeRequest?.abort();placeRequest=null;status.hidden=true;
       selectionFrame.cancelAlignment();map.setView(parts,12);return;
     }
     placeRequest?.abort();const controller=new AbortController();placeRequest=controller;
     const button=$('place-form').querySelector('button');button.disabled=true;
-    status.hidden=false;status.classList.remove('error');status.textContent='Searching…';
+    status.hidden=false;status.classList.remove('error');status.textContent=zip?'Finding ZIP code…':'Searching…';
     try {
+      if(zip) {
+        const location=await api(`/api/location/zip/${encodeURIComponent(query)}`,{signal:controller.signal});
+        if(placeRequest!==controller)return;
+        state.name=`${location.city}, ${location.state} · ZIP ${location.zip}`;$('place').value='custom';
+        selectionFrame.centerOn([location.latitude,location.longitude],12);
+        status.textContent=`${location.city}, ${location.state} · ZIP ${location.zip}`;
+        return;
+      }
       const place=await api(`/api/location/search?q=${encodeURIComponent(query)}`,{signal:controller.signal});
       if(placeRequest!==controller)return;
       const {south,west,north,east}=place.bounds;
@@ -172,24 +181,6 @@ function setupMap(config) {
       if(error.name==='AbortError'||placeRequest!==controller)return;
       status.textContent=error.message;status.classList.add('error');
     } finally {if(placeRequest===controller){placeRequest=null;button.disabled=false;}}
-  });
-  $('zip-form').addEventListener('submit',async event=>{
-    event.preventDefault();
-    const zipcode=$('zip-code').value.trim();
-    if(!/^[0-9]{5}(-[0-9]{4})?$/.test(zipcode))return notify('Enter a five-digit US ZIP code or ZIP+4.',true);
-    zipRequest?.abort();const controller=new AbortController();zipRequest=controller;
-    const button=$('zip-form').querySelector('button');button.disabled=true;
-    $('zip-status').hidden=false;$('zip-status').classList.remove('error');$('zip-status').textContent='Finding ZIP code…';
-    try {
-      const location=await api(`/api/location/zip/${encodeURIComponent(zipcode)}`,{signal:controller.signal});
-      if(zipRequest!==controller)return;
-      state.name=`${location.city}, ${location.state} · ZIP ${location.zip}`;$('place').value='custom';
-      selectionFrame.centerOn([location.latitude,location.longitude],12);
-      $('zip-status').textContent=`${location.city}, ${location.state} · ZIP ${location.zip}`;
-    } catch(error) {
-      if(error.name==='AbortError'||zipRequest!==controller)return;
-      $('zip-status').textContent=error.message;$('zip-status').classList.add('error');
-    } finally {if(zipRequest===controller){zipRequest=null;button.disabled=false;}}
   });
   $('edit-bounds').addEventListener('click',()=>{
     for(const key of ['north','south','east','west']) $(`bound-${key}`).value=state.selection[key].toFixed(6);
@@ -949,8 +940,8 @@ const studioContext={
   options,printColors,featureStyles,featuresEnabled,routeOptions,notify,download,exportGLB,prepareExport,updatePrintPalette,updateExportDimensions,
 };
 
-// The silhouette design page reads even less: the slice controls it shares, the relief settings, units, and colors.
-const silhouetteContext={get state(){return state;},options,notify,download,units,printColors};
+// The silhouette design page reads even less: the slice controls it shares, the relief settings, units, colors, and the uploaded route.
+const silhouetteContext={get state(){return state;},get route(){return route;},options,notify,download,units,printColors};
 
 async function screenshot() {
   if(!sceneReady||!state.data) return notify('Generate a terrain preview first.',true);
@@ -1040,7 +1031,7 @@ function setUnits(value) {
   $('profile').setAttribute('aria-label',`Elevation cross section in ${units().name} above sea level`);
   if(state.selection)updateSelectionSize();
   if(state.data){updateLegend();updateStats();drawProfile();}
-  routeStats();
+  routeStats();silhouette?.modelChanged();
 }
 
 const reliefHints={standard:'Every height is multiplied equally.',local:'Fine relief is amplified; broad landforms keep their height.',lowland:'Low ground gets a larger share of the model height.'};
