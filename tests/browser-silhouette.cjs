@@ -110,7 +110,7 @@ function routeGPX() {
 
     // Start from: presets grouped under their headings.
     assert.deepEqual(await page.locator('.silhouette-preset-heading').allInnerTexts(),['GLOW LAMPS','SHADOW BOXES','FLAT PIECES','RACE PROFILE']);
-    assert.equal(await page.locator('[data-silhouette-preset]').count(),11);
+    assert.equal(await page.locator('[data-silhouette-preset]').count(),12);
     assert.equal(await page.locator('#silhouette-fit-card').isVisible(),false,'Custom has no preset settings');
     // The preview: hovering a preset shows it turning in the Start from card without applying it.
     assert.equal(await page.locator('.silhouette-start #silhouette-turntable-view canvas').count(),1,'The preview has its own canvas in the Start from card');
@@ -136,12 +136,18 @@ function routeGPX() {
     await page.locator('[data-silhouette-preset="glow-layers"]').click();
     body=(await next).request().postDataJSON();
     assert.equal(body.mount,'none','A lamp holds the design, so the mount resets');
+    assert.deepEqual([body.min_feature_mm,body.comb_clearance],[1,.3],'Printing settings reach the server');
     assert.deepEqual(body.layers.map(layer=>layer.base_mm),[14,22,30],'Each layer stands a step higher');
     assert.ok(body.layers[0].color!==body.layers[2].color,'Layers fade from front to back');
-    for(const id of ['silhouette-slot-width','silhouette-slot-length','silhouette-slot-depth','silhouette-slot-clearance','silhouette-layer-positions','silhouette-layer-spacing'])
+    for(const id of ['silhouette-slot-width','silhouette-slot-length','silhouette-slot-depth','silhouette-slot-clearance','silhouette-layer-positions','silhouette-layer-spacing','silhouette-min-feature','silhouette-comb-clearance'])
       assert.equal(await page.locator(`#${id}`).isVisible(),true,`${id} appears for the layered glow`);
     assert.equal(await page.locator('#silhouette-box-depth').isVisible(),false);
     await page.waitForFunction(()=>document.getElementById('silhouette-parts').textContent.startsWith('Parts: 3 layers, comb base'));
+    // A looser comb: each slot widens by the clearance (2 mm panels + 0.5 mm).
+    const looser=outlineAfter(page,body=>body.comb_clearance===.5);
+    await page.locator('#silhouette-comb-clearance').fill('0.5');
+    assert.equal((await (await looser).json()).fit.comb_base.slot_width,2.5);
+    await page.locator('#silhouette-comb-clearance').fill('0.3');
     assert.match(await page.locator('#silhouette-preset-hint').innerText(),/translucent PETG/);
     await page.waitForSelector('#silhouette-svg rect.sil-fit');
     assert.equal(await page.locator('#silhouette-svg path.sil-layer').count(),2,'The rear layers are drawn behind the front one');

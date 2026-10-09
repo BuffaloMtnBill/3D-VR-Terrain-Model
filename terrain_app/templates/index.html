@@ -304,6 +304,12 @@
             <label class="studio-inline" for="silhouette-box-depth">Inner depth (mm) <input id="silhouette-box-depth" type="number" min="8" max="200" step="1" value="40"></label>
             <span class="small-hint">Measure inside the frame, from the glass to the back. Pieces are the inner width less 1 mm; two spacer combs hold them.</span>
           </div>
+          <div data-fit-block="print" hidden>
+            <span class="silhouette-subhead">Printing</span>
+            <label class="studio-inline" for="silhouette-min-feature">Minimum feature (mm) <input id="silhouette-min-feature" type="number" min="0" max="3" step="0.1" value="1"></label>
+            <label class="studio-inline" for="silhouette-comb-clearance">Comb slot clearance (mm) <input id="silhouette-comb-clearance" type="number" min="0" max="1" step="0.05" value="0.3"></label>
+            <span class="small-hint">Ridge spikes narrower than the minimum feature are trimmed so they print and don't snap (0 keeps everything). The clearance is added to each panel's thickness for its comb slot: raise it if panels won't go in, lower it if they wobble. The lamp's comb base prints slots down, with chamfered mouths against elephant's foot.</span>
+          </div>
           <div data-fit-block="layers" hidden>
             <span class="silhouette-subhead">Layers</span>
             <label class="studio-inline" for="silhouette-layer-count"><span id="silhouette-layer-count-label">Layers</span> <input id="silhouette-layer-count" type="number" min="2" max="7" step="1" value="3"></label>

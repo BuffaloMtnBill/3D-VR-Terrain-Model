@@ -31,7 +31,8 @@ const NUMBERS={width_mm:['silhouette-width',40,400],vertical_scale:['silhouette-
   layer_spacing:['silhouette-layer-spacing',2,30],building_corridor_m:['silhouette-corridor',5,200],tick_every:['silhouette-tick-every',.1,100],
   peg_count:['silhouette-peg-count',0,8],peg_diameter:['silhouette-peg-diameter',3,12],peg_length:['silhouette-peg-length',5,40],
   pin_diameter:['silhouette-pin-diameter',1,4],pin_depth:['silhouette-pin-depth',3,30],photo_gap:['silhouette-photo-gap',.3,5],
-  led_width:['silhouette-led-width',2,20],led_depth:['silhouette-led-depth',.5,5]};
+  led_width:['silhouette-led-width',2,20],led_depth:['silhouette-led-depth',.5,5],min_feature_mm:['silhouette-min-feature',0,3],
+  comb_clearance:['silhouette-comb-clearance',0,1]};
 const INTEGERS=new Set(['layer_count','peg_count']);
 const CHOICES={source:['silhouette-source',['true','shaped','route','ridgeline','viewpoint']],text_style:['silhouette-text-style',['engrave','emboss','stencil']],
   text_align:['silhouette-text-align',['left','center','right']],mount:['silhouette-mount',['none','stand','holes','keyholes']]};
@@ -45,7 +46,7 @@ const DEFAULTS={width_mm:180,vertical_scale:2,base_mm:8,thickness_mm:4,smoothing
   preset:'custom',fit:'none',slot_width:4,slot_length:160,slot_depth:8,slot_clearance:.2,box_width:200,box_height:150,box_depth:40,
   layer_count:1,layer_positions:[],layer_step:6,layer_spacing:6,include_buildings:false,building_corridor_m:30,ticks:false,tick_every:1,
   start_finish:false,peg_count:0,peg_diameter:6,peg_length:20,summit_pin:false,pin_diameter:1.8,pin_depth:10,photo_slot:false,photo_gap:1,
-  led_channel:false,led_width:5,led_depth:2,race_kind:'running',finish_time:'',thickness_by_distance:false,thickness_near_mm:3,thickness_far_mm:1.5,
+  led_channel:false,led_width:5,led_depth:2,min_feature_mm:1,comb_clearance:.3,race_kind:'running',finish_time:'',thickness_by_distance:false,thickness_near_mm:3,thickness_far_mm:1.5,
   color_by_distance:false,distance_colors:['#234e40','#678272','#acb6a4','#f0ead6'],color_zones:false,clouds:false,cloud_color:'#f0ead6'};
 // What a preset decides: choosing another preset (or Custom) resets these before applying its own. Slice, caption, colors, and the
 // lamp and box measurements are kept.
@@ -207,6 +208,7 @@ export function createSilhouette(ctx) {
     $('silhouette-fit-title').textContent=current.name;
     document.querySelectorAll('[data-fit-block]').forEach(block=>{block.hidden=!fields.has(block.dataset.fitBlock);});
     $('silhouette-spacing-block').hidden=settings.fit!=='lamp'||zoned();
+    $('silhouette-comb-clearance').disabled=!layered()||zoned();  // only separate layers stand in comb slots
     $('silhouette-step-block').hidden=zoned();  // zones share one base strip
     $('silhouette-layer-count-label').textContent=zoned()?'Zones (ridges)':'Layers';
     // Colors: distance colors in use (fewer with fewer layers), and the one-piece choice where it applies.
@@ -627,7 +629,16 @@ export function createSilhouette(ctx) {
       block(0,0,-comb.depth/2,comb.width,comb.height,comb.depth/2,fitColor,.75);
       block(box.tab.x0,box.tab.y0,-t/2,box.tab.x1,0,t/2,fitColor,.75);
     }
-    if(box.tab)outlineBox(W/2-s.slot_length/2-25,-30,-35,W/2+s.slot_length/2+25,0,35,'#d9c9a0');  // the lamp base, as a faint outline
+    // The lamp base: a round LED base (a faint cylinder with its rims) a little wider than its slot, the slot dark on top.
+    if(box.tab) {
+      const radius=s.slot_length/2+20,height=30,base=new THREE.CylinderGeometry(radius,radius,height,64,1,true);base.translate(W/2,-height/2,0);
+      const shell=new THREE.Mesh(base,new THREE.MeshStandardMaterial({color:'#d9c9a0',roughness:.6,transparent:true,opacity:.14,side:THREE.DoubleSide,depthWrite:false}));
+      const rims=new THREE.EdgesGeometry(new THREE.CylinderGeometry(radius,radius,height,64),30);rims.translate(W/2,-height/2,0);
+      const top=new THREE.CircleGeometry(radius,64);top.rotateX(-Math.PI/2);top.translate(W/2,-.05,0);
+      group.add(shell,new THREE.LineSegments(rims,new THREE.LineBasicMaterial({color:'#d9c9a0',transparent:true,opacity:.55})),
+        new THREE.Mesh(top,new THREE.MeshStandardMaterial({color:'#d9c9a0',roughness:.7,transparent:true,opacity:.22,depthWrite:false})));
+      block(W/2-s.slot_length/2,-.4,-s.slot_width/2,W/2+s.slot_length/2,-.02,s.slot_width/2,'#141c16');
+    }
     if(box.combs) {
       const comb=box.combs,front=box.box.depth/2;
       for(const x of [-.5,W+.5-comb.width])block(x,0,front-comb.length,x+comb.width,comb.height,front,fitColor,.85);
@@ -644,12 +655,14 @@ export function createSilhouette(ctx) {
     group.clear();
     fillDesign(group,result);
     if(fit||!three.fitted) {
-      // Far enough back that the whole design (and its box) fits the view's width and height, seen from a little above and to the right.
-      const box=result.fit,W=result.width_mm,height=Math.max(result.height_mm,box.box?.height||0),width=Math.max(W,box.box?.width||0);
+      // Far enough back that the whole design (and its box, or the round lamp base below it) fits the view's width and height,
+      // seen from a little above and to the right.
+      const box=result.fit,W=result.width_mm,below=box.tab?30:0,height=Math.max(result.height_mm,box.box?.height||0)+below;
+      const width=Math.max(W,box.box?.width||0,box.tab?settings.slot_length+40:0),middle=height/2-below;
       const tangent=Math.tan(THREE.MathUtils.degToRad(three.camera.fov/2));
       const distance=Math.max(height/2/tangent,width/2/(tangent*three.camera.aspect))*1.3;
-      three.controls.target.set(0,height/2,0);
-      three.camera.position.set(distance*.3,height/2+distance*.3,distance*.9);
+      three.controls.target.set(0,middle,0);
+      three.camera.position.set(distance*.3,middle+distance*.3,distance*.9);
       three.controls.update();three.fitted=true;
     }
   }

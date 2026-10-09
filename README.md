@@ -454,6 +454,23 @@ itself may be wider than the slot. Checks warn when the piece is narrower than t
   darkest; print the comb base clear.
   Beneath the layer options, a number line shows slice locations or shaded
   viewpoint distance groups, with each layer's color, distance, and thickness.
+- **Layered glow with clouds:** the layered glow with Clouds on: a puffy, decorative cloud panel stands
+  behind the ridges in its own slot at the back of the comb base. Print the clouds white or the
+  palest translucent filament.
+
+The 3D view and the Start from preview show glow lamps standing on a round LED lamp base (a faint
+cylinder a little wider than the slot, with the slot dark on top).
+
+**Printing** (glow lamps and shadow boxes) makes the parts easier to print:
+- **Minimum feature** (1 mm; 0 keeps everything) trims ridge spikes and slivers narrower than that
+  from each panel (a morphological opening that keeps square corners and the base edge in place),
+  since they are only a couple of extrusion lines wide and snap; bits left floating are dropped so
+  every panel stays one piece. Checks note when something was trimmed.
+- **Comb slot clearance** (0.3 mm) is added to each panel's thickness for its slot in the comb base
+  or spacer combs: raise it if panels won't go in, lower it if they wobble.
+- The comb base prints slots down, so each slot's mouth on the bed has a 0.4 mm chamfer (less where
+  the walls between slots are thin) against elephant's foot; it also guides the panels in.
+- Checks warn when a rear panel nowhere shows 1.5 mm above the panels in front of it.
   Ridge groups are approximate; decorative layers are labelled separately.
   **Puffy clouds behind the terrain** adds a rounded cartoon-cloud panel as
   the final rear layer, with a selectable color. The lamp base or shadow-box

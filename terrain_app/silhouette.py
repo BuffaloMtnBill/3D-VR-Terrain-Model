@@ -38,6 +38,9 @@ STAND_SLOT_DEPTH, STAND_FLOOR, STAND_GAP, CLEARANCE = 4.0, 2.0, 6.0, .2
 KEYHOLE_HEAD, KEYHOLE_SLOT, KEYHOLE_TRAVEL = 7.6, 3.8, 6.0  # mm: a screw head passes the head, its shank rests in the slot
 # Combs (the lamp's comb base and the shadow box's spacer combs): a solid floor under slots the layers stand in.
 COMB_FLOOR, COMB_SLOT, COMB_WALL, COMB_STRIP, COMB_CLEARANCE, SLOT_WALL = 3.0, 5.0, 2.5, 12.0, .3, 1.2
+# Printability of lamp and shadow-box parts: the comb base prints slots down, so its slot mouths are chamfered against
+# elephant's foot; a rear panel must show at least SHOW_MM above the panels in front of it somewhere.
+SLOT_CHAMFER, SHOW_MM = .4, 1.5
 BOX_SIDE, BOX_BACK = 1.0, .5  # pieces are the box's inner width less BOX_SIDE; combs its inner depth less BOX_BACK
 PART_GAP = 6.0  # between parts laid out on the bed
 TICK_WIDTH, TICK_LENGTH, TICK_LABEL, MARK_DEPTH = .6, 3.0, 3.0, .6
@@ -90,6 +93,8 @@ class SilhouetteOptions:
     slot_depth: float = 8.0
     slot_clearance: float = .2
     layer_spacing: float = 6.0  # between layer slots in a lamp's comb base
+    comb_clearance: float = COMB_CLEARANCE  # added to each layer's thickness for its slot in the comb base or spacer combs
+    min_feature_mm: float = 1.0  # lamp and box panels: spikes and slivers narrower than this are trimmed (0: off)
     box_width: float = 200.0  # inner size of the shadow box
     box_height: float = 150.0
     box_depth: float = 40.0
@@ -149,6 +154,8 @@ class SilhouetteOptions:
                   "slot_depth": (2, 30, "The lamp slot depth must be between 2 and 30 mm."),
                   "slot_clearance": (0, 1, "The lamp slot clearance must be between 0 and 1 mm."),
                   "layer_spacing": (2, 30, "The layer spacing must be between 2 and 30 mm."),
+                  "comb_clearance": (0, 1, "The comb slot clearance must be between 0 and 1 mm."),
+                  "min_feature_mm": (0, 3, "The minimum feature width must be between 0 (off) and 3 mm."),
                   "box_width": (41, 500, "The box's inner width must be between 41 and 500 mm."),
                   "box_height": (20, 400, "The box's inner height must be between 20 and 400 mm."),
                   "box_depth": (8, 200, "The box's inner depth must be between 8 and 200 mm."),
@@ -335,7 +342,7 @@ def box_slots(options, thicknesses):
     """Slots along each spacer comb, front to back: (kind, center from the comb's front end, width, depth), evenly spaced;
     each layer's slot is its thickness plus clearance."""
     length, count = options.box_depth-BOX_BACK, len(thicknesses)
-    items = [("layer", thickness+COMB_CLEARANCE, COMB_SLOT) for thickness in thicknesses]
+    items = [("layer", thickness+options.comb_clearance, COMB_SLOT) for thickness in thicknesses]
     if options.led_channel:
         items.append(("led", options.led_width, options.led_depth))
     if options.photo_slot:
@@ -356,7 +363,7 @@ def box_slots(options, thicknesses):
 def lamp_comb(options, thicknesses):
     """The comb base's depth, its layer slots' centers from its front edge (layer_spacing apart), and their widths (each
     layer's thickness plus clearance); the slots are centered over the tab."""
-    slots, count = [thickness+COMB_CLEARANCE for thickness in thicknesses], len(thicknesses)
+    slots, count = [thickness+options.comb_clearance for thickness in thicknesses], len(thicknesses)
     for index, (a, b) in enumerate(zip(slots, slots[1:])):
         if options.layer_spacing-(a+b)/2 < SLOT_WALL-1e-9:
             raise ValueError(f"The layer spacing must leave at least 1.2 mm between the comb's slots; layers {index+1} and {index+2} "
@@ -687,6 +694,20 @@ def cloud_panel(width, height):
     return orient(unary_union([box(0, 0, width, baseline), *puffs]).intersection(box(0, 0, width, height)))
 
 
+def printable(outline, feature):
+    """A panel outline without spikes and slivers narrower than `feature` mm, which are too thin to print or snap off: a
+    morphological opening with mitred joins (so square corners stay square and the base stays at y = 0), keeping only what
+    still stands on the base. Returns the outline and the area trimmed (mm²)."""
+    if feature <= 0:
+        return outline, 0.0
+    opened = make_valid(outline.buffer(-feature/2, join_style="mitre").buffer(feature/2, join_style="mitre"))
+    kept = [part for part in geometry_parts(opened, "Polygon") if part.bounds[1] < 1e-6]
+    if not kept:
+        return outline, 0.0
+    trimmed = orient(make_valid(unary_union(kept)).buffer(0)) if len(kept) > 1 else orient(kept[0])
+    return trimmed, max(0.0, outline.area-trimmed.area)
+
+
 def layout(terrain, options, sources=None):
     """Everything drawn or cut in 2D: each layer's body (with wall holes and stencil cuts), the front layer's text and
     markings, mount marks, the fit's parts, and warnings."""
@@ -702,12 +723,15 @@ def layout(terrain, options, sources=None):
     width = options.width_mm
     limit = options.box_height-COMB_FLOOR-.5 if options.fit == "box" else None
     multi = len(specs) > 1 and not options.color_zones
-    layers = []
+    layers, trimmed = [], 0.0
     for index, ((position, base, color, _), (x, heights, span, start, scale)) in enumerate(zip(specs, curves)):
         base = options.base_mm if options.color_zones else base  # one piece: every ridge on the same base strip
         points = ridge_points(x, heights, datum, base, scale, options)
         outline = orient(make_valid(Polygon([(0, 0), *points.tolist(), (width, 0)])).buffer(0))
-        height = float(points[:, 1].max())
+        if options.fit in ("lamp", "box"):
+            outline, removed = printable(outline, options.min_feature_mm)
+            trimmed += removed
+        height = float(outline.bounds[3]) if options.fit in ("lamp", "box") else float(points[:, 1].max())
         name = "Silhouette" if not multi else f"Layer {index+1}" + (" (front)" if index == 0 else " (back)" if index == len(specs)-1 else "")
         if limit is not None and height > limit:
             outline = orient(make_valid(outline.intersection(box(0, 0, width, limit))))
@@ -739,6 +763,16 @@ def layout(terrain, options, sources=None):
                        "points": np.asarray(cloud.exterior.coords), "height": cloud_height, "lowest": cloud_base})
         check_thickness(options, [layer["thickness"] for layer in layers])
         notes.append("Clouds are a decorative rear panel, not mapped terrain; the base includes an extra slot for it.")
+    if trimmed > .5:
+        notes.append(f"Spikes and slivers narrower than {options.min_feature_mm:g} mm were trimmed from the panels so they print "
+                     "and don't snap; lower Minimum feature to keep them.")
+    # A rear panel hidden behind the ones in front adds a part but no ridge: it should show somewhere by SHOW_MM.
+    if multi and options.fit in ("lamp", "box"):
+        for index in range(1, len(layers)):
+            shown = layers[index]["outline"].difference(unary_union([layer["outline"] for layer in layers[:index]]))
+            if shown.is_empty or shown.buffer(-SHOW_MM/2).is_empty:
+                warnings.append(f"{layers[index]['name']} barely shows above the layers in front (nowhere {SHOW_MM:g} mm). "
+                                "Raise the base step or the vertical scale, or use fewer layers.")
     zones = None
     if options.color_zones:
         piece, zones = zone_layout(layers)
@@ -1021,12 +1055,20 @@ def foot(options, x, y, depth, thickness):
 
 
 def comb_base(options, fit):
-    """The lamp's comb base, printed upside down: its layer slots open on the bed, the tab standing on top."""
+    """The lamp's comb base, printed upside down: its layer slots open on the bed, the tab standing on top. Each slot's mouth
+    is chamfered (SLOT_CHAMFER, less where the walls between slots are thin), since the first layer squashes outward and
+    would narrow it; the chamfer also guides a panel in."""
     comb, t = fit["comb_base"], tab_thickness(options)
     width, depth, height = comb["width"], comb["depth"], comb["height"]
     block = cube(0, 0, 0, width, depth, height)
     # Slot centers are measured from the front edge, which is y = depth here (front ends up toward +z when turned over).
-    cutters = [cube(-1, depth-center-slot/2, -1, width+1, depth-center+slot/2, COMB_SLOT) for center, slot in zip(comb["slots"], comb["slot_widths"])]
+    spans = [(depth-center-slot/2, depth-center+slot/2) for center, slot in zip(comb["slots"], comb["slot_widths"])]
+    walls = [spans[-1][0]]+[a[0]-b[1] for a, b in zip(spans, spans[1:])]+[depth-spans[0][1]]
+    chamfer = float(np.clip((min(walls)-.6)/2, 0, SLOT_CHAMFER))
+    cutters = [cube(-1, y0, -1, width+1, y1, COMB_SLOT) for y0, y1 in spans]
+    if chamfer > .05:
+        cutters += [mf.Manifold.batch_hull([cube(-1, y0-chamfer, -1, width+1, y1+chamfer, 0), cube(-1, y0, chamfer-.01, width+1, y1, chamfer)])
+                    for y0, y1 in spans]
     x0, x1 = tab_span(options, width)
     tab = cube(x0, depth/2-t/2, height-.01, x1, depth/2+t/2, height+options.slot_depth)
     return closed(union([closed(block-union(cutters)), tab]))

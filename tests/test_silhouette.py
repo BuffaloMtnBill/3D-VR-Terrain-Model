@@ -246,6 +246,7 @@ EXPECTED = {
     "glow-edge": ["Silhouette", "Text"],
     "glow-stencil": ["Silhouette"],
     "glow-layers": ["Layer 1 (front) · 2.0 mm", "Text", "Layer 2 · 2.0 mm", "Layer 3 (back) · 2.0 mm", "Comb base"],
+    "glow-clouds": ["Layer 1 (front) · 2.0 mm", "Text", "Layer 2 · 2.0 mm", "Layer 3 · 2.0 mm", "Layer 4 · Clouds (back) · 2.0 mm", "Comb base"],
     "glow-skyline": ["Silhouette"],
     "box-diorama": ["Layer 1 (front) · 2.0 mm", "Text", "Layer 2 · 2.0 mm", "Layer 3 · 2.0 mm", "Layer 4 · 2.0 mm", "Layer 5 (back) · 2.0 mm",
                     "Spacer comb (left)", "Spacer comb (right)"],
@@ -319,6 +320,57 @@ def test_layered_glow_comb_base_slots_match_the_layers(terrain):
     x0, y0, z0, x1, y1, z1 = base.bounding_box()
     assert x1-x0 == pytest.approx(170) and z1 == pytest.approx(8+8)  # printed upside down: the tab stands on top
     assert base.slice(2).area() == pytest.approx(170*comb["depth"]-3*170*2.3, rel=1e-3)  # the slots, open on the bed
+
+
+# --- Printability of lamp and box panels --------------------------------------------------------------------
+
+def test_printable_trims_thin_spikes_and_keeps_square_corners():
+    from shapely.geometry import Polygon
+    from terrain_app.silhouette import printable
+    # A 100 × 20 mm panel with a 0.6 mm wide, 15 mm tall spike, a 6 mm wide peak, and a hair-thin neck to a blob.
+    panel = Polygon([(0, 0), (100, 0), (100, 20), (80.6, 20), (80.3, 35), (80, 20), (66, 20), (63, 30), (60, 20),
+                     (30.4, 20), (30.4, 26), (34, 26), (34, 32), (28, 32), (28, 26), (30.2, 26), (30.2, 20), (0, 20)])
+    assert panel.is_valid
+    kept, removed = printable(panel, 1.0)
+    assert removed > 1 and kept.bounds == pytest.approx((0, 0, 100, 30), abs=.6), "The spike and the islanded blob go; the peak stays"
+    assert kept.bounds[3] < 31 and kept.intersects(Polygon([(62.5, 28), (63.5, 28), (63.5, 29), (62.5, 29)]))
+    assert all(kept.covers(Polygon([(x, y), (x+.01, y), (x+.01, y+.01), (x, y+.01)])) for x, y in ((0, 0), (99.99, 0))), "The base's corners stay square"
+    assert printable(panel, 0)[0] is panel
+
+
+def test_lamp_panels_trim_slivers_and_report_it(terrain):
+    # Gentle ground sampled 400 times across, with a one-sample needle: under 1 mm wide on a 170 mm panel.
+    spiky = np.tile((np.sin(np.arange(400)/40)*30+400).astype(np.float32), (24, 1))
+    spiky[:, 200] += 300
+    needle = Terrain(terrain.bounds, spiky, 11, 2, "2026-10-01T00:00:00Z")
+    trimmed = layout(needle, SilhouetteOptions.from_dict(preset_payload("glow-edge", width_mm=170, vertical_scale=1)))
+    kept = layout(needle, SilhouetteOptions.from_dict(preset_payload("glow-edge", width_mm=170, vertical_scale=1, min_feature_mm=0)))
+    assert trimmed["layers"][0]["height"] < kept["layers"][0]["height"]-2, "The needle is trimmed off"
+    assert any("narrower than 1 mm were trimmed" in note for note in trimmed["notes"])
+    assert not any("trimmed" in note for note in kept["notes"])
+    plain = layout(needle, options(vertical_scale=1))  # a flat piece without a fit is left as drawn
+    assert plain["layers"][0]["outline"].bounds[3] == pytest.approx(plain["layers"][0]["points"][:, 1].max())
+    assert kept["layers"][0]["outline"].bounds[3] == pytest.approx(kept["layers"][0]["points"][:, 1].max())
+
+
+def test_comb_clearance_and_chamfered_slot_mouths(terrain):
+    loose = outline_json(terrain, SilhouetteOptions.from_dict(preset_payload("glow-layers", comb_clearance=.5)))
+    assert loose["fit"]["comb_base"]["slot_width"] == pytest.approx(2.5)
+    box = outline_json(terrain, SilhouetteOptions.from_dict(preset_payload("box-diorama", comb_clearance=.1)))
+    assert [slot["width"] for slot in box["fit"]["combs"]["slots"] if slot["kind"] == "layer"][0] == pytest.approx(box["layers"][0]["thickness_mm"]+.1)
+    with pytest.raises(ValueError, match="comb slot clearance"):
+        SilhouetteOptions.from_dict(preset_payload("glow-layers", comb_clearance=2))
+    choice = SilhouetteOptions.from_dict(preset_payload("glow-layers"))
+    base = [solid for name, _, solid in solids(terrain, choice) if name == "Comb base"][0]
+    # At the bed each of the 3 slots is 2 × 0.4 mm wider (the chamfer); above it, the plain 2.3 mm slot.
+    assert base.slice(.02).area() == pytest.approx(base.slice(2).area()-3*170*(.8-.04), rel=2e-3)
+    assert base.slice(.6).area() == pytest.approx(base.slice(2).area(), rel=1e-4)
+
+
+def test_hidden_rear_panel_is_flagged(terrain):
+    twins = layout(terrain, SilhouetteOptions.from_dict(preset_payload("glow-layers", layers=[{"position": 50, "base_mm": 14}, {"position": 50, "base_mm": 14}])))
+    assert any("Layer 2 (back) barely shows" in warning for warning in twins["warnings"])
+    assert not any("barely shows" in warning for warning in layout(terrain, SilhouetteOptions.from_dict(preset_payload("glow-layers")))["warnings"])
 
 
 def test_diorama_combs_box_fit_and_height_limit(terrain):
