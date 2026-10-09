@@ -366,6 +366,10 @@ of a solid base strip, shown to scale in a front view (and a 3D view you can orb
 and position sliders are the geography selection page's own profile controls, so the chart and the
 dashed line on the map follow them; **Print from** and **Print to** keep only part of the slice.
 
+The page always opens on the profile the Follow the ridgeline chart shows (straight slice, two-point
+ridgeline, or viewpoint), except designs built from a GPX route. A newly generated area starts on the
+multi-layer **Layered glow** preset, built from the viewpoint's ridges when one is drawn.
+
 The **Heights** source can also be **Ridgeline (geography page)** or **Viewpoint
 skyline (geography page)**, using the profile drawn on the geography page;
 opening the silhouette page while the geography page shows one of them selects
