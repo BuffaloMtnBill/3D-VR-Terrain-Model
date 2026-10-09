@@ -199,6 +199,15 @@ ridgelines found in the view: visible crests with hidden ground behind them,
 grouped by distance (groups at least ~16 % farther apart, so one ridge seen at a
 slant stays one), nearest first; the status lists their distances.
 
+**Viewpoint ridgeline** uses the same controls with ridge detection always on: the
+chart draws each ridgeline seen from the viewpoint as its own line, labeled with its
+distance, and the map draws where each ridge's crest runs on the ground. In both
+viewpoint modes a click on the map moves the viewpoint; a viewpoint on the frame's
+edge sees no terrain in the directions that leave it.
+
+Points saved for another area (after moving the frame and generating again) are
+dropped when they fall outside the new terrain, and picking starts again.
+
 Both modes see only the generated terrain inside the frame: to include distant
 mountains, frame and generate a larger area. Points stay as latitude/longitude,
 so moving or resizing the frame keeps them on the ground; the chosen mode and

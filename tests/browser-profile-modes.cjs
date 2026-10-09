@@ -21,9 +21,9 @@ const errors=[];
     page.on('pageerror',error=>errors.push(error.message));
     page.on('console',msg=>{if(msg.type()==='error')errors.push(msg.text())});
 
-    // Clear localStorage before navigation
+    // Start without saved profile settings; later reloads keep what the test stored.
     await context.addInitScript(()=>{
-      try{localStorage.removeItem('terrain-profile-mode');}catch(e){}
+      try{if(!sessionStorage.getItem('profile-test-started')){localStorage.removeItem('terrain-profile-mode');sessionStorage.setItem('profile-test-started','1');}}catch(e){}
     });
 
     await page.goto(url);
@@ -169,6 +169,27 @@ const errors=[];
     assert.deepEqual([body.view_ridges,body.thickness_by_distance,body.layers.length],[true,true,found.length]);
     await page.locator('#silhouette-back').click();
     await page.waitForTimeout(300);
+
+    // Test 3c: Viewpoint ridgeline — crest lines on the map, a click moves the viewpoint, stale points are re-picked.
+    console.log('Test 3c: Viewpoint ridgeline');
+    await page.locator('#profile-mode').selectOption('viewridge');
+    assert.equal(await page.locator('#view-ridges-label').isHidden(),true,'Ridge detection is always on in this mode');
+    await page.evaluate(()=>window.scrollTo(0,0));
+    let ridgeFrame=await page.locator('#selection-frame').boundingBox();
+    await page.mouse.click(ridgeFrame.x+ridgeFrame.width*.45,ridgeFrame.y+ridgeFrame.height*.5);  // moves the viewpoint without Pick
+    await page.locator('#view-radius').selectOption('1000');
+    await page.waitForFunction(()=>/ridges? at/.test(document.getElementById('profile-mode-status').textContent),null,{timeout:15000});
+    assert.ok(await page.evaluate(()=>document.querySelectorAll('.leaflet-overlay-pane path').length)>1,'Crest lines and the view wedge draw on the map');
+    // A viewpoint kept from another area is dropped and picking starts again.
+    await page.evaluate(()=>{const saved=JSON.parse(localStorage.getItem('terrain-profile-mode'));saved.point=[10,10];localStorage.setItem('terrain-profile-mode',JSON.stringify(saved));});
+    await page.reload();
+    await page.waitForFunction(()=>/outside this area/.test(document.getElementById('profile-mode-status').textContent),null,{timeout:30000});
+    assert.equal(await page.locator('#profile-pick-view').getAttribute('aria-pressed'),'true','Picking starts again');
+    await page.evaluate(()=>window.scrollTo(0,0));
+    ridgeFrame=await page.locator('#selection-frame').boundingBox();
+    await page.mouse.click(ridgeFrame.x+ridgeFrame.width*.45,ridgeFrame.y+ridgeFrame.height*.5);
+    await page.waitForFunction(()=>/ridges? at/.test(document.getElementById('profile-mode-status').textContent),null,{timeout:15000});
+    console.log('  status:',await page.locator('#profile-mode-status').innerText());
 
     // Test 4: Slice mode
     console.log('Test 4: Slice mode');

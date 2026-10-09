@@ -442,3 +442,13 @@ def test_ridges_finds_separate_ridgelines_nearest_first():
     assert len(ridges(view, 6)) == 3
     beyond = ridges(viewpoint(terrain, to_point(.05, .5), bearing=90, fov=60, eye_m=2.0, min_radius_m=3000), 3)
     assert [round(ridge["distance_m"]/1000) for ridge in beyond] == [5, 8] and beyond[0]["near_m"] == 3000
+
+
+def test_viewpoint_at_the_frame_edge_sees_inward():
+    """A summit on the frame's edge is a common viewpoint: directions that leave the frame see nothing, the rest work."""
+    heights = np.full((60, 80), 100, dtype=np.float32)
+    heights[:, 60:70] = 900
+    terrain = Terrain(BOUNDS, heights, 11, 2, "2026-10-01T00:00:00Z")
+    view = viewpoint(terrain, to_point(0, .5), 90, 360, 2.0)
+    assert view["angles"].max() > 1
+    assert (view["angles"] == -90).any(), "Directions straight out of the frame have no terrain"

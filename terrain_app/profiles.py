@@ -147,8 +147,8 @@ def viewpoint(terrain, point, bearing=0.0, fov=120.0, eye_m=2.0, samples=None, m
     eye = float(sample(grid, start))+eye_m
     drop = distances**2/(2*EARTH_RADIUS_M)*(1-REFRACTION)
     angles = np.degrees(np.arctan2(sample(grid, uv)-drop[None, :]-eye, distances[None, :]))
-    angles[~inside] = -np.inf
-    if not inside[:, 0].all() or not np.isfinite(angles).any():
+    angles[~inside] = -np.inf  # a viewpoint at the frame's edge simply sees no terrain in directions that leave it
+    if not np.isfinite(angles).any():
         raise ValueError("The viewpoint must have terrain around it inside the generated area.")
     angles[:, distances < min_radius_m] = -np.inf
     if not np.isfinite(angles).any():
@@ -244,8 +244,27 @@ def ridges(view, count, prominence=.25):
                 angles[ray] = values.max()
         result.append({"distance_m": float(np.exp(centers[index])), "near_m": float(middles[index-1]) if index else view["min_radius_m"],
                        "far_m": float(middles[index]) if index < count-1 else float(view["farthest"]),
-                       "angles": angles, "coverage": float(found[:, index].mean())})
+                       "angles": angles, "coverage": float(found[:, index].mean()),
+                       "crest_m": np.where(found[:, index], ends[:, index], np.nan)})
     return result
+
+
+def crest_paths(view, ridge, terrain):
+    """Where a ridgeline seen from the viewpoint runs on the ground: its crest in each direction that has one, in frame
+    coordinates, split where directions lack a crest or neighboring crests jump more than a quarter of their distance."""
+    origin = view["start"]*(terrain.width, terrain.height)
+    paths, current, previous = [], [], None
+    for direction, distance in zip(view["directions"], ridge["crest_m"]):
+        if not np.isfinite(distance) or (previous is not None and abs(distance-previous) > .25*min(distance, previous)):
+            if len(current) >= 2:
+                paths.append(current)
+            current = []
+        if np.isfinite(distance):
+            current.append(np.round((origin+direction*distance)/(terrain.width, terrain.height), 6).tolist())
+        previous = distance if np.isfinite(distance) else None
+    if len(current) >= 2:
+        paths.append(current)
+    return paths
 
 
 def skyline_profile(angles, fov):
@@ -319,7 +338,8 @@ def profile_json(terrain, request):
     else:
         bands = [np.round(band(view, edges[index], edges[index+1]), 3).tolist() for index in range(request["bands"])] if request["bands"] > 1 else []
     return {"mode": "viewpoint", "min_radius_m": request["min_radius_m"],
-            "ridges": [{key: round(ridge[key], 3 if key == "coverage" else 1) for key in ("distance_m", "near_m", "far_m", "coverage")} for ridge in found], "azimuths": np.round(view["azimuths"], 3).tolist(), "angles": np.round(view["angles"], 3).tolist(),
+            "ridges": [{**{key: round(ridge[key], 3 if key == "coverage" else 1) for key in ("distance_m", "near_m", "far_m", "coverage")},
+                        "paths": crest_paths(view, ridge, terrain)} for ridge in found], "azimuths": np.round(view["azimuths"], 3).tolist(), "angles": np.round(view["angles"], 3).tolist(),
             "skyline_m": np.round(view["skyline_m"], 1).tolist(), "bands": bands, "band_edges": edges,
             "farthest_m": round(view["farthest"], 1), "eye_elevation_m": round(view["eye_m"], 1),
             "point": np.round(view["start"], 6).tolist(), "rays": view_ray_ends(view, terrain),

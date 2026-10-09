@@ -24,3 +24,12 @@ export function geographicExtent(bounds) {
   return {north:Math.max(...corners.map(p=>p.lat)),south:Math.min(...corners.map(p=>p.lat)),
     west:Math.min(...corners.map(p=>p.lng)),east:Math.max(...corners.map(p=>p.lng))};
 }
+
+// The inverse of sampleLocation: frame coordinates (u right, v down, 0–1 inside) of a location, as Python's to_selection.
+export function locationFraction(bounds,lat,lng) {
+  const angle=rotationAngle(bounds)*Math.PI/180;
+  if(!angle)return {u:(lng-bounds.west)/(bounds.east-bounds.west),v:(bounds.north-lat)/(bounds.north-bounds.south)};
+  const nw=mercatorPixel(bounds.west,bounds.north),se=mercatorPixel(bounds.east,bounds.south),p=mercatorPixel(lng,lat);
+  const dx=p.x-(nw.x+se.x)/2,dy=p.y-(nw.y+se.y)/2;
+  return {u:.5+(dx*Math.cos(angle)+dy*Math.sin(angle))/(se.x-nw.x),v:.5+(-dx*Math.sin(angle)+dy*Math.cos(angle))/(se.y-nw.y)};
+}

@@ -273,7 +273,8 @@ export function createSilhouette(ctx) {
     }
   }
   // Whether the geography page's profile panel currently shows this kind of profile.
-  function drawn(mode) {return ['ridgeline','viewpoint'].includes(mode)&&ctx.profile?.settings.mode===mode&&ctx.profile.ready;}
+  // A Viewpoint ridgeline drawn there counts as the viewpoint source (with its ridges detected).
+  function drawn(mode) {const shown=ctx.profile?.settings.mode==='viewridge'?'viewpoint':ctx.profile?.settings.mode;return ['ridgeline','viewpoint'].includes(mode)&&shown===mode&&ctx.profile.ready;}
   // A layered viewpoint design with ridges detected on the geography page: one layer per ridge, as many as the preset allows.
   // Fewer ridges than the preset's minimum: distance bands instead (ridges is false).
   function ridgePlan() {
@@ -607,7 +608,7 @@ export function createSilhouette(ctx) {
       if(!ctx.state.data)return;
       load();syncSlice();
       // A ridgeline or skyline drawn on the geography page becomes the profile, unless a route or another source was chosen.
-      const mode=ctx.profile?.settings.mode;
+      const mode=ctx.profile?.settings.mode==='viewridge'?'viewpoint':ctx.profile?.settings.mode;
       if(drawn(mode)&&['true','shaped'].includes(settings.source)&&!(layered()&&mode==='ridgeline')) {
         settings.source=mode;
         if(mode==='viewpoint'&&preset().rules?.distance_thickness)settings.thickness_by_distance=true;
