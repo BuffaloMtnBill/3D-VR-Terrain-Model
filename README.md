@@ -191,7 +191,8 @@ plots elevation against distance from A.
 across a chosen bearing and field of view, with Earth's curvature and standard
 atmospheric refraction (k = 0.13) applied. Press **Pick viewpoint**, then click
 where you stand (draggable marker). **Facing** sets the compass bearing
-(0–360°), **View** the field of view (60–360°), **Eye** the eye height (standing
+(0–360°); a newly placed viewpoint faces the middle of the selection box, and
+dragging it re-aims it there unless you have turned Facing yourself. **View** the field of view (60–360°), **Eye** the eye height (standing
 2 m, tower 15 m, hilltop 100 m, aerial 400 m), and **Layers** splits the view
 into 1–5 distance bands. For each bearing the skyline is the highest elevation
 angle; the chart plots degrees above horizontal against bearing, with nearer

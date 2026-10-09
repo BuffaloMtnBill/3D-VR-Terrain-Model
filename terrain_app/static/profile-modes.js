@@ -14,7 +14,7 @@ const BAND_COLORS=['#2f4a36','#4f6d4f','#7d9673','#aebd9e','#d8dfc8'];  // neare
 export function createProfileModes(ctx) {
   // Viewpoint ridgeline shares the viewpoint's controls and request, with ridge detection always on.
   const viewing=()=>mode==='viewpoint'||mode==='viewridge',serverMode=()=>mode==='viewridge'?'viewpoint':mode;
-  let mode='slice',picking=null,result=null,error=null,request=0,timer=null,overlay=null;
+  let mode='slice',picking=null,result=null,error=null,request=0,timer=null,overlay=null,facingByHand=false;
   const points={start:null,end:null,point:null};
   const markers={};
 
@@ -47,7 +47,7 @@ export function createProfileModes(ctx) {
     if(!markers[key]) {
       markers[key]=L.marker(points[key],{draggable:true,keyboard:true,title:label,
         icon:L.divIcon({className:'',html:`<div class="profile-marker ${className}">${label}</div>`,iconSize:[22,22],iconAnchor:[11,11]})});
-      markers[key].on('dragend',()=>{const {lat,lng}=markers[key].getLatLng();points[key]=[lat,lng];save();schedule(0);});
+      markers[key].on('dragend',()=>{const {lat,lng}=markers[key].getLatLng();points[key]=[lat,lng];if(key==='point'&&!facingByHand)faceCenter();save();schedule(0);});
     }
     markers[key].setLatLng(points[key]);
     if(!map.hasLayer(markers[key]))markers[key].addTo(map);
@@ -82,12 +82,24 @@ export function createProfileModes(ctx) {
     if(picking==='ridgeline')status('Click the first ridgeline point on the map, then the second. Drag the markers to adjust.');
     else if(picking==='viewpoint')status('Click where you stand on the map. Drag the marker to adjust; set the direction with Facing.');
   }
+  // A viewpoint faces the middle of the selection box by default: a click places it facing there, and dragging it re-aims it
+  // unless Facing was turned by hand since. A viewpoint at the very middle keeps its direction.
+  function faceCenter() {
+    const bounds=ctx.state.selection||ctx.state.data?.bounds;
+    if(!bounds||!points.point)return;
+    const center=sampleLocation(bounds,.5,.5),rad=Math.PI/180,[lat,lng]=points.point;
+    const north=Math.abs(bounds.north-bounds.south),east=Math.abs(bounds.east-bounds.west);
+    if(Math.abs(center.lat-lat)<north*.01&&Math.abs(center.lng-lng)<east*.01)return;
+    const dLng=(center.lng-lng)*rad,y=Math.sin(dLng)*Math.cos(center.lat*rad);
+    const x=Math.cos(lat*rad)*Math.sin(center.lat*rad)-Math.sin(lat*rad)*Math.cos(center.lat*rad)*Math.cos(dLng);
+    $('view-bearing').value=Math.round(((Math.atan2(y,x)/rad)%360+360)%360)%360;bearingLabel();
+  }
   function mapClick(event) {
     const point=[event.latlng.lat,event.latlng.lng];
     // In the viewpoint modes a click on the map always moves the viewpoint; ridgeline points need Pick two points.
-    if(!picking&&viewing()){points.point=point;save();drawMap();schedule(0);return;}
+    if(!picking&&viewing()){points.point=point;facingByHand=false;faceCenter();save();drawMap();schedule(0);return;}
     if(!picking)return;
-    if(picking==='viewpoint'){points.point=point;setPicking(null);}
+    if(picking==='viewpoint'){points.point=point;facingByHand=false;faceCenter();setPicking(null);}
     else if(!points._first){points._first=true;points.start=point;points.end=null;status('Now click the second ridgeline point.');}
     else {delete points._first;points.end=point;setPicking(null);}
     save();drawMap();schedule(0);
@@ -228,7 +240,7 @@ export function createProfileModes(ctx) {
   $('profile-mode').addEventListener('change',event=>setMode(event.target.value));
   $('profile-pick-ridge').addEventListener('click',()=>{delete points._first;setPicking(picking==='ridgeline'?null:'ridgeline');});
   $('profile-pick-view').addEventListener('click',()=>setPicking(picking==='viewpoint'?null:'viewpoint'));
-  $('view-bearing').addEventListener('input',()=>{bearingLabel();save();schedule();});
+  $('view-bearing').addEventListener('input',()=>{facingByHand=true;bearingLabel();save();schedule();});
   for(const id of ['view-fov','view-eye','view-bands','view-radius','view-far','view-ridges'])$(id).addEventListener('change',()=>{save();schedule(0);});
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&picking){delete points._first;setPicking(null);status('');}});
   bearingLabel();

@@ -68,6 +68,11 @@ let outlineAfter;
     await page.waitForTimeout(300);
     const frame2=await page.locator('#selection-frame').boundingBox();
     await page.mouse.click(frame2.x+frame2.width*0.35,frame2.y+frame2.height*0.55);
+    // A new viewpoint faces the middle of the selection box: here a little north of east.
+    const aimed=Number(await page.locator('#view-bearing').inputValue());
+    console.log('  default facing:',aimed);
+    assert.ok(aimed>45&&aimed<90,`The viewpoint faces the selection's center (${aimed}°)`);
+    assert.match(await page.locator('#view-bearing-value').innerText(),new RegExp(`^${aimed}°`));
 
     // Set bearing to 60 and bands to 3
     await page.locator('#view-bearing').evaluate(e=>{e.value='60';e.dispatchEvent(new Event('input',{bubbles:true}));});
