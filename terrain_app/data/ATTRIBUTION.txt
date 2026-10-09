@@ -76,7 +76,8 @@ Includes elevation-derived hydrography and legacy National Hydrography Dataset (
 https://www.usgs.gov/3d-hydrography-program
 USGS data are public domain; OpenStreetMap supplies open-sea geometry.
 
-Print Studio text: DejaVu Sans Bold font. Fonts are (c) Bitstream (Bitstream Vera);
+Print Studio and silhouette text: DejaVu Sans Bold, DejaVu Sans, DejaVu Sans Oblique, and
+DejaVu Sans Bold Oblique fonts. Fonts are (c) Bitstream (Bitstream Vera);
 DejaVu changes are in the public domain; glyphs imported from Arev fonts are
 (c) Tavmjong Bah. Used under the Bitstream Vera / Arev font licenses, included as
 terrain_app/data/fonts/DejaVu-LICENSE.txt. https://dejavu-fonts.github.io/

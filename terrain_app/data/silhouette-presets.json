@@ -1,5 +1,5 @@
 {
-  "about": "Silhouette design page presets (\"Start from\"). settings are applied over the page's defaults; fields name the extra setting groups shown; rules are handled in silhouette.js: tab_thickness (thickness follows the lamp tab), layers (spread positions near side first; a viewpoint with detected ridges sets the count), distance_thickness (Thicker when closer starts on for a viewpoint source), caption (filled from the route).",
+  "about": "Silhouette design page presets (\"Start from\"). settings are applied over the page's defaults; fields name the extra setting groups shown; rules are handled in silhouette.js: tab_thickness (thickness follows the lamp tab), layers (spread positions near side first; a viewpoint with detected ridges sets the count), distance_thickness (Thicker when closer starts on for a viewpoint source), caption (filled from the route, or none: the lamp designs start without one). Every preset resets a moved caption to its aligned place.",
   "groups": [
     {"name": "Glow lamps", "presets": ["glow-edge", "glow-stencil", "glow-layers", "glow-clouds", "glow-skyline"]},
     {"name": "Shadow boxes", "presets": ["box-diorama", "box-trail", "box-chart", "box-anniversary"]},
@@ -9,9 +9,9 @@
   "presets": {
     "custom": {"name": "Custom", "summary": "One piece with your own caption and mount.", "fields": [], "settings": {}},
     "glow-edge": {
-      "name": "Edge-lit ridgeline", "summary": "One clear panel the lamp's slot thickness; the engraved caption catches the edge light.",
+      "name": "Edge-lit ridgeline", "summary": "One clear panel the lamp's slot thickness, lit along its ridgeline; add an engraved caption to catch the edge light.",
       "hint": "Print in clear or translucent PETG at 100 % infill and 0.12 mm layers, front face up.",
-      "fields": ["lamp", "print"], "rules": {"tab_thickness": true},
+      "fields": ["lamp", "print"], "rules": {"tab_thickness": true, "caption": "none"},
       "settings": {"fit": "lamp", "text_style": "engrave", "text_depth": 0.6, "text_size": 6, "base_mm": 12, "width_mm": 180}
     },
     "glow-stencil": {
@@ -23,21 +23,21 @@
     "glow-layers": {
       "name": "Layered glow", "summary": "Thin panels from several slices stand in a comb base that drops into the lamp; rear ridges rise above front ones.",
       "hint": "For a real view, pick a viewpoint on the geography page with Beyond and Detect ridges set: each ridge becomes a panel, closer ones thicker. Print the panels in translucent PETG, the front panel darkest (or most opaque) and the back palest; print the comb base clear so the lamp shines up through it.",
-      "fields": ["lamp", "layers", "print"], "rules": {"layers": {"count": 3, "min": 2, "max": 4, "low": 25, "high": 75, "step": 8}, "distance_thickness": true},
+      "fields": ["lamp", "layers", "print"], "rules": {"layers": {"count": 3, "min": 2, "max": 4, "low": 25, "high": 75, "step": 8}, "distance_thickness": true, "caption": "none"},
       "settings": {"fit": "lamp", "thickness_mm": 2, "thickness_near_mm": 3, "thickness_far_mm": 1.5, "layer_spacing": 6, "base_mm": 14, "width_mm": 170,
                    "text_style": "engrave", "text_depth": 0.6}
     },
     "glow-clouds": {
       "name": "Layered glow with clouds", "summary": "The layered glow with a puffy cloud panel standing behind the ridges, in its own slot at the back of the comb base.",
       "hint": "The clouds are decorative, not mapped terrain. Print them in white or the palest translucent filament so the lamp lights them most; the ridge panels translucent, the front darkest; the comb base clear.",
-      "fields": ["lamp", "layers", "print"], "rules": {"layers": {"count": 3, "min": 2, "max": 4, "low": 25, "high": 75, "step": 8}, "distance_thickness": true},
+      "fields": ["lamp", "layers", "print"], "rules": {"layers": {"count": 3, "min": 2, "max": 4, "low": 25, "high": 75, "step": 8}, "distance_thickness": true, "caption": "none"},
       "settings": {"fit": "lamp", "thickness_mm": 2, "thickness_near_mm": 3, "thickness_far_mm": 1.5, "layer_spacing": 6, "base_mm": 14, "width_mm": 170,
                    "text_style": "engrave", "text_depth": 0.6, "clouds": true}
     },
     "glow-skyline": {
-      "name": "Skyline night-light", "summary": "A slice through town with the mapped buildings standing on the ground, a stencil name, and a lamp tab.",
+      "name": "Skyline night-light", "summary": "A slice through town with the mapped buildings standing on the ground and a lamp tab; add a stencil name if you like.",
       "hint": "Print opaque. Turn on the Buildings map layer on the geography page so the slice can include them.",
-      "fields": ["lamp", "buildings", "print"],
+      "fields": ["lamp", "buildings", "print"], "rules": {"caption": "none"},
       "settings": {"fit": "lamp", "include_buildings": true, "building_corridor_m": 30, "source": "shaped", "thickness_mm": 3,
                    "text_style": "stencil", "text_size": 8, "base_mm": 14, "width_mm": 180}
     },

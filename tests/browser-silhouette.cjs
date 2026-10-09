@@ -93,6 +93,56 @@ function routeGPX() {
     await page.waitForFunction(()=>!document.querySelector('[data-silhouette-export="stl"]').disabled);
     assert.match(await page.locator('#silhouette-status').innerText(),/downloaded/);
 
+    // The caption's selection box: drag it along the piece; the request carries its new center, and the export follows.
+    const handle=page.locator('#silhouette-svg .sil-caption-box');
+    await handle.waitFor();
+    const grab=await handle.boundingBox(),from={x:grab.x+grab.width/2,y:grab.y+grab.height/2};
+    let dragged=outlineAfter(page,body=>Number.isFinite(body.text_x));
+    await page.mouse.move(from.x,from.y);await page.mouse.down();
+    await page.mouse.move(from.x-120,from.y,{steps:6});await page.mouse.up();
+    let movedBody=(await dragged).request().postDataJSON();
+    const box=(await (await dragged).json()).text_box;
+    assert.ok(movedBody.text_x<box.default[0]-10&&box.placed,'Dragging left moves the caption left');
+    await page.waitForFunction(()=>!document.getElementById('silhouette-text-reset').disabled);
+    // Arrow keys nudge it 1 mm (Shift: 5 mm).
+    dragged=outlineAfter(page,body=>body.text_x===Math.round((movedBody.text_x+5)*10)/10);
+    await page.locator('#silhouette-svg .sil-caption-select').focus();await page.keyboard.press('Shift+ArrowRight');
+    movedBody=(await dragged).request().postDataJSON();
+    request=exportRequest(page,'stl');downloading=page.waitForEvent('download');
+    await page.locator('[data-silhouette-export="stl"]').click();
+    body=(await request).postDataJSON();await downloading;
+    assert.deepEqual([body.text_x,body.text_y],[movedBody.text_x,movedBody.text_y],'The export carries the caption position');
+    await page.waitForFunction(()=>!document.querySelector('[data-silhouette-export="stl"]').disabled);
+    dragged=outlineAfter(page,body=>body.text_x===null);
+    await page.locator("#silhouette-text-reset").click();await dragged;
+
+    // The text editor: a second, smaller italic line, left-aligned.
+    await page.locator('#silhouette-text-edit').click();
+    assert.equal(await page.locator('#text-editor').isVisible(),true,'Edit text opens the text editor');
+    assert.equal(await page.locator('#text-editor-lines li').count(),1);
+    await page.waitForFunction(()=>/mm$/.test(document.getElementById('text-editor-size').textContent));
+    const oneLine=await page.locator('#text-editor-size').innerText();
+    await page.locator('#text-editor-add').click();
+    const second=page.locator('#text-editor-lines li').nth(1);
+    await second.locator('input').first().fill('Roan Mountain, Tennessee');
+    await second.locator('input[type=number]').first().fill('3');
+    await second.locator('select').selectOption('italic');
+    await page.locator('[data-text-align="left"]').click();
+    await page.waitForFunction(text=>document.getElementById('text-editor-size').textContent!==text&&document.querySelectorAll('#text-editor-svg path').length===1,oneLine);
+    const block=outlineAfter(page,body=>body.text_lines?.length===2);
+    await page.locator('#text-editor-ok').click();
+    body=(await block).request().postDataJSON();
+    assert.equal(await page.locator('#text-editor').isVisible(),false);
+    assert.deepEqual([body.text_lines[1].style,body.text_lines[1].size,body.text_lines[0].style,body.text_align],['italic',3,'bold','left']);
+    assert.equal(body.text,'ROAN HIGHLANDS\nRoan Mountain, Tennessee');
+    assert.equal(await page.locator('#silhouette-text').evaluate(element=>element.readOnly),true,'Formatted text is edited in the text editor');
+    await page.waitForFunction(()=>{const path=document.querySelector('#silhouette-svg path.sil-text');return path&&path.getBBox().height>9;});
+    request=exportRequest(page,'stl');downloading=page.waitForEvent('download');
+    await page.locator('[data-silhouette-export="stl"]').click();
+    body=(await request).postDataJSON();await downloading;
+    assert.equal(body.text_lines.length,2,'The export carries the text block');
+    await page.waitForFunction(()=>!document.querySelector('[data-silhouette-export="stl"]').disabled);
+
     await page.locator('[data-silhouette-view="3d"]').click();
     assert.equal(await page.locator('#silhouette-3d canvas').count(),1,'The 3D view has its own canvas');
     await page.waitForTimeout(400);
@@ -105,7 +155,7 @@ function routeGPX() {
     await page.reload();
     await page.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('160 × 117'));
     await page.locator('#silhouette-button').click();
-    assert.equal(await page.locator('#silhouette-text').inputValue(),'ROAN HIGHLANDS');
+    assert.equal(await page.locator('#silhouette-text').inputValue(),'ROAN HIGHLANDS\nRoan Mountain, Tennessee','The text block is remembered');
     assert.equal(await page.locator('#silhouette-mount').inputValue(),'holes');
 
     // Start from: presets grouped under their headings.
@@ -136,6 +186,7 @@ function routeGPX() {
     await page.locator('[data-silhouette-preset="glow-layers"]').click();
     body=(await next).request().postDataJSON();
     assert.equal(body.mount,'none','A lamp holds the design, so the mount resets');
+    assert.deepEqual([body.text,body.text_lines,await page.locator('#silhouette-text').inputValue()],['',[],''],'Lamp designs start without text');
     assert.deepEqual([body.min_feature_mm,body.comb_clearance],[1,.3],'Printing settings reach the server');
     assert.deepEqual(body.layers.map(layer=>layer.base_mm),[14,22,30],'Each layer stands a step higher');
     assert.ok(body.layers[0].color!==body.layers[2].color,'Layers fade from front to back');

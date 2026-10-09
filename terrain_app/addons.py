@@ -25,6 +25,9 @@ from .print_features import clean_collinear_faces, extrude, footprint as feature
 DATA = Path(__file__).parent / "data"
 FONT_PATH = DATA / "fonts" / "DejaVuSans-Bold.ttf"
 FONT_NAME = "DejaVu Sans Bold"
+# Text styles for the silhouette page's text blocks (the 3D design page's add-ons stay bold); all DejaVu Sans.
+FONT_FILES = {"bold": "DejaVuSans-Bold.ttf", "regular": "DejaVuSans.ttf", "italic": "DejaVuSans-Oblique.ttf", "bold-italic": "DejaVuSans-BoldOblique.ttf"}
+FONT_STYLES = tuple(FONT_FILES)
 BALL_PATH = DATA / "templates" / "marker-ball.stl"
 BALL_INFO = json.loads((DATA / "templates" / "marker-ball.json").read_text(encoding="utf-8"))
 BALL_COLOR = "#c0392b"
@@ -284,10 +287,10 @@ def project_metadata(project):
 FONT_LOCK = Lock()  # fontTools loads tables lazily; export jobs and requests run on several threads.
 
 
-@lru_cache(maxsize=1)
-def font():
+@lru_cache(maxsize=4)
+def font(style="bold"):
     from fontTools.ttLib import TTFont
-    loaded = TTFont(FONT_PATH)
+    loaded = TTFont(DATA / "fonts" / FONT_FILES[style])
     glyphs = loaded.getGlyphSet()
     from fontTools.pens.boundsPen import BoundsPen
     pen = BoundsPen(glyphs)
@@ -331,11 +334,11 @@ def flatten_contours(glyphs, name):
     return pen.contours
 
 
-@lru_cache(maxsize=512)
-def glyph_shape(name):
+@lru_cache(maxsize=1024)
+def glyph_shape(name, style="bold"):
     """A glyph's filled area in font units, from its contours under the even-odd rule."""
     with FONT_LOCK:
-        _, glyphs, _, _ = font()
+        _, glyphs, _, _ = font(style)
         contours = flatten_contours(glyphs, name)
     shape = Polygon()
     for contour in contours:
@@ -376,6 +379,35 @@ def text_shape(value, size):
     shape = scale(shape, factor, factor, origin=(0, 0))
     x0, y0, x1, y1 = shape.bounds
     return make_valid(translate(shape, -(x0+x1)/2, -(y0+y1)/2)), tuple(dict.fromkeys(missing))
+
+
+@lru_cache(maxsize=256)
+def line_shape(value, size, style="bold", tracking=0.0):
+    """One line of lettering with a cap height of `size` mm, its baseline at y = 0 and its pen starting at x = 0; tracking
+    adds that percentage of the cap height between letters (negative tightens). Returns the shape, the advance width (mm),
+    and the characters the font cannot draw."""
+    with FONT_LOCK:
+        loaded, _, cmap, cap = font(style)
+        metrics = loaded["hmtx"].metrics
+        space = metrics[cmap[32]][0]
+    gap, cursor, shapes, missing = tracking/100*cap, 0.0, [], []
+    for index, character in enumerate(value):
+        if index:
+            cursor += gap
+        name = cmap.get(ord(character))
+        if name is None:
+            if not character.isspace():
+                missing.append(character)
+            cursor += space
+            continue
+        glyph = glyph_shape(name, style)
+        if not glyph.is_empty:
+            shapes.append(translate(glyph, cursor))
+        cursor += metrics[name][0]
+    factor = size/cap
+    shape = unary_union(shapes)
+    shape = make_valid(scale(shape, factor, factor, origin=(0, 0))) if not shape.is_empty else shape
+    return shape, cursor*factor, tuple(dict.fromkeys(missing))
 
 
 def text_outline(value, size):

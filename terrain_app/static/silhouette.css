@@ -88,6 +88,58 @@
 #silhouette-svg .sil-foot{fill:#876749;fill-opacity:.55;stroke:#c8a774;stroke-dasharray:4 3;stroke-width:1;vector-effect:non-scaling-stroke}
 #silhouette-svg .sil-dimension line{stroke:#a9ae99;stroke-width:1;vector-effect:non-scaling-stroke}
 #silhouette-svg .sil-label{fill:#c9c6ad;font-family:var(--sans)}
+/* The caption's selection graphic: dashed box and move grip; a guide shows while it snaps to the center line or base strip. */
+#silhouette-svg .sil-caption-select{cursor:move;outline:none;touch-action:none}
+#silhouette-svg .sil-caption-box{fill:#f3d59208;stroke:#f3d592;stroke-width:1.2;stroke-dasharray:5 3;vector-effect:non-scaling-stroke}
+#silhouette-svg .sil-caption-select:hover .sil-caption-box,#silhouette-svg .sil-caption-select:focus-visible .sil-caption-box,#silhouette-svg .sil-caption-select.dragging .sil-caption-box{fill:#f3d5921c;stroke:#fff0c3;stroke-width:2}
+#silhouette-svg .sil-caption-grip circle{fill:#f3d592;stroke:#142118;stroke-width:1;vector-effect:non-scaling-stroke}
+#silhouette-svg .sil-caption-grip path{stroke:#142118;stroke-width:1.4;vector-effect:non-scaling-stroke}
+#silhouette-svg .sil-guide{stroke:#8fd3ff;stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke;pointer-events:none}
+.silhouette-text-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.silhouette-text-head .button{padding:5px 9px;font-size:10px;flex-shrink:0}
+.silhouette-text-move{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px}
+.silhouette-text-move .small-hint{margin:0!important}
+.silhouette-text-move .small-hint:empty{display:none}
+.silhouette-text-move .text-button{color:var(--tan);font-size:10px;white-space:nowrap;margin-left:auto}
+.silhouette-text-move .text-button:disabled{opacity:.45;cursor:default}
+#silhouette textarea:read-only{opacity:.75}
+
+/* Text editor: a block of lines, each with its own size, style, and letter spacing, previewed to scale from the server's outlines. */
+.text-editor{width:min(680px,calc(100vw - 24px));max-height:calc(100vh - 24px);padding:0;border:1px solid #6e6747;border-radius:10px;background:var(--surface);color:var(--ink);box-shadow:0 18px 60px #000a}
+.text-editor::backdrop{background:#0009}
+.text-editor-form{display:flex;flex-direction:column;gap:10px;padding:16px;max-height:calc(100vh - 26px);overflow-y:auto;box-sizing:border-box}
+.text-editor-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+#silhouette .text-editor h3{margin:0}
+.text-editor-size{font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}
+.text-editor-preview{position:relative;height:150px;border:1px solid #2c3a2c;border-radius:6px;background:radial-gradient(ellipse at 50% 40%,#34432b 0%,#1d3022 60%,#122118 100%)}
+#text-editor-svg{display:block;width:100%;height:100%}
+#text-editor-svg path{fill:#f0ead6}
+#text-editor-svg line{stroke:#8fd3ff;stroke-opacity:.45;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
+#text-editor-status{position:absolute;left:8px;bottom:6px;margin:0!important}
+#text-editor-status.error{color:#ffb391}
+.text-editor-columns,.text-editor-lines li{display:grid;grid-template-columns:minmax(0,1fr) 64px 104px 64px 78px;gap:6px;align-items:center}
+.text-editor-columns{font-size:9px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)}
+.text-editor-lines{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+#silhouette .text-editor input:not([type=color]),#silhouette .text-editor select{width:100%;margin:0;padding:6px 7px;font-size:11px;box-sizing:border-box}
+.text-editor-row-actions{display:flex;gap:2px}
+.text-editor-row-actions .icon-button{width:24px;height:26px;font-size:12px}
+.text-editor-add{align-self:flex-start;color:var(--tan)!important;font-size:11px}
+.text-editor-block{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;border-top:1px solid #2c3a2c;padding-top:10px}
+#silhouette .text-editor-block label{display:flex;align-items:center;gap:6px;white-space:nowrap}
+#silhouette .text-editor-block input[type=number]{width:64px}
+#silhouette .text-editor-block select{width:auto}
+.text-editor-block input[type=color]{width:38px;height:26px;padding:2px;background:#263627;border:1px solid #87764f;border-radius:4px}
+.text-editor-align{height:auto;padding:0;background:transparent;border:0;margin:0}
+.text-editor-align button{padding:5px 10px}
+.text-editor-actions{display:flex;justify-content:flex-end;gap:8px;margin:0;padding:0}
+.text-editor-actions .button{padding:8px 16px}
+@media(max-width:560px){
+  .text-editor-columns{display:none}
+  .text-editor-lines li{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 60px;border:1px solid #2c3a2c;border-radius:6px;padding:6px}
+  .text-editor-lines li .text-editor-text{grid-column:1/-1}
+  .text-editor-lines li .text-editor-row-actions{grid-column:1/-1;justify-content:flex-end}
+  .text-editor-preview{height:120px}
+}
 
 .silhouette-exports{margin:12px 0 8px!important}
 .silhouette-exports button{padding:9px 9px!important;gap:4px!important}

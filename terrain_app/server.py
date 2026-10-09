@@ -24,7 +24,7 @@ from .printing import export_3mf
 from .addons import BALL_COLOR, catalog as studio_catalog, check_project, platform_top, project_options, text_outline
 from .studio import marker_ball_file, marker_platform_file, studio_export, studio_format
 from .hydrography import HydrographyClient, HYDROGRAPHY_URL, water_source
-from .silhouette import PRESET_DATA as SILHOUETTE_PRESETS, SilhouetteOptions, Sources, outline_json, silhouette_export
+from .silhouette import PRESET_DATA as SILHOUETTE_PRESETS, SilhouetteOptions, Sources, outline_json, silhouette_export, text_block_json
 from .profiles import profile_json, profile_options
 from .routes import MAX_GPX_BYTES, RouteStore, public_route, route_lines, route_options, with_route
 
@@ -555,6 +555,11 @@ def create_app(test_config=None):
                 record = building_jobs.get(identifier)
                 buildings = record["data"]["layers"]["buildings"] if record and record["state"] == "ready" else None
         return Sources(route, buildings)
+
+    @app.post("/api/silhouette/text")
+    def silhouette_text():
+        """The text editor's preview of a text block (no terrain needed)."""
+        return jsonify(text_block_json(request.get_json(silent=True)))
 
     @app.post("/api/silhouette/<identifier>/outline")
     def silhouette_outline(identifier):

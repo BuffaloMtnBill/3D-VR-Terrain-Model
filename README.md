@@ -322,7 +322,8 @@ Changes repaint both the design page's view and the geography page's preview.
   in true proportions or stretched, or as real elevation. Its direction and position slider are
   the geography selection page's own, so both always show the same slice. **Cut the 3D view here** clips the
   model and add-on ghosts at the slice; point at the chart to read heights and cut floors.
-- Text uses the bundled DejaVu Sans Bold font (`terrain_app/data/fonts/`, under the
+- Text uses the bundled DejaVu Sans Bold font (`terrain_app/data/fonts/`, with DejaVu Sans, Oblique,
+  and Bold Oblique for the silhouette page's text editor; under the
   [DejaVu font license](terrain_app/data/fonts/DejaVu-LICENSE.txt)).
 - **Marker balls:** `terrain_app/data/templates/marker-ball.stl` is a 10 mm push-pin ball for a
   brass nail (24.4 mm exposed, 1.8 mm hole); its dimensions are in `marker-ball.json`. Nail
@@ -417,7 +418,27 @@ four hex colors, nearest first), and `color_zones`; outlines add `zones` (each w
   points), true elevations, the model's shaped elevation profile, or the **uploaded route**, and mirror.
 - **Text:** a caption of up to three lines on the base (DejaVu Sans Bold, starting as the place name),
   engraved, raised from the front face, or cut through as a stencil (thin bridges keep the insides of
-  O, A, and e attached), at the left, center, or right.
+  O, A, and e attached), at the left, center, or right. The lamp designs (Edge-lit ridgeline, both
+  Layered glows, Skyline night-light) start without text; the Stencil lamp keeps its cut-through
+  name, since lighting the letters is its point.
+  - **Edit text…** opens the text editor for layouts with more than one size: up to six lines, each
+    with its own text, size (capital-letter height, 1–40 mm), style (Regular, Bold, Italic, Bold
+    italic; DejaVu Sans), and letter spacing (−20 to +100 % of its letter height added between
+    letters), plus the block's alignment (the lines left, centered, or right within it), line spacing
+    (baseline to baseline, × the lower line's size), style, depth, and color. A name over a smaller
+    italic address, left-aligned, is a few clicks. The preview is drawn from the server's own outlines,
+    so it is exactly what prints; **Plain text** returns to a simple caption. The presets with a
+    caption (trail memory, elevation chart, anniversary, race) start with a block: a bold first line
+    and smaller lines under it.
+  - **Moving the text:** the front view draws a dashed box with a move grip around the text: drag it
+    anywhere on the front piece, or focus it and nudge with the arrow keys (Shift: 5 mm). It snaps to
+    the piece's center line and to the base strip's middle within 2 mm (a guide shows), and **Reset
+    text position** puts it back on the base strip; choosing Left, Center, or Right does too. The text
+    must sit on material: 1.2 mm in from the edges for engraved or stencil text, clear of the lamp
+    comb's slots and the shadow box's comb ends, and on the nearest color zone (zones differ in
+    thickness, so the text stays on zone 1's face). Dropped where it would not fit, it comes back to
+    the nearest place it fits, and Checks says so. The 3D view and every export follow the position;
+    presets reset it, and it is remembered per framed area with the other settings.
 - **Mounting:** a desk stand (two feet with a slot the thickness plus 0.2 mm wide, printed beside the
   piece in the same file), two round wall holes, or two keyholes.
 - **Exports:** STL (one solid, lying flat with its front face up; a design with several parts
@@ -891,6 +912,6 @@ with an empty preview until you click Generate terrain.
 
 Terrain Studio is released under the [MIT License](LICENSE). Bundled
 third-party code keeps its own license (see `terrain_app/static/vendor/`; the bundled
-DejaVu Sans Bold font is under `terrain_app/data/fonts/DejaVu-LICENSE.txt`), and
+DejaVu Sans fonts are under `terrain_app/data/fonts/DejaVu-LICENSE.txt`), and
 map and elevation data carry the attribution terms listed in
 `terrain_app/data/ATTRIBUTION.txt`.

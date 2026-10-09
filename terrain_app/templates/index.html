@@ -275,6 +275,24 @@
   </dialog>
 
   <dialog id="silhouette" aria-labelledby="silhouette-title">
+    <dialog id="text-editor" class="text-editor" aria-labelledby="text-editor-title">
+      <form method="dialog" class="text-editor-form">
+        <header class="text-editor-head"><h3 id="text-editor-title">Text</h3><span id="text-editor-size" class="text-editor-size"></span></header>
+        <div class="text-editor-preview"><svg id="text-editor-svg" role="img" aria-label="Preview of the text block, to scale"></svg><span id="text-editor-status" class="small-hint" role="status"></span></div>
+        <div class="text-editor-columns" aria-hidden="true"><span>Text</span><span>Size (mm)</span><span>Style</span><span>Spacing (%)</span><span></span></div>
+        <ol id="text-editor-lines" class="text-editor-lines" aria-label="Lines, top to bottom"></ol>
+        <button id="text-editor-add" type="button" class="text-button text-editor-add">+ Add line</button>
+        <div class="text-editor-block">
+          <div class="view-tabs text-editor-align" role="group" aria-label="Line alignment"><button type="button" data-text-align="left" aria-pressed="false">Left</button><button type="button" data-text-align="center" aria-pressed="false">Center</button><button type="button" data-text-align="right" aria-pressed="false">Right</button></div>
+          <label for="text-editor-spacing">Line spacing (×) <input id="text-editor-spacing" type="number" min="1" max="3" step="0.1" value="1.6"></label>
+          <label for="text-editor-style">Style <select id="text-editor-style"><option value="engrave">Engraved</option><option value="emboss">Raised (emboss)</option><option value="stencil">Cut through (stencil)</option></select></label>
+          <label for="text-editor-depth">Depth (mm) <input id="text-editor-depth" type="number" min="0.2" max="5" step="0.1" value="0.8"></label>
+          <label for="text-editor-color">Color <input id="text-editor-color" type="color" value="#f0ead6"></label>
+        </div>
+        <p class="small-hint">Size is the height of capital letters; spacing adds that share of it between letters (negative tightens). Alignment lines the rows up inside the block; drag the block on the piece in the front view.</p>
+        <menu class="text-editor-actions"><button type="button" id="text-editor-cancel" class="button secondary">Cancel</button><button type="button" id="text-editor-ok" class="button primary">OK</button></menu>
+      </form>
+    </dialog>
     <header class="studio-bar">
       <button id="silhouette-back" type="button" class="button secondary studio-back" aria-label="Back to the geography selection page"><span aria-hidden="true">←</span> Geography selection</button>
       <div class="studio-heading"><span class="eyebrow">STEP 2 · SILHOUETTE DESIGN</span><h2 id="silhouette-title">Your landscape</h2><span id="silhouette-dimensions" class="studio-dimensions"></span></div>
@@ -407,11 +425,14 @@
       </section>
       <aside class="studio-right" aria-label="Text, mounting, and export">
         <section class="studio-card"><h3>Text</h3>
-          <label for="silhouette-text">Caption on the base (up to 3 lines)</label><textarea id="silhouette-text" rows="3" maxlength="184" autocomplete="off" spellcheck="false" placeholder="No text"></textarea>
+          <div class="silhouette-text-head"><label for="silhouette-text">Caption on the base (up to 3 lines)</label><button id="silhouette-text-edit" type="button" class="button secondary">Edit text…</button></div>
+          <textarea id="silhouette-text" rows="3" maxlength="400" autocomplete="off" spellcheck="false" placeholder="No text"></textarea>
+          <div class="silhouette-text-move"><span id="silhouette-text-format" class="small-hint"></span><button id="silhouette-text-plain" type="button" class="text-button" hidden>Plain text</button></div>
           <label class="studio-inline" for="silhouette-text-style">Style <select id="silhouette-text-style"><option value="engrave">Engraved</option><option value="emboss">Raised (emboss)</option><option value="stencil">Cut through (stencil)</option></select></label>
           <label class="studio-inline" for="silhouette-text-size">Size (mm, capitals) <input id="silhouette-text-size" type="number" min="2" max="30" step="0.5" value="5"></label>
           <label class="studio-inline" for="silhouette-text-depth">Depth (mm) <input id="silhouette-text-depth" type="number" min="0.2" max="5" step="0.1" value="0.8"></label>
           <label class="studio-inline" for="silhouette-text-align">Position <select id="silhouette-text-align"><option value="left">Left</option><option value="center" selected>Center</option><option value="right">Right</option></select></label>
+          <div class="silhouette-text-move"><span class="small-hint">Or drag the text's box in the front view (arrow keys nudge it).</span><button id="silhouette-text-reset" type="button" class="text-button" disabled>Reset text position</button></div>
           <label class="studio-inline" for="silhouette-text-color">Text color (3MF) <input id="silhouette-text-color" type="color" value="#f0ead6"></label>
         </section>
         <section class="studio-card"><h3>Mounting</h3>

@@ -234,7 +234,9 @@ def preset_payload(name, route=None, **extra):
         payload |= VIEW | {"view_ridges": True, "layers": payload["layers"][:3]}
     if payload.get("source") == "route":
         payload["route_id"] = route["id"]
-    if rules.get("caption"):
+    if rules.get("caption") == "none":  # the lamp designs start without a caption
+        payload["text"] = ""
+    elif rules.get("caption"):
         payload["text"] = "ROAN 10K\n2026-05-04\n1:02:03" if name in ("race", "box-chart") else "ROAN\n2026"
     if name in ("race", "box-chart", "box-trail"):
         payload["vertical_scale"] = 10
@@ -243,10 +245,10 @@ def preset_payload(name, route=None, **extra):
 
 EXPECTED = {
     "custom": ["Silhouette", "Text"],
-    "glow-edge": ["Silhouette", "Text"],
+    "glow-edge": ["Silhouette"],
     "glow-stencil": ["Silhouette"],
-    "glow-layers": ["Layer 1 (front) · 2.0 mm", "Text", "Layer 2 · 2.0 mm", "Layer 3 (back) · 2.0 mm", "Comb base"],
-    "glow-clouds": ["Layer 1 (front) · 2.0 mm", "Text", "Layer 2 · 2.0 mm", "Layer 3 · 2.0 mm", "Layer 4 · Clouds (back) · 2.0 mm", "Comb base"],
+    "glow-layers": ["Layer 1 (front) · 2.0 mm", "Layer 2 · 2.0 mm", "Layer 3 (back) · 2.0 mm", "Comb base"],
+    "glow-clouds": ["Layer 1 (front) · 2.0 mm", "Layer 2 · 2.0 mm", "Layer 3 · 2.0 mm", "Layer 4 · Clouds (back) · 2.0 mm", "Comb base"],
     "glow-skyline": ["Silhouette"],
     "box-diorama": ["Layer 1 (front) · 2.0 mm", "Text", "Layer 2 · 2.0 mm", "Layer 3 · 2.0 mm", "Layer 4 · 2.0 mm", "Layer 5 (back) · 2.0 mm",
                     "Spacer comb (left)", "Spacer comb (right)"],
@@ -315,11 +317,146 @@ def test_layered_glow_comb_base_slots_match_the_layers(terrain):
     # Front to back: each layer's back face is 6 mm further back, and the rear ridges stand taller.
     assert np.diff([layer["z"] for layer in data["layers"]]) == pytest.approx([-6, -6])
     assert data["layers"][0]["height_mm"] < data["layers"][2]["height_mm"]
-    assert layout(terrain, choice)["text"].bounds[1] >= 5.5  # the caption stays above the comb's 5 mm slots
+    captioned = SilhouetteOptions.from_dict(preset_payload("glow-layers", text="ROAN"))  # lamps start without one; add it
+    assert layout(terrain, captioned)["text"].bounds[1] >= 5.5  # the caption stays above the comb's 5 mm slots
     base = [solid for name, _, solid in solids(terrain, choice) if name == "Comb base"][0]
     x0, y0, z0, x1, y1, z1 = base.bounding_box()
     assert x1-x0 == pytest.approx(170) and z1 == pytest.approx(8+8)  # printed upside down: the tab stands on top
     assert base.slice(2).area() == pytest.approx(170*comb["depth"]-3*170*2.3, rel=1e-3)  # the slots, open on the bed
+
+
+# --- A moved caption ----------------------------------------------------------------------------------------
+
+def test_caption_without_a_position_keeps_its_aligned_place(terrain):
+    plain = layout(terrain, options(text="ROAN", width_mm=200))
+    same = layout(terrain, options(text="ROAN", width_mm=200, text_x=None, text_y=None))
+    assert plain["text"].equals(same["text"]) and plain["text_box"]["placed"] is False and not plain["text_box"]["moved"]
+    box_ = plain["text_box"]
+    assert box_["x"] == pytest.approx(100, abs=.01) and box_["y"] == pytest.approx(4, abs=.01) and box_["default"] == [box_["x"], box_["y"]]
+    assert outline_json(terrain, options(text="ROAN"))["text_box"]["x"] == pytest.approx(90, abs=.01)
+    assert outline_json(terrain, options(text=""))["text_box"] is None
+
+
+def test_caption_moves_on_the_piece_and_comes_back_onto_material(terrain):
+    placed = layout(terrain, options(text="ROAN", width_mm=200, text_x=40, text_y=4.5))
+    x0, y0, x1, y1 = placed["text"].bounds
+    assert ((x0+x1)/2, (y0+y1)/2) == pytest.approx((40, 4.5), abs=.05) and placed["text_box"]["placed"] and not placed["text_box"]["moved"]
+    assert not [note for note in placed["notes"] if "moved back" in note] and not [w for w in placed["warnings"] if "trimmed" in w]
+    off = layout(terrain, options(text="ROAN", width_mm=200, text_x=150, text_y=300))  # far above the ridge
+    room = off["outline"].buffer(-1.2)
+    assert off["text_box"]["moved"] and any("moved back onto the piece" in note for note in off["notes"])
+    assert room.buffer(.06).contains(off["text"]) and off["text"].area == pytest.approx(placed["text"].area, rel=.01), "Whole letters, on material"
+    assert abs(off["text_box"]["x"]-150) < 30, "It comes back near where it was dropped"
+    with pytest.raises(ValueError, match="text_x and text_y"):
+        options(text="ROAN", text_x=10)
+    with pytest.raises(ValueError, match="text_x and text_y"):
+        options(text="ROAN", text_x=10, text_y="up")
+
+
+def test_moved_caption_stays_off_the_comb_slots_and_in_every_export(terrain):
+    lamp = SilhouetteOptions.from_dict(preset_payload("glow-layers", text="ROAN", text_x=60, text_y=2))
+    shapes = layout(terrain, lamp)
+    assert shapes["text"].bounds[1] >= 5.5 and shapes["text_box"]["moved"], "Not hidden in the comb base's slots"
+    for style in ("engrave", "stencil", "emboss"):
+        choice = options(text="ROAN", width_mm=200, text_style=style, text_x=40, text_y=4.5)
+        shapes = layout(terrain, choice)
+        parts = solids(terrain, choice, shapes)
+        for name, _, solid in parts:
+            assert solid.status().name == "NoError" and solid.volume() > 0, (style, name)
+        if style == "stencil":
+            assert shapes["body"].area < shapes["outline"].area and len(parts[0][2].decompose()) == 1  # cut through, bridged, one piece
+        else:
+            x0, _, _, x1, _, _ = [solid for name, _, solid in parts if name == "Text"][0].bounding_box()
+            assert (x0+x1)/2 == pytest.approx(40, abs=.1)
+    svg = silhouette_export(terrain, options(text="ROAN", width_mm=200, text_x=40, text_y=4.5), "svg", "credits")[0]
+    assert svg.count(b"<path") >= 2
+
+
+# --- Text blocks from the text editor -----------------------------------------------------------------------
+
+def test_single_caption_payload_is_unchanged(terrain):
+    """The plain caption (text + text_size, bold) lays out exactly as before text blocks existed."""
+    for values, area, bounds in ((dict(text="ROAN"), 59.2554, (79.5496, 1.4062, 100.4504, 6.5938)),
+                                 (dict(text="ROAN\nHIGHLANDS", text_align="left", base_mm=20), 175.4097, (3.0, 3.4062, 47.5814, 16.5938)),
+                                 (dict(text="ROAN\nHIGHLANDS", base_mm=20), 175.4097, (67.7093, 3.4062, 112.2907, 16.5938))):
+        shape = layout(terrain, options(**values))["text"]
+        assert shape.area == pytest.approx(area, abs=1e-3) and shape.bounds == pytest.approx(bounds, abs=1e-3), values
+        assert options(**values).text_lines == ()
+
+
+def name_and_address(**extra):
+    return {"text_lines": [{"text": "WILL DODD", "size": 7, "style": "bold"}, {"text": "12 Main Street", "size": 3.5, "style": "italic"}],
+            "base_mm": 26, "width_mm": 200, **extra}
+
+
+def line_parts(shape, split):
+    """The block's lines, split at a height between them."""
+    from shapely.geometry import box
+    return shape.intersection(box(-1e3, split, 1e3, 1e3)), shape.intersection(box(-1e3, -1e3, 1e3, split))
+
+
+def test_text_block_lines_stack_align_and_size(terrain):
+    shapes = {align: layout(terrain, options(**name_and_address(text_align=align)))["text"] for align in ("left", "center", "right")}
+    for align, shape in shapes.items():
+        x0, y0, x1, y1 = shape.bounds
+        top, bottom = line_parts(shape, y1-7.6)
+        assert top.bounds[3]-top.bounds[1] == pytest.approx(7, abs=.35) and bottom.bounds[3] < top.bounds[1], "Name over the smaller address"
+        # The address's baseline is 1.6 × 3.5 mm below the name's.
+        assert top.bounds[1]-bottom.bounds[1] == pytest.approx(1.6*3.5, abs=.4)
+        edge = {"left": lambda g: g.bounds[0], "center": lambda g: (g.bounds[0]+g.bounds[2])/2, "right": lambda g: g.bounds[2]}[align]
+        assert edge(top) == pytest.approx(edge(bottom), abs=.25), align
+    assert shapes["left"].bounds[0] == pytest.approx(3, abs=.01) and shapes["center"].centroid.x != shapes["left"].centroid.x
+    wide = layout(terrain, options(**name_and_address(line_spacing=2.5)))["text"]
+    assert wide.bounds[3]-wide.bounds[1] > shapes["center"].bounds[3]-shapes["center"].bounds[1]+3
+
+
+def test_text_block_styles_and_letter_spacing_change_the_outline():
+    from terrain_app.silhouette import text_block_json
+    def block(**line):
+        return text_block_json({"text_lines": [{"text": "Roan Mountain", "size": 6, **line}]})
+    shapes = {style: block(style=style) for style in ("regular", "bold", "italic", "bold-italic")}
+    from shapely.geometry import Polygon
+    areas = {style: sum(abs(Polygon(polygon["outer"]).area) for polygon in shape["text"]) for style, shape in shapes.items()}
+    assert areas["bold"] > areas["regular"]*1.4 and areas["bold-italic"] > areas["italic"]*1.4
+    assert shapes["regular"]["text"] != shapes["italic"]["text"] and shapes["bold"]["width_mm"] > shapes["regular"]["width_mm"]
+    assert block(tracking=50)["width_mm"] == pytest.approx(block()["width_mm"]+12*.5*6, abs=.05), "12 gaps, each 50 % of 6 mm wider"
+    assert block(tracking=-20)["width_mm"] < block()["width_mm"]
+    assert block(text="ROAN", style="bold")["height_mm"] == pytest.approx(6, abs=.35) and block(text="Roan 漢")["missing"] == ["漢"]
+
+
+@pytest.mark.parametrize("value, message", [
+    ({"text_lines": [{"text": "x"}]*7}, "1 to 6 lines"),
+    ({"text_lines": [{"text": "x"*61}]}, "line 1 is longer than 60"),
+    ({"text_lines": [{"text": "x", "size": 50}]}, "between 1 and 40 mm"),
+    ({"text_lines": [{"text": "x", "style": "comic"}]}, "regular, bold, italic, or bold-italic"),
+    ({"text_lines": [{"text": "x", "tracking": 300}]}, "between -20 and 100 percent"),
+    ({"text_lines": ["x"]}, "needs its text, size, style"),
+    ({"line_spacing": 9}, "line spacing"),
+])
+def test_text_block_validation(value, message):
+    with pytest.raises(ValueError, match=message):
+        options(**value)
+
+
+def test_text_block_checks_exports_and_stencil(terrain, client):
+    small = layout(terrain, options(**name_and_address(text_lines=[{"text": "TINY", "size": 1.5}])))
+    assert any("Line 1 is under 2 mm" in warning for warning in small["warnings"])
+    stencil = options(**name_and_address(text_style="stencil", text_lines=[{"text": "ROAN", "size": 8, "style": "bold-italic"}, {"text": "Bob", "size": 3, "style": "italic"}]))
+    shapes = layout(terrain, stencil)
+    assert any("Line 2 is under 4 mm tall" in warning for warning in shapes["warnings"])
+    assert len(solids(terrain, stencil, shapes)[0][2].decompose()) == 1, "Bridged italic counters keep the piece in one part"
+    choice = options(**name_and_address(text_x=60, text_y=14))
+    parts = solids(terrain, choice)
+    text = [solid for name, _, solid in parts if name == "Text"][0]
+    x0, y0, _, x1, y1, _ = text.bounding_box()
+    assert ((x0+x1)/2, (y0+y1)/2) == pytest.approx((60, 14), abs=.3), "The block moves as one"
+    assert options(**name_and_address()).text == "WILL DODD\n12 Main Street"
+    saved = json.loads(silhouette_export(terrain, options(**name_and_address(text_x=60, text_y=14)), "json", "credits")[0])["settings"]
+    again = options(**{key: saved[key] for key in ("text_lines", "line_spacing", "text_align", "text_x", "text_y", "base_mm", "width_mm")})
+    assert again.text_lines == options(**name_and_address()).text_lines and (again.text_x, again.text_y) == (60, 14), "The settings file round-trips"
+    preview = client.post("/api/silhouette/text", json={"text_lines": [{"text": "HI", "size": 5}], "text_align": "left"}).get_json()
+    assert preview["height_mm"] == pytest.approx(5, abs=.1) and preview["text"]
+    assert "line 1" in client.post("/api/silhouette/text", json={"text_lines": [{"text": "x"*70}]}).get_json()["error"].lower()
 
 
 # --- Printability of lamp and box panels --------------------------------------------------------------------

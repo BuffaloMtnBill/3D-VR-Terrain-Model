@@ -19,12 +19,12 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import manifold3d as mf
 import numpy as np
 from shapely import make_valid
-from shapely.affinity import translate
+from shapely.affinity import scale, translate
 from shapely.geometry import LineString, Point, Polygon, box
 from shapely.geometry.polygon import orient
-from shapely.ops import unary_union
+from shapely.ops import nearest_points, unary_union
 
-from .addons import HEX, finite, text_shape
+from .addons import FONT_STYLES, HEX, finite, line_shape, text_shape
 from .elevation import SOURCES
 from .features import parts as geometry_parts, to_selection
 from .mesh import ModelOptions, binary_stl, model_elevations, relief_method
@@ -54,6 +54,7 @@ FITS = ("none", "lamp", "box")
 PRESET_DATA = json.loads((Path(__file__).parent / "data" / "silhouette-presets.json").read_text(encoding="utf-8"))
 PRESETS = tuple(PRESET_DATA["presets"])
 MAX_LAYERS = 7
+MAX_TEXT_LINES = 6  # a text block from the text editor
 # Colored by distance: nearest first, dark to pale, the farthest the default text color so a caption can share it.
 DISTANCE_COLORS = ("#234e40", "#678272", "#acb6a4", "#f0ead6")
 COLOR_LIMIT = "Use at most four colors: share the text color with one of the distance colors."
@@ -80,6 +81,10 @@ class SilhouetteOptions:
     text_size: float = 5.0  # cap height, mm
     text_style: str = "engrave"
     text_align: str = "center"
+    text_lines: tuple = ()  # a text block: ((text, cap height mm, style, letter spacing %), ...) top to bottom; empty: text and text_size
+    line_spacing: float = 1.6  # baseline to baseline, times the lower line's cap height
+    text_x: float = None  # the caption block's center (mm from the piece's left and up from its bottom); None: aligned on the base
+    text_y: float = None
     text_depth: float = .8
     mount: str = "none"
     hole_diameter: float = 4.0
@@ -200,16 +205,29 @@ class SilhouetteOptions:
             flags[name] = value.get(name, getattr(defaults, name))
             if not isinstance(flags[name], bool):
                 raise ValueError(f"{label} must be true or false.")
-        text = value.get("text", "")
-        if not isinstance(text, str):
-            raise ValueError("The caption must be text.")
-        lines = [line.strip() for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
-        while lines and not lines[-1]:
-            lines.pop()
-        while lines and not lines[0]:
-            lines.pop(0)
-        if len(lines) > 3 or any(len(line) > 60 for line in lines):
-            raise ValueError("The caption must be at most 3 lines of at most 60 characters each.")
+        spacing = value.get("line_spacing", defaults.line_spacing)
+        if not finite(spacing) or not 1 <= spacing <= 3:
+            raise ValueError("The line spacing must be between 1 and 3 times the letter height.")
+        block = text_block_lines(value.get("text_lines"))  # the text editor's lines, read first: they replace text and text_size
+        if block:
+            lines = [line[0] for line in block]
+            numbers["text_size"] = float(min(max(max(line[1] for line in block), 2), 30))
+        else:
+            text = value.get("text", "")
+            if not isinstance(text, str):
+                raise ValueError("The caption must be text.")
+            lines = [line.strip() for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+            while lines and not lines[-1]:
+                lines.pop()
+            while lines and not lines[0]:
+                lines.pop(0)
+            if len(lines) > 3 or any(len(line) > 60 for line in lines):
+                raise ValueError("The caption must be at most 3 lines of at most 60 characters each.")
+        spot, place = (value.get("text_x"), value.get("text_y")), {}
+        if any(item is not None for item in spot):
+            if not all(finite(item) and -500 <= item <= 1000 for item in spot):
+                raise ValueError("A moved caption needs text_x and text_y, its center in millimeters on the piece.")
+            place = {"text_x": float(spot[0]), "text_y": float(spot[1])}
         colors = {}
         for name in ("body_color", "text_color", "cloud_color"):
             color = value.get(name, getattr(defaults, name))
@@ -258,7 +276,7 @@ class SilhouetteOptions:
             # Detected ridges set their own distances; distance bands go by the layers' positions.
             if not view["ridges"] and [layer[0] for layer in parsed] != sorted(layer[0] for layer in parsed):
                 raise ValueError("A viewpoint's layers are distance bands: give each layer a farther distance than the one in front.")
-        options = cls(**numbers, **picked, **colors, **flags, **drawn, trim=(float(trim[0]), float(trim[1])), text="\n".join(lines),
+        options = cls(**numbers, **picked, **colors, **flags, **drawn, **place, text_lines=block, line_spacing=float(spacing), trim=(float(trim[0]), float(trim[1])), text="\n".join(lines),
                       relief=relief_method(value.get("relief", "standard")), layers=tuple(parsed), peg_count=int(pegs),
                       distance_colors=tuple(color.lower() for color in palette),
                       route_id=route_id if picked["source"] == "route" else "")
@@ -640,7 +658,101 @@ def caption(options, width, margin, center):
     return unary_union(shapes) if shapes else Polygon(), tuple(dict.fromkeys(missing)), widest
 
 
+def text_block_lines(value):
+    """The text editor's lines, validated: up to MAX_TEXT_LINES of {text, size (cap height, mm), style, tracking (letter
+    spacing, % of the cap height)}; blank lines at the top and bottom are dropped. Returns a tuple (empty: no block)."""
+    if value is None or value == [] or value == ():
+        return ()
+    if not isinstance(value, (list, tuple)) or len(value) > MAX_TEXT_LINES:
+        raise ValueError(f"A text block holds 1 to {MAX_TEXT_LINES} lines.")
+    lines = []
+    for index, line in enumerate(value, 1):
+        if not isinstance(line, dict) or not isinstance(line.get("text", ""), str):
+            raise ValueError(f"Text line {index} needs its text, size, style, and letter spacing.")
+        words = " ".join(line.get("text", "").split())
+        size, style, tracking = line.get("size", 5), line.get("style", "bold"), line.get("tracking", 0)
+        if len(words) > 60:
+            raise ValueError(f"Text line {index} is longer than 60 characters. Shorten it.")
+        if not finite(size) or not 1 <= size <= 40:
+            raise ValueError(f"Text line {index}'s size must be between 1 and 40 mm (the height of its capital letters).")
+        if style not in FONT_STYLES:
+            raise ValueError(f"Text line {index}'s style must be regular, bold, italic, or bold-italic.")
+        if not finite(tracking) or not -20 <= tracking <= 100:
+            raise ValueError(f"Text line {index}'s letter spacing must be between -20 and 100 percent of its letter height.")
+        lines.append((words, float(size), style, float(tracking)))
+    while lines and not lines[-1][0]:
+        lines.pop()
+    while lines and not lines[0][0]:
+        lines.pop(0)
+    return tuple(lines)
+
+
+def text_block(options, width, margin, center):
+    """The text editor's block: each line in its own size, style, and letter spacing, its baseline line_spacing × its cap
+    height below the line above (a blank line still takes its space); lines aligned left, center, or right within the
+    block, and the block placed on the base like a caption (stencil lines bridged at their own size). Returns the shape,
+    the characters the fonts cannot draw, and the widest line (mm)."""
+    shapes, missing, baseline = [], [], 0.0
+    for index, (words, size, style, tracking) in enumerate(options.text_lines):
+        if index:
+            baseline -= options.line_spacing*size
+        if not words:
+            continue
+        shape, _, lost = line_shape(words, size, style, tracking)
+        missing.extend(lost)
+        if shape.is_empty:
+            continue
+        shapes.append(translate(stencil_bridges(shape, size) if options.text_style == "stencil" else shape, 0, baseline))
+    if not shapes:
+        return Polygon(), tuple(dict.fromkeys(missing)), 0.0
+    widest = max(shape.bounds[2]-shape.bounds[0] for shape in shapes)
+    aligned = []
+    for shape in shapes:
+        x0, _, x1, _ = shape.bounds
+        aligned.append(translate(shape, {"left": -x0, "center": (widest-x0-x1)/2, "right": widest-x1}[options.text_align]))
+    block = unary_union(aligned)
+    x0, y0, x1, y1 = block.bounds
+    x = {"left": margin, "center": width/2-widest/2, "right": width-margin-widest}[options.text_align]
+    return make_valid(translate(block, x-x0, center-(y0+y1)/2)), tuple(dict.fromkeys(missing)), widest
+
+
+def text_block_json(value):
+    """The text editor's live preview: the block's outlines in mm, centered on 0, 0 (y up), its size, and what the fonts
+    cannot draw, from the same layout the piece uses. value: {text_lines, text_align, line_spacing, text_style}."""
+    value = value if isinstance(value, dict) else {}
+    options = SilhouetteOptions.from_dict({key: value[key] for key in ("text_lines", "text_align", "line_spacing", "text_style") if key in value})
+    shape, missing, _ = text_block(options, 0, 0, 0) if options.text_lines else (Polygon(), (), 0)
+    if not shape.is_empty:
+        x0, y0, x1, y1 = shape.bounds
+        shape = translate(shape, -(x0+x1)/2, -(y0+y1)/2)
+    x0, y0, x1, y1 = shape.bounds if not shape.is_empty else (0, 0, 0, 0)
+    return {"text": rings(shape), "width_mm": round(x1-x0, 2), "height_mm": round(y1-y0, 2), "missing": list(missing)}
+
+
+def onto(shape, keep):
+    """The caption moved the least so it lies on material (inside keep): (shape, moved). Centers where its bounding box fits
+    are keep eroded by the box (y scaled so the box is a square, then a mitred inset); the nearest one is tried, then
+    nudged toward the middle of that region until the letters fit. A caption that fits nowhere stays where it is."""
+    if keep.is_empty or keep.buffer(.05).contains(shape):
+        return shape, False
+    x0, y0, x1, y1 = shape.bounds
+    half_w, half_h, cx, cy = (x1-x0)/2, max((y1-y0)/2, .1), (x0+x1)/2, (y0+y1)/2
+    ratio = half_w/half_h
+    region = make_valid(scale(scale(keep, 1, ratio, origin=(0, 0)).buffer(-half_w, join_style="mitre"), 1, 1/ratio, origin=(0, 0)))
+    if region.is_empty:
+        return shape, False
+    target, inner = nearest_points(region, Point(cx, cy))[0], region.representative_point()
+    for _ in range(16):
+        moved = translate(shape, target.x-cx, target.y-cy)
+        if keep.buffer(.05).contains(moved):
+            return moved, True
+        target = Point(target.x+(inner.x-target.x)*.2, target.y+(inner.y-target.y)*.2)
+    return shape, False
+
+
 def block_height(options):
+    if options.text_lines:  # first cap height, then each baseline step down
+        return options.text_lines[0][1]+sum(options.line_spacing*line[1] for line in options.text_lines[1:])
     lines = len(options.text.split("\n")) if options.text else 0
     return lines*options.text_size+max(lines-1, 0)*.6*options.text_size
 
@@ -802,23 +914,45 @@ def layout(terrain, options, sources=None):
     near = zones[0]["polygon"] if zones else outline  # text and markings stay on the nearest zone, the base strip's
     room = near.buffer(-WALL) if options.text_style != "emboss" else near
     engrave_room = near.buffer(-WALL)
-    text, markings, ticks = Polygon(), [], 0
+    text, markings, ticks, text_box = Polygon(), [], 0, None
     if options.text:
         center = (bottom+top)/2 if banded else base/2
-        shape, missing, line_width = caption(options, width, margin, center)
+        shape, missing, line_width = text_block(options, width, margin, center) if options.text_lines else caption(options, width, margin, center)
         if missing:
             warnings.append(f"The font cannot draw {''.join(missing)}; those characters are left as spaces.")
         if not shape.is_empty:
-            placed = stencil_bridges(shape, options.text_size) if options.text_style == "stencil" else shape
+            x0, y0, x1, y1 = shape.bounds
+            default, moved, positioned = ((x0+x1)/2, (y0+y1)/2), False, options.text_x is not None
+            if positioned:
+                # A moved caption stays on material: off the comb slots and the box's comb ends, inside the nearest zone, and
+                # WALL in from the edges unless raised; dragged off the piece, it comes back to the nearest place it fits.
+                keep = room
+                if hidden:
+                    keep = keep.difference(box(-1, -1, width+1, hidden))
+                if options.fit == "box":
+                    keep = keep.difference(unary_union([box(-1, -1, COMB_STRIP+2, COMB_SLOT+.5), box(width-COMB_STRIP-2, -1, width+1, COMB_SLOT+.5)]))
+                shape, moved = onto(translate(shape, options.text_x-default[0], options.text_y-default[1]), make_valid(keep))
+                if moved:
+                    notes.append("The caption was moved back onto the piece: it must sit on material, clear of the edges and comb slots.")
+            x0, y0, x1, y1 = shape.bounds
+            text_box = {"x": round((x0+x1)/2, 3), "y": round((y0+y1)/2, 3), "x0": round(x0, 3), "y0": round(y0, 3), "x1": round(x1, 3), "y1": round(y1, 3),
+                        "placed": positioned, "moved": moved, "default": [round(default[0], 3), round(default[1], 3)]}
+            placed = stencil_bridges(shape, options.text_size) if options.text_style == "stencil" and not options.text_lines else shape
             text = make_valid(placed.intersection(room))
             need = bottom+block_height(options)+1.6+(base-top)
-            if banded and need > base+.01:
+            if banded and need > base+.01 and not positioned:
                 warnings.append(f"The caption{', ticks,' if options.ticks else ''}{' and pegs' if pegs else ''} need a base of at least {math.ceil(need)} mm. Raise the base height.")
             elif text.area < placed.area*.98:
-                warnings.append("The text runs past the edge of the piece and is trimmed. Make it smaller or the base taller.")
-            if line_width > width-2*margin:
+                warnings.append("The text runs past the edge of the piece and is trimmed. Make it smaller or the base taller."
+                                if not positioned else "The caption does not fit on the piece anywhere, so it is trimmed. Make it smaller or shorter.")
+            if line_width > width-2*margin and not positioned:
                 warnings.append("The text is wider than the space between the mounts. Shorten it or make it smaller.")
-            if options.text_size < 3:
+            for number, (words, size, _, _) in enumerate(options.text_lines, 1):
+                if words and options.text_style == "stencil" and size < 4:
+                    warnings.append(f"Line {number} is under 4 mm tall: stencil letters that small lose their bridges and islands. Make it at least 4 mm.")
+                elif words and size < 2:
+                    warnings.append(f"Line {number} is under 2 mm tall and may not print clearly. Make it larger.")
+            if options.text_size < 3 and not options.text_lines:
                 warnings.append("Text under 3 mm tall may not print clearly. Make it larger.")
     if options.start_finish:
         size = max(3.0, min(options.text_size*.7, 5.0))
@@ -903,7 +1037,7 @@ def layout(terrain, options, sources=None):
             "mounts": mounts+peg_marks+([pin] if pin else []), "pegs": peg_marks, "pin": pin, "ticks": ticks, "fit": fit,
             "warnings": warnings, "notes": notes, "width": width, "height": max(layer["height"] for layer in layers),
             "lowest": front["lowest"], "span_m": front["span_m"], "ridges": views["ridges"] if views else None,
-            "view_farthest_m": None if views is None else views["farthest_m"],
+            "view_farthest_m": None if views is None else views["farthest_m"], "text_box": text_box,
             "zones": zones, "colors": colors, "fit_color": fit_color}
 
 
@@ -1004,7 +1138,7 @@ def outline_json(terrain, options, sources=None):
                **({} if layer["distance_m"] is None else {"distance_m": round(layer["distance_m"], 1),
                                                           "distance_range_m": [round(value, 1) for value in layer["distance_range_m"]]})}
               for layer, placement in zip(shapes["layers"], fit["placements"])]
-    return {"outline": largest(shapes["outline"]), "text": rings(shapes["text"]), "markings": rings(shapes["markings"]),
+    return {"outline": largest(shapes["outline"]), "text": rings(shapes["text"]), "markings": rings(shapes["markings"]), "text_box": shapes["text_box"],
             "text_style": options.text_style, "mount": shapes["mounts"], "layers": layers,
             "fit": {key: value for key, value in fit.items() if key not in ("parts", "placements")}, "parts": fit["parts"],
             "width_mm": round(shapes["width"], 3), "height_mm": round(shapes["height"], 3), "thickness_mm": thickest(shapes),
@@ -1173,7 +1307,8 @@ def mesh(solid):
 
 def metadata(terrain, options, shapes):
     settings = asdict(options) | {"trim": list(options.trim), "layers": [{"position": p, "base_mm": b, "color": c, **({} if t is None else {"thickness_mm": t})}
-                                                                          for p, b, c, t in options.layers]}
+                                                                          for p, b, c, t in options.layers],
+                                       "text_lines": [{"text": w, "size": s, "style": f, "tracking": k} for w, s, f, k in options.text_lines]}
     return {"kind": "silhouette", "preset": options.preset, "settings": settings,
             "size_mm": {"width": round(shapes["width"], 3), "height": round(shapes["height"], 3), "thickness": thickest(shapes)},
             "zones": [{"name": zone["name"], "color": zone["color"], "thickness_mm": zone["thickness"],

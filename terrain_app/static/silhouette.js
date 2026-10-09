@@ -46,13 +46,17 @@ const DEFAULTS={width_mm:180,vertical_scale:2,base_mm:8,thickness_mm:4,smoothing
   preset:'custom',fit:'none',slot_width:4,slot_length:160,slot_depth:8,slot_clearance:.2,box_width:200,box_height:150,box_depth:40,
   layer_count:1,layer_positions:[],layer_step:6,layer_spacing:6,include_buildings:false,building_corridor_m:30,ticks:false,tick_every:1,
   start_finish:false,peg_count:0,peg_diameter:6,peg_length:20,summit_pin:false,pin_diameter:1.8,pin_depth:10,photo_slot:false,photo_gap:1,
-  led_channel:false,led_width:5,led_depth:2,min_feature_mm:1,comb_clearance:.3,race_kind:'running',finish_time:'',thickness_by_distance:false,thickness_near_mm:3,thickness_far_mm:1.5,
+  led_channel:false,led_width:5,led_depth:2,min_feature_mm:1,comb_clearance:.3,text_x:null,text_y:null,text_lines:[],line_spacing:1.6,race_kind:'running',finish_time:'',thickness_by_distance:false,thickness_near_mm:3,thickness_far_mm:1.5,
   color_by_distance:false,distance_colors:['#234e40','#678272','#acb6a4','#f0ead6'],color_zones:false,clouds:false,cloud_color:'#f0ead6'};
 // What a preset decides: choosing another preset (or Custom) resets these before applying its own. Slice, caption, colors, and the
 // lamp and box measurements are kept.
 const PRESET_OWNED=['fit','layer_count','layer_positions','layer_step','layer_spacing','include_buildings','ticks','tick_every','start_finish',
   'peg_count','summit_pin','photo_slot','led_channel','mount','text_style','text_depth','text_size','thickness_mm','base_mm','thickness_by_distance',
-  'thickness_near_mm','thickness_far_mm','color_zones','clouds'];
+  'thickness_near_mm','thickness_far_mm','color_zones','clouds','text_x','text_y','text_lines'];
+// The text editor's lines: text, size (cap height, mm), style, and letter spacing (% of the cap height).
+const TEXT_STYLES={regular:'Regular',bold:'Bold',italic:'Italic','bold-italic':'Bold italic'},MAX_TEXT_LINES=6;
+const cleanLine=line=>line&&typeof line==='object'&&typeof line.text==='string'?{text:line.text.replace(/\s+/g,' ').slice(0,60),
+  size:Number.isFinite(line.size)?clamp(line.size,1,40):5,style:TEXT_STYLES[line.style]?line.style:'bold',tracking:Number.isFinite(line.tracking)?clamp(line.tracking,-20,100):0}:null;
 const CLIENT_ONLY=['layer_count','layer_positions','layer_step','race_kind','finish_time'];
 const MOUNT_HINTS={none:'',stand:'Two feet print beside the piece, each with a slot the thickness plus 0.2 mm wide; the piece stands upright in them.',
   holes:'Two holes through the base, for nails or screws.',keyholes:'Slide the piece down onto two screw heads. Keyholes need about 14 mm of height at each end.'};
@@ -111,6 +115,10 @@ export function createSilhouette(ctx) {
     for(const name of Object.keys(CHECKS))clean[name]=saved[name]===true;
     for(const name of Object.keys(COLORS))if(isHex(saved[name]))clean[name]=saved[name].toLowerCase();
     if(typeof saved.text==='string')clean.text=cleanText(saved.text);
+    if(Number.isFinite(saved.text_x)&&Number.isFinite(saved.text_y)){clean.text_x=saved.text_x;clean.text_y=saved.text_y;}
+    if(Array.isArray(saved.text_lines))clean.text_lines=saved.text_lines.slice(0,MAX_TEXT_LINES).map(cleanLine).filter(Boolean);
+    if(clean.text_lines.length)clean.text=clean.text_lines.map(line=>line.text).join('\n');
+    if(Number.isFinite(saved.line_spacing))clean.line_spacing=clamp(saved.line_spacing,1,3);
     if(Array.isArray(saved.trim)&&saved.trim.every(Number.isFinite)&&saved.trim[1]-saved.trim[0]>=5)clean.trim=[clamp(saved.trim[0],0,95),clamp(saved.trim[1],5,100)];
     if(PRESETS.presets[saved.preset])clean.preset=saved.preset;
     if(['none','lamp','box'].includes(saved.fit))clean.fit=saved.fit;
@@ -162,7 +170,8 @@ export function createSilhouette(ctx) {
     for(const [name,[id,allowed]] of Object.entries(CHOICES))if(allowed.includes($(id).value))settings[name]=$(id).value;
     for(const [name,id] of Object.entries(CHECKS))settings[name]=$(id).checked;
     for(const [name,id] of Object.entries(COLORS))settings[name]=$(id).value.toLowerCase();
-    settings.text=cleanText($('silhouette-text').value);settings.finish_time=$('silhouette-finish-time').value.slice(0,20);
+    if(!settings.text_lines.length)settings.text=cleanText($('silhouette-text').value);  // formatted text is edited in the text editor
+    settings.finish_time=$('silhouette-finish-time').value.slice(0,20);
     settings.distance_colors=DISTANCE_IDS.map(id=>$(id).value.toLowerCase());settings.color_zones=$('silhouette-pieces').value==='zones';
     // The trim keeps at least 5% of the slice; the handle not being moved gives way.
     let start=Number($('silhouette-trim-start').value),end=Number($('silhouette-trim-end').value);
@@ -179,7 +188,8 @@ export function createSilhouette(ctx) {
       settings.thickness_mm=round(clamp(settings.slot_width-settings.slot_clearance,1.2,30));$('silhouette-thickness').value=settings.thickness_mm;
     }
     if(settings.fit==='box'){settings.width_mm=clamp(settings.box_width-1,40,400);$('silhouette-width').value=settings.width_mm;}
-    if(changed==='silhouette-finish-time'&&preset().rules?.caption==='race'){settings.text=caption('race');$('silhouette-text').value=settings.text;}
+    if(changed==='silhouette-text-align'){settings.text_x=settings.text_y=null;}  // an alignment puts the caption back on the base strip
+    if(changed==='silhouette-finish-time'&&preset().rules?.caption==='race'){setCaption('race');$('silhouette-text').value=settings.text;}
     if(changed==='silhouette-source'&&preset().rules?.distance_thickness){settings.thickness_by_distance=settings.source==='viewpoint';$(CHECKS.thickness_by_distance).checked=settings.thickness_by_distance;}
     labels();
   }
@@ -192,6 +202,12 @@ export function createSilhouette(ctx) {
     const text=Boolean(settings.text.trim());
     ['silhouette-text-style','silhouette-text-size','silhouette-text-align','silhouette-text-color'].forEach(id=>{$(id).disabled=!text;});
     $('silhouette-text-depth').disabled=!text||settings.text_style==='stencil';
+    // Formatted text (several sizes or styles) is edited in the text editor; the plain caption here.
+    const rich=settings.text_lines.length>0;
+    $('silhouette-text').readOnly=rich;$('silhouette-text-size').disabled=!text||rich;
+    $('silhouette-text-plain').hidden=!rich;
+    $('silhouette-text-format').textContent=rich?`Formatted text · ${settings.text_lines.filter(line=>line.text).length} line${settings.text_lines.length>1?'s':''} · change it in the text editor`:'';
+    $('silhouette-text-reset').disabled=!text||settings.text_x===null;
     $('silhouette-text-color').disabled=!text||settings.text_style==='stencil';
     $('silhouette-width').disabled=settings.fit==='box';
     $('silhouette-source').querySelector('[value=route]').disabled=!ctx.route&&settings.source!=='route';
@@ -262,15 +278,18 @@ export function createSilhouette(ctx) {
   // Front darkest, back palest (the body color fading toward paper); by distance, contiguous groups take the distance colors, as the server does.
   const layerColors=(count,s=settings)=>Array.from({length:count},(_,index)=>distanceColored(s)?s.distance_colors[Math.floor(index*Math.min(count,4)/count)]
     :count>1?mix(s.body_color,'#f3eedf',index/(count-1)*.72):s.body_color);
-  function caption(kind,s=settings) {
+  // A preset's caption as a text block: a bold first line at the text size, smaller lines under it. none: the lamp designs start without one.
+  function captionLines(kind,s=settings) {
     const route=ctx.route,u=ctx.units(),date=route?.date?longDate(route.date):'';
     const name=(route?.name||placeName()||'').slice(0,60);
-    if(kind==='route')return cleanText([name,date].filter(Boolean).join('\n'));
-    if(kind==='stats')return cleanText((route?[name,`${number(route.distance_m/u.distance,1)} ${u.distanceLabel} · ${number(route.gain_m*u.height,0)} ${u.label} climbed`,date]:[name]).filter(Boolean).join('\n'));
-    if(kind==='names')return `YOUR NAMES\n${longDate(new Date().toISOString().slice(0,10)).toUpperCase()}`;
-    if(kind==='race')return cleanText([route?.name||'RACE NAME',date,s.finish_time].filter(Boolean).join('\n'));
-    return s.text;
+    const line=(text,scale=1,style='bold',tracking=0)=>text?{text:String(text).slice(0,60),size:Math.max(2,Math.round(s.text_size*scale*2)/2),style,tracking}:null;
+    const lines={route:[line(name),line(date,.7,'italic')],
+      stats:route?[line(name),line(`${number(route.distance_m/u.distance,1)} ${u.distanceLabel} · ${number(route.gain_m*u.height,0)} ${u.label} climbed`,.7,'regular'),line(date,.7,'italic')]:[line(name)],
+      names:[line('YOUR NAMES',1,'bold',8),line(longDate(new Date().toISOString().slice(0,10)).toUpperCase(),.6,'regular',25)],
+      race:[line(route?.name||'RACE NAME'),line(date,.65,'italic'),line(s.finish_time,.8,'bold')]}[kind]||[];
+    return lines.filter(Boolean);
   }
+  function setCaption(kind,s=settings) {s.text_lines=captionLines(kind,s);s.text=s.text_lines.map(line=>line.text).join('\n');}
   // A route profile's vertical scale: its climb about 50 mm tall (less in a short box) at the piece's width.
   function routeScale(s=settings) {
     const route=ctx.route;
@@ -294,7 +313,7 @@ export function createSilhouette(ctx) {
     if(s.fit==='box')s.width_mm=clamp(s.box_width-1,40,400);
     if(id==='race')s.tick_every=s.race_kind==='cycling'?10:1;
     if(s.source==='route'){const scale=routeScale(s);if(scale)s.vertical_scale=scale;}
-    if(rules.caption)s.text=caption(rules.caption,s);
+    if(rules.caption)setCaption(rules.caption,s);
     return s;
   }
   function applyPreset(id) {
@@ -397,6 +416,8 @@ export function createSilhouette(ctx) {
       if(controller!==request)return;
       resultKey=JSON.stringify(body);
       remember(body,result);
+      // A caption dragged off the piece comes back where the server could fit it: keep that spot.
+      if(result.text_box?.moved){settings.text_x=result.text_box.x;settings.text_y=result.text_box.y;save();labels();}
       draw();rebuild3d();renderChecks();sliceLabel();previewCurrent();
     } catch(error) {
       if(error.name==='AbortError')return;
@@ -510,7 +531,7 @@ export function createSilhouette(ctx) {
 
   // ---------- front view: the design to scale, layers overlapped front to back as assembled ----------
   function draw() {
-    const root=$('silhouette-svg');root.replaceChildren();
+    const root=$('silhouette-svg'),refocus=document.activeElement?.classList?.contains('sil-caption-select');root.replaceChildren();
     if(!result||!result.outline.outer.length)return;
     const fit=result.fit,layers=result.layers,W=result.width_mm,feet=result.mount.filter(item=>item.kind==='foot');
     let left=0,right=W,low=feet.length?-STAND_DROP-4:0,H=Math.max(...layers.map(layer=>layer.y+layer.height_mm));
@@ -537,9 +558,10 @@ export function createSilhouette(ctx) {
     // A color-zone piece draws each zone in its color.
     if(result.zones?.length)for(const zone of result.zones)svg('path',{class:'sil-body sil-zone','fill-rule':'evenodd',fill:zone.color,d:zone.polygons.map(polygonPath).join('')},front);
     else svg('path',{class:'sil-body','fill-rule':'evenodd',fill:layers.length>1||distanceColored()?layers[0].color:settings.body_color,d:polygonPath(result.outline)},front);
+    let words=null;
     if(result.text.length) {
       const style=result.text_style,fill=style==='stencil'?'#101b14':settings.text_color;
-      svg('path',{class:'sil-text','fill-rule':'evenodd',fill,stroke:style==='emboss'?'#00000088':'none','stroke-width':style==='emboss'?1:0,
+      words=svg('path',{class:'sil-text','fill-rule':'evenodd',fill,stroke:style==='emboss'?'#00000088':'none','stroke-width':style==='emboss'?1:0,
         opacity:style==='engrave'?.85:1,d:result.text.map(polygonPath).join('')},front);
     }
     if(result.markings?.length)svg('path',{class:'sil-text','fill-rule':'evenodd',fill:settings.text_color,opacity:.8,d:result.markings.map(polygonPath).join('')},front);
@@ -549,6 +571,7 @@ export function createSilhouette(ctx) {
     if(fit.comb_base)svg('rect',{class:'sil-fit',x:0,y:-fit.comb_base.height,width:fit.comb_base.width,height:fit.comb_base.height},root);
     if(fit.combs)for(const x of [-.5,W+.5-fit.combs.width])svg('rect',{class:'sil-fit',x,y:-fit.combs.height,width:fit.combs.width,height:fit.combs.height},root);
     for(const foot of feet)svg('rect',{class:'sil-foot',x:foot.x0,y:-foot.y1,width:foot.x1-foot.x0,height:foot.y1-foot.y0},root);
+    if(words&&result.text_box)captionHandle(root,front,words,result.text_box,layers[0].y,W,H,font,refocus);
     // Dimensions: width below, height at the right.
     const dims=svg('g',{class:'sil-dimension'},root),y=-low+pad*.7,x=right+pad*.9;
     svg('line',{x1:0,x2:W,y1:y,y2:y},dims);svg('line',{x1:0,x2:0,y1:y-pad*.2,y2:y+pad*.2},dims);svg('line',{x1:W,x2:W,y1:y-pad*.2,y2:y+pad*.2},dims);
@@ -556,6 +579,50 @@ export function createSilhouette(ctx) {
     svg('text',{class:'sil-label',x:W/2,y:y+font*1.3,'font-size':font,'text-anchor':'middle'},root).textContent=`${number(W)} mm`;
     svg('text',{class:'sil-label',x:x+font*.5,y:-H/2,'font-size':font,'dominant-baseline':'middle'},root).textContent=`${number(H)} mm`;
   }
+
+  // The caption's selection graphic: a dashed box with a move grip, dragged anywhere on the front piece (or nudged with the
+  // arrow keys, Shift for 5 mm). It snaps to the piece's center line and to the base strip's middle within 2 mm, showing a
+  // guide; the server keeps it on material and the next outline shows where it landed.
+  function captionHandle(root,front,words,box,lift,W,H,font,refocus) {
+    const pad=1.2,guides={v:svg('line',{class:'sil-guide',x1:W/2,x2:W/2,y1:0,y2:-H},front),h:svg('line',{class:'sil-guide',x1:0,x2:W,y1:-box.default[1],y2:-box.default[1]},front)};
+    guides.v.style.display=guides.h.style.display='none';
+    const handle=svg('g',{class:'sil-caption-select',tabindex:0,role:'button','aria-label':'Caption position: drag to move it, or use the arrow keys (Shift: 5 mm steps)'},front);
+    svg('title',{},handle).textContent='Drag to move the text · arrow keys nudge it';
+    svg('rect',{class:'sil-caption-box',x:box.x0-pad,y:-box.y1-pad,width:box.x1-box.x0+2*pad,height:box.y1-box.y0+2*pad},handle);
+    const grip=svg('g',{class:'sil-caption-grip',transform:`translate(${box.x0-pad} ${-box.y1-pad})`},handle),r=font*.6;
+    svg('circle',{r},grip);svg('path',{d:`M${-r*.55} 0H${r*.55}M0 ${-r*.55}V${r*.55}`},grip);
+    const toMm=event=>{const point=new DOMPoint(event.clientX,event.clientY).matrixTransform(root.getScreenCTM().inverse());return {x:point.x,y:-point.y-lift};};
+    const snap=(x,y)=>{
+      const middle=Math.abs(x-W/2)<2,strip=Math.abs(y-box.default[1])<2;
+      guides.v.style.display=middle?'':'none';guides.h.style.display=strip?'':'none';
+      return {x:middle?W/2:x,y:strip?box.default[1]:y};
+    };
+    const show=at=>{const shift=`translate(${at.x-box.x} ${box.y-at.y})`;words.setAttribute('transform',shift);handle.setAttribute('transform',shift);};
+    let drag=null;
+    handle.addEventListener('pointerdown',event=>{
+      if(event.button!==0)return;
+      event.preventDefault();handle.focus({preventScroll:true});handle.setPointerCapture?.(event.pointerId);handle.classList.add('dragging');
+      drag={from:toMm(event),at:null};
+    });
+    handle.addEventListener('pointermove',event=>{
+      if(!drag)return;
+      const point=toMm(event);drag.at=snap(box.x+point.x-drag.from.x,box.y+point.y-drag.from.y);show(drag.at);
+    });
+    const drop=()=>{
+      if(!drag)return;
+      const at=drag.at;drag=null;handle.classList.remove('dragging');guides.v.style.display=guides.h.style.display='none';
+      if(at)moveCaption(at.x,at.y);
+    };
+    handle.addEventListener('pointerup',drop);handle.addEventListener('pointercancel',drop);
+    handle.addEventListener('keydown',event=>{
+      const step=event.shiftKey?5:1,move={ArrowLeft:[-step,0],ArrowRight:[step,0],ArrowUp:[0,step],ArrowDown:[0,-step]}[event.key];
+      if(!move)return;
+      event.preventDefault();
+      const at={x:(settings.text_x??box.x)+move[0],y:(settings.text_y??box.y)+move[1]};show(at);moveCaption(at.x,at.y);
+    });
+    if(refocus)handle.focus({preventScroll:true});
+  }
+  function moveCaption(x,y) {settings.text_x=round(x,1);settings.text_y=round(y,1);save();labels();schedule();}
 
   // ---------- 3D view: the assembled design, standing as it would on a desk, a lamp base, or in its box ----------
   function setup3d() {
@@ -734,6 +801,106 @@ export function createSilhouette(ctx) {
     button.addEventListener('blur',()=>{if(focusPreset===id){focusPreset=null;updatePreview();}});
   }
 
+  // ---------- text editor: the caption as a block of lines, each with its own size, style, and letter spacing ----------
+  // Edits go to a draft, previewed to scale with the server's outlines (POST /api/silhouette/text); OK applies it.
+  let draft=null,draftTimer=null,draftRequest=null;
+  function openEditor() {
+    const base=settings.text_lines.length?settings.text_lines:(settings.text?settings.text.split('\n'):['']).map(text=>({text,size:settings.text_size,style:'bold',tracking:0}));
+    draft={lines:structuredClone(base),align:settings.text_align,spacing:settings.line_spacing,style:settings.text_style,depth:settings.text_depth,color:settings.text_color};
+    renderDraft();$('text-editor').showModal();
+    $('text-editor-lines').querySelector('input')?.focus();
+    previewDraft(0);
+  }
+  function renderDraft() {
+    const list=$('text-editor-lines');list.replaceChildren();
+    draft.lines.forEach((line,index)=>{
+      const item=document.createElement('li'),field=(tag,attributes)=>Object.assign(document.createElement(tag),attributes);
+      const text=field('input',{className:'text-editor-text',value:line.text,maxLength:60,placeholder:index?'Another line':'Your text'});
+      text.setAttribute('aria-label',`Line ${index+1} text`);
+      const size=field('input',{type:'number',min:1,max:40,step:.5,value:line.size});size.setAttribute('aria-label',`Line ${index+1} size (mm, capitals)`);
+      const style=field('select',{});style.append(...Object.entries(TEXT_STYLES).map(([value,label])=>field('option',{value,textContent:label})));style.value=line.style;
+      style.setAttribute('aria-label',`Line ${index+1} style`);
+      const tracking=field('input',{type:'number',min:-20,max:100,step:5,value:line.tracking});tracking.setAttribute('aria-label',`Line ${index+1} letter spacing (%)`);
+      const update=()=>{
+        line.text=text.value.replace(/\s+/g,' ').slice(0,60);
+        if(size.value!==''&&Number.isFinite(Number(size.value)))line.size=clamp(Number(size.value),1,40);
+        line.style=style.value;
+        if(tracking.value!==''&&Number.isFinite(Number(tracking.value)))line.tracking=clamp(Number(tracking.value),-20,100);
+        previewDraft();
+      };
+      [text,size,tracking].forEach(input=>input.addEventListener('input',update));style.addEventListener('change',update);
+      const actions=field('div',{className:'text-editor-row-actions'});
+      const button=(label,title,disabled,act)=>{const b=field('button',{type:'button',className:'icon-button',textContent:label,title,disabled});b.setAttribute('aria-label',`${title} (line ${index+1})`);b.addEventListener('click',act);actions.append(b);};
+      const swap=to=>{[draft.lines[index],draft.lines[to]]=[draft.lines[to],draft.lines[index]];renderDraft();previewDraft();};
+      button('↑','Move up',!index,()=>swap(index-1));button('↓','Move down',index===draft.lines.length-1,()=>swap(index+1));
+      button('×','Remove',draft.lines.length<2,()=>{draft.lines.splice(index,1);renderDraft();previewDraft();});
+      item.append(text,size,style,tracking,actions);list.append(item);
+    });
+    $('text-editor-add').disabled=draft.lines.length>=MAX_TEXT_LINES;
+    document.querySelectorAll('[data-text-align]').forEach(button=>{const active=button.dataset.textAlign===draft.align;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));});
+    $('text-editor-spacing').value=draft.spacing;$('text-editor-style').value=draft.style;$('text-editor-depth').value=draft.depth;$('text-editor-color').value=draft.color;
+    $('text-editor-depth').disabled=draft.style==='stencil';
+  }
+  const draftBody=()=>({text_lines:draft.lines,text_align:draft.align,line_spacing:draft.spacing,text_style:draft.style});
+  function previewDraft(delay=150) {
+    clearTimeout(draftTimer);
+    draftTimer=setTimeout(async()=>{
+      draftRequest?.abort();const controller=draftRequest=new AbortController(),status=$('text-editor-status');
+      try {
+        const response=await postJSON('/api/silhouette/text',draftBody(),controller.signal);
+        if(!response.ok)throw new Error(await errorMessage(response));
+        const data=await response.json();if(controller!==draftRequest)return;
+        drawDraft(data);status.classList.remove('error');
+        status.textContent=data.missing.length?`The fonts cannot draw ${data.missing.join('')}; those characters are left as spaces.`:'';
+      } catch(error) {
+        if(error.name==='AbortError')return;
+        status.classList.add('error');status.textContent=error.message;
+      }
+    },delay);
+  }
+  // The block to scale: its outlines centered in the preview, with the alignment edge as a guide.
+  function drawDraft(data) {
+    const root=$('text-editor-svg');root.replaceChildren();
+    $('text-editor-size').textContent=data.text.length?`${number(data.width_mm)} × ${number(data.height_mm)} mm`:'No text';
+    if(!data.text.length)return;
+    const w=Math.max(data.width_mm,20),h=Math.max(data.height_mm,8),pad=Math.max(w,h)*.08;
+    root.setAttribute('viewBox',[-w/2-pad,-h/2-pad,w+pad*2,h+pad*2].join(' '));root.setAttribute('preserveAspectRatio','xMidYMid meet');
+    const edge={left:-data.width_mm/2,center:0,right:data.width_mm/2}[draft.align];
+    svg('line',{x1:edge,x2:edge,y1:-h/2-pad,y2:h/2+pad},root);
+    svg('path',{'fill-rule':'evenodd',d:data.text.map(polygonPath).join('')},root);
+  }
+  // OK: the block becomes the caption (blank lines at the ends dropped); one plain bold line of the usual size stays plain text.
+  function applyDraft() {
+    const lines=draft.lines.map(line=>({...line,text:line.text.trim()}));
+    while(lines.length&&!lines.at(-1).text)lines.pop();
+    while(lines.length&&!lines[0].text)lines.shift();
+    settings.text_lines=lines;settings.text=lines.map(line=>line.text).join('\n');
+    if(lines.length)settings.text_size=clamp(Math.max(...lines.map(line=>line.size)),2,30);
+    Object.assign(settings,{text_align:draft.align,line_spacing:draft.spacing,text_style:draft.style,text_depth:draft.depth,text_color:draft.color.toLowerCase()});
+    writeForm();save();schedule();$('text-editor').close();
+  }
+  function wireEditor() {
+    $('silhouette-text-edit').addEventListener('click',openEditor);
+    $('text-editor-add').addEventListener('click',()=>{
+      const last=draft.lines.at(-1)||{size:settings.text_size,style:'bold',tracking:0};
+      draft.lines.push({text:'',size:Math.max(1,Math.round(last.size*.6*2)/2),style:last.style==='bold'?'regular':last.style,tracking:0});
+      renderDraft();$('text-editor-lines').querySelector('li:last-child input')?.focus();previewDraft();
+    });
+    document.querySelectorAll('[data-text-align]').forEach(button=>button.addEventListener('click',()=>{draft.align=button.dataset.textAlign;renderDraft();previewDraft(0);}));
+    $('text-editor-spacing').addEventListener('input',event=>{const value=Number(event.target.value);if(event.target.value!==''&&Number.isFinite(value)){draft.spacing=clamp(value,1,3);previewDraft();}});
+    $('text-editor-style').addEventListener('change',event=>{draft.style=event.target.value;renderDraft();previewDraft(0);});
+    $('text-editor-depth').addEventListener('input',event=>{const value=Number(event.target.value);if(Number.isFinite(value))draft.depth=clamp(value,.2,5);});
+    $('text-editor-color').addEventListener('input',event=>{draft.color=event.target.value;});
+    $('text-editor-ok').addEventListener('click',applyDraft);
+    $('text-editor-cancel').addEventListener('click',()=>$('text-editor').close());
+    $('text-editor').addEventListener('close',()=>{clearTimeout(draftTimer);draftRequest?.abort();});
+    // Back to a plain caption: the first three lines at the largest size, bold.
+    $('silhouette-text-plain').addEventListener('click',()=>{
+      settings.text=cleanText(settings.text);settings.text_lines=[];writeForm();save();schedule();
+    });
+    $('silhouette-text-reset').addEventListener('click',()=>{settings.text_x=settings.text_y=null;save();labels();schedule();});
+  }
+
   // ---------- exports ----------
   async function exportFile(format) {
     if(busy||!ctx.state.id)return;
@@ -754,11 +921,11 @@ export function createSilhouette(ctx) {
   // Colors only repaint (the outline is unchanged); the preview's cached outline is shown in the new colors.
   function repaint() {draw();rebuild3d();if(result)remember(requestBody(),result);previewCurrent();}
   function wire() {
-    buildPresetList();
+    buildPresetList();wireEditor();
     $('silhouette-back').addEventListener('click',()=>dialog.close());
     dialog.addEventListener('close',()=>{
       clearTimeout(timer);clearTimeout(previewTimer);request?.abort();previewRequest?.abort();if(three)three.renderer.setAnimationLoop(null);
-      hoverPreset=focusPreset=null;turntable.setActive(false);
+      hoverPreset=focusPreset=null;turntable.setActive(false);if($('text-editor').open)$('text-editor').close();
     });
     // This page's slice controls drive the geography page's own, whose listeners redraw its chart and map line and refresh this page.
     $('silhouette-position').addEventListener('input',event=>{
