@@ -40,7 +40,17 @@ function routeGPX() {
     await openSilhouette(page);
     assert.match(await page.locator('#silhouette .eyebrow').innerText(),/STEP 2 · SILHOUETTE DESIGN/i);
     assert.match(await page.locator('#silhouette-title').innerText(),/Roan Mountain/);
-    assert.equal(await page.locator('#silhouette-text').inputValue(),'Roan Mountain','The caption starts as the place name');
+    // A newly generated area starts on the multi-layer Layered glow, without a caption (lamp designs start text-free).
+    assert.equal(await page.locator('[data-silhouette-preset="glow-layers"]').getAttribute('aria-checked'),'true','New areas start on Layered glow');
+    assert.equal(await page.locator('#silhouette-text').inputValue(),'','The lamp starts without a caption');
+    // The rest of this test works on a plain single piece.
+    const custom=outlineAfter(page,body=>body.preset==='custom');
+    await page.locator('[data-silhouette-preset="custom"]').click();
+    await custom;
+    const captioned=outlineAfter(page,body=>body.text==='Roan Mountain'&&body.width_mm===180);
+    await page.locator('#silhouette-width').fill('180');  // Custom keeps the lamp's 170 mm width
+    await page.locator('#silhouette-text').fill('Roan Mountain');
+    await captioned;
     assert.equal(await page.locator('#silhouette-vertical').inputValue(),await page.locator('#exaggeration').inputValue(),'Vertical scale follows the elevation multiplier');
     assert.match(await page.locator('#silhouette-dimensions').innerText(),/^180 × [\d.]+ × 4 mm$/);
     assert.ok(await page.locator('#silhouette-svg path.sil-text').count()===1,'The caption is drawn on the piece');
@@ -292,8 +302,8 @@ function routeGPX() {
     await setup(mobile);
     const phone=await mobile.newPage();
     await openSilhouette(phone);
-    const mobileLayers=outlineAfter(phone,body=>body.preset==='glow-layers');
-    await phone.locator('[data-silhouette-preset="glow-layers"]').click();await mobileLayers;
+    // A new area opens on the Layered glow already.
+    assert.equal(await phone.locator('[data-silhouette-preset="glow-layers"]').getAttribute('aria-checked'),'true');
     await phone.waitForFunction(()=>document.querySelectorAll('#silhouette-layer-axis rect[data-layer]').length===3);
     assert.equal(await phone.evaluate(()=>document.getElementById('silhouette').scrollWidth<=innerWidth),true,'No horizontal scroll on a phone');
     await phone.screenshot({path:path.join(output,'silhouette-mobile.png')});

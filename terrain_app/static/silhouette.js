@@ -145,6 +145,8 @@ export function createSilhouette(ctx) {
         body_color:isHex(colors.dark_foliage)?colors.dark_foliage:DEFAULTS.body_color,text_color:isHex(colors.snow)?colors.snow:DEFAULTS.text_color};
       // Distance colors fade from the body color to the text color, so an engraved caption shares the farthest filament.
       settings.distance_colors=[0,1/3,2/3,1].map(t=>mix(settings.body_color,settings.text_color,t));
+      // A newly generated area starts on the multi-layer Layered glow, built from the viewpoint's ridges when one is drawn.
+      settings=presetSettings('glow-layers',settings);
     }
     writeForm();
   }
@@ -469,6 +471,7 @@ export function createSilhouette(ctx) {
     result.warnings.forEach(warning=>add('warning',warning));
     (result.notes||[]).forEach(note=>add('note',note));
     if(settings.source==='route'&&!ctx.route)add('note','Upload a GPX route on the geography selection page to use its elevation profile; the slice is shown until then.');
+    if(settings.source!=='ridgeline'&&layered()&&drawn('ridgeline'))add('note','The geography page shows a two-point ridgeline, which prints as one piece; choose a single-layer design (Custom, Edge-lit ridgeline, or Stencil lamp) to print it. The slice is shown until then.');
     if(['ridgeline','viewpoint'].includes(settings.source)&&!drawn(settings.source))add('note',`Draw a ${settings.source==='ridgeline'?'ridgeline':'viewpoint skyline'} in the geography page's profile panel to use it; the slice is shown until then.`);
     const plan=ridgePlan(),u=ctx.units();
     if(plan?.ridges&&result.zones?.length)add('note','Each color zone is a ridgeline detected from the viewpoint: what of it shows above the nearer ridges.');
@@ -984,12 +987,17 @@ export function createSilhouette(ctx) {
     open() {
       if(!ctx.state.data)return;
       load();syncSlice();
-      // A ridgeline or skyline drawn on the geography page becomes the profile, unless a route or another source was chosen.
-      const mode=ctx.profile?.settings.mode==='viewridge'?'viewpoint':ctx.profile?.settings.mode;
-      if(drawn(mode)&&['true','shaped'].includes(settings.source)&&!(layered()&&mode==='ridgeline')) {
-        settings.source=mode;
-        if(mode==='viewpoint'&&preset().rules?.distance_thickness)settings.thickness_by_distance=true;
-        writeForm();save();
+      // The page opens on the profile the geography page's chart shows: its straight slice, two-point ridgeline, or
+      // viewpoint. Route designs keep their GPX route; a ridgeline prints as one piece, so layered designs keep the slice.
+      const chart=ctx.profile?.settings.mode==='viewridge'?'viewpoint':(ctx.profile?.settings.mode||'slice');
+      if(PRESETS.presets[settings.preset]?.settings?.source!=='route') {
+        let source=drawn(chart)?chart:(['true','shaped'].includes(settings.source)?settings.source:'true');
+        if(source==='ridgeline'&&layered())source=['true','shaped'].includes(settings.source)?settings.source:'true';
+        if(source!==settings.source) {
+          settings.source=source;
+          if(source==='viewpoint'&&preset().rules?.distance_thickness)settings.thickness_by_distance=true;
+          writeForm();save();
+        }
       }
       followRidges();
       $('silhouette-title').textContent=placeName()||'Your landscape';

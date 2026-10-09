@@ -253,6 +253,12 @@ let outlineAfter;
     assert.equal(markersAfterSlice,0,'No profile markers on slice mode');
     console.log('  markers after slice:',markersAfterSlice);
 
+    // The silhouette page opens on the profile the chart shows: back on the straight slice now.
+    await page.locator('#silhouette-button').click();
+    await page.waitForFunction(()=>document.getElementById('silhouette').open);
+    assert.equal(await page.locator('#silhouette-source').inputValue(),'true','The silhouette follows the chart back to the slice');
+    await page.locator('#silhouette-back').click();
+
     // Final checks
     console.log('Test 5: Error collection');
     assert.equal(errors.length,0,`No page errors: ${errors.join(', ')}`);
