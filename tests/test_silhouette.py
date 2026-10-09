@@ -14,7 +14,7 @@ from terrain_app.printing import CORE
 from terrain_app.server import create_app
 from terrain_app.routes import prepare_route
 from terrain_app.silhouette import (FORMATS, MOUNTS, PRESET_DATA, PRESETS, TEXT_STYLES, SilhouetteOptions, Sources, layout, mesh, outline_json,
-                                    part_groups, profile_points, route_profile, silhouette_export, slice_heights, solids, with_buildings)
+                                    part_groups, profile_points, route_profile, silhouette_export, slice_heights, solids, view_layers, with_buildings)
 
 FIXTURES = __import__("pathlib").Path(__file__).parent / "fixtures"
 
@@ -156,6 +156,11 @@ def test_stl_3mf_svg_and_json_files(terrain):
     ({"fit": "box", "box_depth": 10, "layers": [{"position": p} for p in (10, 30, 50, 70, 90)]}, "too shallow for 5 layers"),
     ({"fit": "lamp", "layer_spacing": 3, "thickness_mm": 2, "layers": [{"position": 10}, {"position": 20}]}, "1.2 mm between"),
     ({"photo_slot": "yes"}, "photo slot must be true or false"),
+    ({"thickness_near_mm": .5}, "nearest layer's thickness"), ({"thickness_far_mm": 40}, "farthest layer's thickness"),
+    ({"thickness_by_distance": 1}, "Thicker when closer must be true or false"),
+    ({"fit": "box", "layers": [{"position": 10, "thickness_mm": 50}]}, "Layer 1's thickness"),
+    ({"fit": "lamp", "layer_spacing": 3.8, "thickness_mm": 2, "layers": [{"position": 10, "thickness_mm": 3}, {"position": 20}]}, "layers 1 and 2 \\(3 and 2 mm thick\\)"),
+    ({"source": "viewpoint", "view_point": [36.1, -82.1], "view_min_radius_m": 60000}, "minimum distance"),
 ])
 def test_validation_errors_are_sentences(value, message):
     with pytest.raises(ValueError, match=message):
@@ -230,9 +235,10 @@ EXPECTED = {
     "custom": ["Silhouette", "Text"],
     "glow-edge": ["Silhouette", "Text"],
     "glow-stencil": ["Silhouette"],
-    "glow-layers": ["Layer 1 (front)", "Text", "Layer 2", "Layer 3 (back)", "Comb base"],
+    "glow-layers": ["Layer 1 (front) · 2.0 mm", "Text", "Layer 2 · 2.0 mm", "Layer 3 (back) · 2.0 mm", "Comb base"],
     "glow-skyline": ["Silhouette"],
-    "box-diorama": ["Layer 1 (front)", "Text", "Layer 2", "Layer 3", "Layer 4", "Layer 5 (back)", "Spacer comb (left)", "Spacer comb (right)"],
+    "box-diorama": ["Layer 1 (front) · 2.0 mm", "Text", "Layer 2 · 2.0 mm", "Layer 3 · 2.0 mm", "Layer 4 · 2.0 mm", "Layer 5 (back) · 2.0 mm",
+                    "Spacer comb (left)", "Spacer comb (right)"],
     "box-trail": ["Silhouette", "Text", "Spacer comb (left)", "Spacer comb (right)"],
     "box-chart": ["Silhouette", "Text", "Markings", "Spacer comb (left)", "Spacer comb (right)"],
     "box-anniversary": ["Silhouette", "Spacer comb (left)", "Spacer comb (right)"],
@@ -411,7 +417,7 @@ def test_multi_part_stl_zip_3mf_and_svg_groups(terrain):
     assert mimetype == "application/zip" and filename == "silhouette-parts.zip"
     with ZipFile(BytesIO(content)) as archive:
         names = archive.namelist()
-        assert names == ["01-layer-1-front.stl", "02-layer-2.stl", "03-layer-3.stl", "04-layer-4.stl", "05-layer-5-back.stl",
+        assert names == ["01-layer-1-front-2-0-mm.stl", "02-layer-2-2-0-mm.stl", "03-layer-3-2-0-mm.stl", "04-layer-4-2-0-mm.stl", "05-layer-5-back-2-0-mm.stl",
                          "06-spacer-comb-left.stl", "07-spacer-comb-right.stl", "credits.txt"]
         stl = archive.read(names[0])
         assert len(stl) == 84+50*struct.unpack("<I", stl[80:84])[0]
@@ -425,6 +431,7 @@ def test_multi_part_stl_zip_3mf_and_svg_groups(terrain):
     groups = [item.attrib["id"] for item in svg if item.tag.endswith("g")]
     assert groups == ["layer-1", "layer-2", "layer-3", "layer-4", "layer-5", "spacer-comb"]
     assert [item.attrib["id"] for item in svg.find("{http://www.w3.org/2000/svg}g") if item.tag.endswith("g")] == ["text"]
+    assert [item.attrib["data-name"] for item in svg if item.tag.endswith("g")][:2] == ["Layer 1 (front) · 2.0 mm", "Layer 2 · 2.0 mm"]
     single, mimetype, _ = silhouette_export(terrain, SilhouetteOptions.from_dict(preset_payload("glow-edge")), "stl", "credits")
     assert mimetype == "model/stl" and len(single) == 84+50*struct.unpack("<I", single[80:84])[0]
     tab_svg = ET.fromstring(silhouette_export(terrain, SilhouetteOptions.from_dict(preset_payload("glow-edge")), "svg", "credits")[0])
@@ -451,3 +458,95 @@ def test_route_and_skyline_endpoints(client, tmp_path):
     extension["building_jobs"]["t"] = {"state": "ready", "data": buildings}
     loaded = client.post("/api/silhouette/t/outline", json=preset_payload("glow-skyline", position=35)).get_json()
     assert not any("Buildings map layer" in warning for warning in loaded["warnings"])
+
+
+# --- Viewpoint ridges and thickness by distance --------------------------------------------------------------
+
+def ridge_terrain():
+    """Flat ground with three north–south ridges east of the viewpoint (u = 0.05), each farther and higher than the last."""
+    heights = np.full((80, 80), 100, dtype=np.float32)
+    for column, top in ((22, 300), (44, 600), (68, 1000)):
+        heights[:, column-1:column+2] = top
+    return Terrain(Bounds(36.08, -82.165, 36.145, -82.055), heights, 11, 2, "2026-10-01T00:00:00Z")
+
+
+VIEW = {"source": "viewpoint", "view_point": [36.1125, -82.1595], "view_bearing": 90, "view_fov": 60}
+
+
+def ridge_glow(count=3, **extra):
+    return preset_payload("glow-layers", **VIEW, view_ridges=True, thickness_by_distance=True, thickness_near_mm=3, thickness_far_mm=1.5,
+                          layers=[{"position": 50, "base_mm": 14+8*index, "color": "#234e40"} for index in range(count)]) | extra
+
+
+def test_ridge_layers_are_thicker_when_closer():
+    terrain = ridge_terrain()
+    data = outline_json(terrain, SilhouetteOptions.from_dict(ridge_glow()))
+    distances = [layer["distance_m"] for layer in data["layers"]]
+    thicknesses = [layer["thickness_mm"] for layer in data["layers"]]
+    assert np.diff(distances).min() > 1000 and [round(ridge["distance_m"]) for ridge in data["ridges"]] == [round(value) for value in distances]
+    assert thicknesses[0] == 3 and thicknesses[-1] == 1.5 and 1.5 < thicknesses[1] < 3 and thicknesses == [round(value, 1) for value in thicknesses]
+    # Log distance: the middle ridge (~4.6 km between ~2.1 and ~7.6) sits a little past halfway.
+    middle = 3-1.5*np.log(distances[1]/distances[0])/np.log(distances[2]/distances[0])
+    assert thicknesses[1] == pytest.approx(middle, abs=.051)
+    assert [part["size"][2] for part in data["parts"][:3]] == thicknesses and data["thickness_mm"] == 3
+    # The comb's slots are each layer's thickness plus 0.3 mm, 6 mm apart; each layer's back face sits in its slot.
+    comb = data["fit"]["comb_base"]
+    assert comb["slot_widths"] == pytest.approx([t+.3 for t in thicknesses]) and np.diff(comb["slots"]) == pytest.approx([6, 6])
+    for layer, center in zip(data["layers"], comb["slots"]):
+        assert layer["z"] == pytest.approx(comb["depth"]/2-center-layer["thickness_mm"]/2, abs=.002)
+    choice = SilhouetteOptions.from_dict(ridge_glow())
+    parts = {name: solid for name, _, solid in solids(terrain, choice)}
+    assert [name for name in parts if name.startswith("Layer")] == [f"Layer 1 (front) · 3.0 mm", f"Layer 2 · {thicknesses[1]:.1f} mm", "Layer 3 (back) · 1.5 mm"]
+    for name, thickness in zip([name for name in parts if name.startswith("Layer")], thicknesses):
+        x0, y0, z0, x1, y1, z1 = parts[name].bounding_box()
+        assert z1-z0 == pytest.approx(thickness)
+    base = parts["Comb base"]
+    assert base.slice(2).area() == pytest.approx(choice.width_mm*(comb["depth"]-sum(comb["slot_widths"])), rel=1e-3)
+    # An explicit thickness wins for its layer; without "thicker when closer" every layer is thickness_mm.
+    own = outline_json(terrain, SilhouetteOptions.from_dict(ridge_glow(layers=[{"position": 50, "base_mm": 14+8*index, **({"thickness_mm": 2.4} if index == 1 else {})}
+                                                                               for index in range(3)])))
+    assert [layer["thickness_mm"] for layer in own["layers"]] == [3, 2.4, 1.5]
+    flat = outline_json(terrain, SilhouetteOptions.from_dict(ridge_glow(thickness_by_distance=False)))
+    assert [layer["thickness_mm"] for layer in flat["layers"]] == [2, 2, 2]
+    settings = json.loads(silhouette_export(terrain, choice, "json", "credits")[0])
+    assert [layer["thickness_mm"] for layer in settings["layers"]] == thicknesses and settings["settings"]["view_ridges"] is True
+
+
+def test_ridge_layers_in_a_box_and_their_errors():
+    terrain = ridge_terrain()
+    payload = preset_payload("box-diorama", **VIEW, view_ridges=True, thickness_by_distance=True, thickness_near_mm=3, thickness_far_mm=1.2,
+                             layers=[{"position": 50, "base_mm": 9+8*index, "color": "#234e40"} for index in range(3)])
+    data = outline_json(terrain, SilhouetteOptions.from_dict(payload))
+    slots = [slot for slot in data["fit"]["combs"]["slots"] if slot["kind"] == "layer"]
+    assert [slot["width"] for slot in slots] == pytest.approx([layer["thickness_mm"]+.3 for layer in data["layers"]])
+    assert [layer["thickness_mm"] for layer in data["layers"]][::2] == [3, 1.2]
+    # Slots that would run together, a box too shallow for the thick layers, and more layers than ridges.
+    with pytest.raises(ValueError, match="layers 1 and 2"):
+        outline_json(terrain, SilhouetteOptions.from_dict(ridge_glow(layer_spacing=3.8)))
+    with pytest.raises(ValueError, match="too shallow for 3 layers"):
+        outline_json(terrain, SilhouetteOptions.from_dict(payload | {"box_depth": 12, "thickness_near_mm": 4}))
+    with pytest.raises(ValueError, match="Only 3 separate ridges are visible from this viewpoint; use 3 layers or lower the minimum distance."):
+        outline_json(terrain, SilhouetteOptions.from_dict(ridge_glow(4, preset="custom", fit="box")))
+    with pytest.raises(ValueError, match="Only 2 separate ridges"):
+        outline_json(terrain, SilhouetteOptions.from_dict(ridge_glow(view_min_radius_m=3000)))
+    beyond = outline_json(terrain, SilhouetteOptions.from_dict(ridge_glow(2, view_min_radius_m=3000)))
+    assert [round(layer["distance_m"]/1000) for layer in beyond["layers"]] == [5, 8]
+
+
+def test_distance_bands_honor_the_minimum_distance():
+    # A low hill ~500 m east of the viewpoint and a mountain at the frame's edge.
+    heights = np.full((80, 80), 100, dtype=np.float32)
+    heights[38:43, 44:47] = 300
+    heights[35:46, 70:80] = 2000
+    terrain = Terrain(Bounds(36.08, -82.165, 36.145, -82.055), heights, 11, 2, "2026-10-01T00:00:00Z")
+    payload = {"source": "viewpoint", "view_point": [36.1125, -82.11], "view_bearing": 90, "view_fov": 60, "fit": "box",
+               "thickness_by_distance": True, "layers": [{"position": 30}, {"position": 100}]}
+    near = view_layers(terrain, SilhouetteOptions.from_dict(payload))
+    cleared = view_layers(terrain, SilhouetteOptions.from_dict(payload | {"view_min_radius_m": 1000}))
+    assert near["angles"][0].max() > 1 and cleared["angles"][0].max() < near["angles"][0].max()-1
+    assert cleared["angles"][1].max() == pytest.approx(near["angles"][1].max())  # the far band is beyond the radius either way
+    assert cleared["distances"][0] > near["distances"][0] and near["ridges"] is None
+    data = outline_json(terrain, SilhouetteOptions.from_dict(payload | {"view_min_radius_m": 1000}))
+    assert [layer["thickness_mm"] for layer in data["layers"]] == [3, 1.5] and data["ridges"] == []
+    single = view_layers(terrain, SilhouetteOptions.from_dict({k: v for k, v in payload.items() if k != "layers"} | {"view_min_radius_m": 1000}))
+    assert len(single["angles"]) == 1 and single["angles"][0].max() == pytest.approx(cleared["angles"][1].max())

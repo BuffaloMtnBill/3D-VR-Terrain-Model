@@ -32,6 +32,10 @@
 .silhouette-route-status{color:var(--ink)!important}
 .silhouette-swatches{display:flex;gap:4px;margin-top:9px}
 .silhouette-swatches span{flex:1;height:10px;border-radius:2px;border:1px solid #0004}
+.silhouette-layer-list{list-style:none;margin:8px 0 10px;padding:0;font-variant-numeric:tabular-nums}
+.silhouette-layer-list:empty{display:none}
+#silhouette .silhouette-layer-list li{display:flex;align-items:center;gap:6px;font-size:10px;line-height:1.5;padding:2px 0;color:var(--ink)}
+.silhouette-layer-list i{flex:none;width:9px;height:9px;border-radius:2px;border:1px solid #0004}
 .silhouette-race-kind{height:auto;padding:0;background:transparent;border:0;margin:0 0 8px}
 .silhouette-race-kind button{padding:6px 7px}
 .silhouette-parts{font-size:10px;line-height:1.5;color:var(--muted);margin:10px 0 0}

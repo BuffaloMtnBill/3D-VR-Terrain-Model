@@ -193,6 +193,11 @@ where you stand (draggable marker). **Facing** sets the compass bearing
 into 1–5 distance bands. For each bearing the skyline is the highest elevation
 angle; the chart plots degrees above horizontal against bearing, with nearer
 bands in darker shades. The dashed wedge on the map shows the field of view.
+**Beyond** (everything, 250 m–10 km) leaves out terrain nearer than that, as if
+the foreground were cleared. **Detect ridges** replaces the bands with up to 7
+ridgelines found in the view: visible crests with hidden ground behind them,
+grouped by distance (groups at least ~16 % farther apart, so one ridge seen at a
+slant stays one), nearest first; the status lists their distances.
 
 Both modes see only the generated terrain inside the frame: to include distant
 mountains, frame and generate a larger area. Points stay as latitude/longitude,
@@ -201,11 +206,13 @@ all points are remembered in the browser.
 
 API: `POST /api/profile/<terrain id>` with `{"mode": "ridgeline", "start":
 [lat, lon], "end": [lat, lon]}` or `{"mode": "viewpoint", "point": [lat, lon],
-"bearing": 0–360, "fov": 10–360, "eye_m": 0–500, "bands": 1–5}`. Responses
+"bearing": 0–360, "fov": 10–360, "eye_m": 0–500, "bands": 1–5, "min_radius_m":
+0–50000, "ridges": false}` (with `"ridges": true`, `bands` is 1–7 ridges). Responses
 include `mode`, `path`, `distances`, `heights`, `length_m`, `highest_m`,
 `lowest_m` (ridgeline) or `azimuths`, `angles`, `skyline_m`, `bands`,
-`band_edges`, `farthest_m`, `eye_elevation_m`, `point`, `rays`, `bearing`, `fov`
-(viewpoint).
+`band_edges`, `farthest_m`, `eye_elevation_m`, `point`, `rays`, `bearing`, `fov`,
+`min_radius_m`, and `ridges` (`distance_m`, `near_m`, `far_m`, `coverage` of each
+detected ridge; its skyline is in `bands`) (viewpoint).
 
 ## Exports
 
@@ -335,10 +342,24 @@ opening the silhouette page while the geography page shows one of them selects
 it automatically. A viewpoint skyline is printed as it looks from the viewpoint
 (lengths on a cylinder around the viewer, so true proportions match the view);
 with multiple layers (shadow box or layered lamp presets) each layer is one
-distance band, nearest ridges at the front, with nearer bands narrower. A
-ridgeline makes a single layer. Silhouette requests use `source: "ridgeline"`
-with `ridge_start` and `ridge_end`, or `source: "viewpoint"` with `view_point`,
-`view_bearing`, `view_fov`, `view_eye_m`.
+distance band, nearest ridges at the front, with nearer bands narrower. When the
+geography page has **Detect ridges** on, the layered presets use the detected
+ridges instead: one layer per ridge (the layer count follows them within the
+preset's limits; with fewer ridges than its minimum it falls back to bands), and
+terrain nearer than **Beyond** is left out either way. **Thicker when closer**
+(on by default for the Layered glow and the Layered mountain diorama when the
+source is a viewpoint) sets each layer's thickness by its distance on a log
+scale, from **Nearest** (3 mm) to **Farthest** (1.5 mm for the lamp, 1.2 mm for
+the box), to 0.1 mm; the layer list shows each one ("Layer 1 (front) · ridge
+0.6 mi · 3.0 mm"). Comb and spacer-comb slots are each layer's own thickness +
+0.3 mm, and parts in the files are named with their thickness ("Layer 2 · 2.2
+mm"). A ridgeline makes a single layer. Silhouette requests use `source:
+"ridgeline"` with `ridge_start` and `ridge_end`, or `source: "viewpoint"` with
+`view_point`, `view_bearing`, `view_fov`, `view_eye_m`, `view_min_radius_m`
+(0–50000), and `view_ridges`; `thickness_by_distance`, `thickness_near_mm`, and
+`thickness_far_mm` (1.2–30) set thickness by distance, and a layer's own
+`thickness_mm` overrides it. Outlines give each layer `thickness_mm` and, for a
+viewpoint, `distance_m`, plus the `ridges` used.
 
 - **Shape:** width (the piece's length, 40–400 mm; the printed part of the slice fills it), vertical
   scale (× true proportions at that width, 0.5–100; it starts at the elevation multiplier), base height
@@ -374,8 +395,9 @@ itself may be wider than the slot. Checks warn when the piece is narrower than t
   catches the light. Print it in clear or translucent PETG at 100 % infill and 0.12 mm layers.
 - **Stencil lamp:** an opaque 3 mm piece with a large cut-through caption; the lamp lights the letters.
 - **Layered glow:** 2–4 thin panels (3 by default) from slices at 25, 50, and 75 % of the frame stand
-  in a printed **comb base** whose tab drops into the lamp. Slots are the panel thickness + 0.3 mm,
-  6 mm apart, 5 mm deep (the caption stays above them), and each panel's base is a step (8 mm) higher
+  in a printed **comb base** whose tab drops into the lamp (from a viewpoint with detected ridges: one
+  panel per ridge, closer panels thicker). Slots are each panel's thickness + 0.3 mm, centers
+  6 mm apart with at least 1.2 mm between them, 5 mm deep (the caption stays above them), and each panel's base is a step (8 mm) higher
   than the one in front so rear ridges rise above front ones. Print the panels translucent, the front
   darkest; print the comb base clear.
 - **Skyline night-light:** a slice through town that **includes buildings**: along the slice, the

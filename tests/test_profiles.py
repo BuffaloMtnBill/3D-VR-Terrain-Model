@@ -7,7 +7,7 @@ import pytest
 
 from terrain_app.elevation import Bounds, Terrain
 from terrain_app.profiles import (
-    band, band_edges, profile_json, profile_options, ridgeline, skyline_profile, viewpoint
+    band, band_edges, profile_json, profile_options, ridgeline, ridges, skyline_profile, viewpoint
 )
 from terrain_app.silhouette import SilhouetteOptions, outline_json
 from terrain_app.server import create_app
@@ -420,3 +420,25 @@ def test_silhouette_viewpoint_integration(app, tmp_path):
 
     finally:
         app.extensions["terrain"]["executor"].shutdown(wait=True)
+
+
+def three_ridges():
+    """Flat ground with three north–south ridges east of a viewpoint at u = 0.05, each farther and higher than the last."""
+    heights = np.full((80, 80), 100, dtype=np.float32)
+    for column, top in ((22, 300), (44, 600), (68, 1000)):
+        heights[:, column-1:column+2] = top
+    return Terrain(BOUNDS, heights, 11, 2, "2026-10-01T00:00:00Z")
+
+
+def test_ridges_finds_separate_ridgelines_nearest_first():
+    terrain = three_ridges()
+    view = viewpoint(terrain, to_point(.05, .5), bearing=90, fov=60, eye_m=2.0)
+    found = ridges(view, 3)
+    # The ridges stand ~2.1, 4.6, and 7.6 km east (wider off-axis, where the rays cross them at a slant).
+    assert [round(ridge["distance_m"]/1000) for ridge in found] == [2, 5, 8]
+    assert all(ridge["coverage"] > .5 for ridge in found) and np.diff([ridge["distance_m"] for ridge in found]).min() > 0
+    assert found[0]["angles"].max() > 0 and (found[2]["angles"] > found[1]["angles"]).mean() > .5
+    # Asking for more finds no more: one ridge seen at varying distances is not two.
+    assert len(ridges(view, 6)) == 3
+    beyond = ridges(viewpoint(terrain, to_point(.05, .5), bearing=90, fov=60, eye_m=2.0, min_radius_m=3000), 3)
+    assert [round(ridge["distance_m"]/1000) for ridge in beyond] == [5, 8] and beyond[0]["near_m"] == 3000

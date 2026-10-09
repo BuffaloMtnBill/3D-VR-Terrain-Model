@@ -129,6 +129,47 @@ const errors=[];
     await page.locator('#silhouette-back').click();
     await page.waitForTimeout(500);
 
+    // Test 3b: ridges detected beyond 1 km become the Layered glow's panels, closer ones thicker.
+    console.log('Test 3b: Detected ridges in the Layered glow');
+    await page.locator('#profile-pick-view').click();
+    await page.evaluate(()=>window.scrollTo(0,0));
+    const frame3=await page.locator('#selection-frame').boundingBox();
+    await page.mouse.click(frame3.x+frame3.width*.5,frame3.y+frame3.height*.5);
+    await page.locator('#view-bearing').evaluate(e=>{e.value='90';e.dispatchEvent(new Event('input',{bubbles:true}));});
+    await page.locator('#view-radius').selectOption('1000');
+    await page.locator('#view-bands').selectOption('3');
+    const detected=page.waitForResponse(r=>r.url().includes('/api/profile/')&&r.request().postDataJSON()?.ridges===true);
+    await page.locator('#view-ridges').check();
+    const found=(await (await detected).json()).ridges;
+    await page.waitForFunction(()=>/ridges? at .* nearest first/.test(document.getElementById('profile-mode-status').textContent),null,{timeout:15000});
+    console.log('  ridges:',found.map(ridge=>ridge.distance_m).join(', '));
+    assert.ok(found.length>=2&&found.length<=4,'Two to four ridges stand beyond 1 km');
+    await page.locator('#silhouette-button').click();
+    const glow=page.waitForResponse(r=>/\/api\/silhouette\/[^/]+\/outline$/.test(r.url())&&r.request().postDataJSON()?.preset==='glow-layers'&&r.request().postDataJSON()?.view_ridges===true);
+    await page.locator('[data-silhouette-preset="glow-layers"]').click();
+    const outline=await (await glow).json(),sent=(await glow).request().postDataJSON();
+    assert.equal(sent.layers.length,found.length,'One layer per detected ridge');
+    assert.deepEqual([sent.view_min_radius_m,sent.thickness_by_distance,sent.thickness_near_mm,sent.thickness_far_mm],[1000,true,3,1.5]);
+    const thicknesses=outline.layers.map(layer=>layer.thickness_mm);
+    assert.ok(thicknesses.every((value,index)=>!index||value<thicknesses[index-1]),`Closer ridges are thicker: ${thicknesses}`);
+    assert.deepEqual([thicknesses[0],thicknesses.at(-1)],[3,1.5]);
+    await page.waitForFunction(count=>document.querySelectorAll('#silhouette-layer-list li').length===count,found.length);
+    const items=await page.locator('#silhouette-layer-list li').allInnerTexts();
+    console.log('  layers:',items.join(' | '));
+    assert.match(items[0],/^Layer 1 \(front\) · ridge [\d.]+ mi · 3\.0 mm$/);
+    assert.deepEqual(items.map(text=>Number(text.match(/([\d.]+) mm$/)[1])),thicknesses,'The list shows each layer\'s thickness');
+    assert.equal(await page.locator('#silhouette-thickness-distance').isChecked(),true,'Thicker when closer starts on for a viewpoint');
+    assert.equal(await page.locator('#silhouette-thickness').isDisabled(),true,'The single thickness steps aside');
+    assert.match(await page.locator('#silhouette-check-list').innerText(),/ridgeline detected from the viewpoint/);
+    assert.match(await page.locator('#silhouette-slice-label').innerText(),new RegExp(`${found.length} ridges`));
+    const exported=page.waitForRequest(r=>/\/api\/silhouette\/[^/]+\/export$/.test(r.url())&&r.method()==='POST');
+    const download=page.waitForEvent('download');
+    await page.locator('[data-silhouette-export="stl"]').click();
+    const body=(await exported).postDataJSON();await download;
+    assert.deepEqual([body.view_ridges,body.thickness_by_distance,body.layers.length],[true,true,found.length]);
+    await page.locator('#silhouette-back').click();
+    await page.waitForTimeout(300);
+
     // Test 4: Slice mode
     console.log('Test 4: Slice mode');
     await page.locator('#profile-mode').selectOption('slice');

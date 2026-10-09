@@ -123,9 +123,10 @@ def bearing_direction(terrain, point, bearing):
     return vector/np.linalg.norm(vector)
 
 
-def viewpoint(terrain, point, bearing=0.0, fov=120.0, eye_m=2.0, samples=None):
+def viewpoint(terrain, point, bearing=0.0, fov=120.0, eye_m=2.0, samples=None, min_radius_m=0.0):
     """The skyline seen from a point: for each direction across the field of view, the highest elevation angle of the
-    terrain inside the frame, with the earth's curvature and standard refraction applied.
+    terrain inside the frame, with the earth's curvature and standard refraction applied. Terrain nearer than
+    min_radius_m is left out, as if the foreground were cleared away.
 
     Returns azimuths (compass degrees, left to right), skyline angles (degrees), the distance (m) of the terrain that
     forms the skyline, a per-step angle table for depth bands, the step distances, and the farthest distance seen."""
@@ -149,10 +150,14 @@ def viewpoint(terrain, point, bearing=0.0, fov=120.0, eye_m=2.0, samples=None):
     angles[~inside] = -np.inf
     if not inside[:, 0].all() or not np.isfinite(angles).any():
         raise ValueError("The viewpoint must have terrain around it inside the generated area.")
+    angles[:, distances < min_radius_m] = -np.inf
+    if not np.isfinite(angles).any():
+        raise ValueError("Nothing lies beyond the minimum distance inside the generated area. Lower it, or generate a larger area.")
     horizon = angles.max(axis=1)
     farthest = float(distances[np.isfinite(angles).any(axis=0)].max())
+    horizon = np.where(np.isfinite(horizon), horizon, -90.0)
     return {"azimuths": azimuths, "angles": horizon, "skyline_m": distances[angles.argmax(axis=1)],
-            "table": angles, "steps": distances, "farthest": farthest, "eye_m": eye, "start": start,
+            "table": angles, "steps": distances, "farthest": farthest, "min_radius_m": float(min_radius_m), "eye_m": eye, "start": start,
             "directions": directions}
 
 
@@ -165,6 +170,82 @@ def band(view, near, far):
         return np.full(len(view["azimuths"]), -90.0)
     angles = view["table"][:, columns].max(axis=1)
     return np.where(np.isfinite(angles), angles, -90.0)
+
+
+RIDGE_RELIEF_M = 15.0  # a crest needs at least this much hidden dip behind it, so small bumps near the viewer don't count
+RIDGE_GAP = .15  # separate ridgelines are at least ~16% farther than the one in front (log distance)
+
+
+def crests(view, prominence=.25):
+    """Visible ridge crests along each ray: points seen from the viewpoint with hidden ground right behind them, where
+    the terrain drops below the crest before anything farther shows again, by at least `prominence` degrees and at
+    least RIDGE_RELIEF_M meters at the crest's distance.
+    Returns (azimuth index, step index) arrays."""
+    seen = view["table"]
+    nearer = np.maximum.accumulate(np.concatenate((np.full((len(seen), 1), -np.inf), seen[:, :-1]), axis=1), axis=1)
+    visible = np.isfinite(seen) & (seen >= nearer)
+    rays, steps = np.nonzero(visible[:, :-1] & ~visible[:, 1:] & np.isfinite(seen[:, 1:]))
+    keep = []
+    for ray, step in zip(rays, steps):
+        # The hidden stretch behind the crest, up to where the terrain shows again.
+        behind = seen[ray, step+1:]
+        again = np.flatnonzero(behind >= seen[ray, step])
+        stretch = behind[:again[0]] if len(again) else behind
+        stretch = stretch[np.isfinite(stretch)]
+        needed = max(prominence, math.degrees(math.atan(RIDGE_RELIEF_M/view["steps"][step])))
+        keep.append(len(stretch) >= 2 and seen[ray, step]-stretch.min() >= needed)
+    keep = np.asarray(keep, dtype=bool)
+    return rays[keep], steps[keep]
+
+
+def ridges(view, count, prominence=.25):
+    """The `count` strongest ridgelines in view (fewer when fewer stand apart), nearest first.
+
+    Crests from every direction are grouped by distance (k-means on log distance, so near and far ridges separate
+    alike). Each ridgeline's skyline is, per direction, the highest terrain after the nearer ridge's crest up to its
+    own crest there, or up to the midpoint between the groups where that ray has no crest of the ridge. Returns
+    [{distance_m, near_m, far_m, angles (degrees, −90 where nothing), coverage (share of directions with a crest)}]."""
+    rays, steps = crests(view, prominence)
+    if not len(rays):
+        raise ValueError("No separate ridges are visible from this viewpoint. Move it, lower the minimum distance, or face toward the mountains.")
+    distances = view["steps"]
+    logs = np.log(distances[steps])
+    count = max(1, min(count, len(np.unique(np.round(logs, 2)))))
+    while True:
+        centers = np.quantile(logs, (np.arange(count)+.5)/count)
+        for _ in range(30):
+            group = np.abs(logs[:, None]-centers[None, :]).argmin(axis=1)
+            moved = np.asarray([logs[group == index].mean() if (group == index).any() else centers[index] for index in range(count)])
+            if np.allclose(moved, centers):
+                break
+            centers = np.sort(moved)
+        group = np.abs(logs[:, None]-centers[None, :]).argmin(axis=1)
+        # One ridge seen at varying distances across the view is not two: groups must stand RIDGE_GAP apart, each with crests.
+        if count == 1 or (np.diff(centers).min() >= RIDGE_GAP and len(np.unique(group)) == count):
+            break
+        count -= 1
+    middles = np.exp((centers[:-1]+centers[1:])/2)
+    table, total = view["table"], len(view["azimuths"])
+    # Per ray, the far end of each ridge's stretch: its farthest crest in the group there, else the midpoint.
+    ends = np.tile(np.append(middles, np.inf), (total, 1))
+    found = np.zeros((total, count), dtype=bool)
+    for ray, step, index in zip(rays, steps, group):
+        if not found[ray, index] or distances[step] > ends[ray, index]:
+            ends[ray, index] = distances[step]
+        found[ray, index] = True
+    result = []
+    for index in range(count):
+        starts = ends[:, index-1] if index else np.zeros(total)
+        angles = np.full(total, -90.0)
+        for ray in range(total):
+            values = table[ray, (distances > starts[ray]) & (distances <= ends[ray, index])]
+            values = values[np.isfinite(values)]
+            if len(values):
+                angles[ray] = values.max()
+        result.append({"distance_m": float(np.exp(centers[index])), "near_m": float(middles[index-1]) if index else view["min_radius_m"],
+                       "far_m": float(middles[index]) if index < count-1 else float(view["farthest"]),
+                       "angles": angles, "coverage": float(found[:, index].mean())})
+    return result
 
 
 def skyline_profile(angles, fov):
@@ -199,6 +280,7 @@ def profile_options(value):
                 "end": location(value.get("end"), "second ridgeline point")}
     result = {"mode": "viewpoint", "point": location(value.get("point"), "viewpoint")}
     for name, default, low, high, message in (
+            ("min_radius_m", 0.0, 0, 50000, "The minimum distance must be between 0 and 50,000 meters."),
             ("bearing", 0.0, 0, 360, "The view direction must be a compass bearing from 0 to 360 degrees."),
             ("fov", 120.0, 10, 360, "The field of view must be between 10 and 360 degrees."),
             ("eye_m", 2.0, 0, 500, "The eye height must be between 0 and 500 meters above the ground.")):
@@ -206,9 +288,12 @@ def profile_options(value):
         if not finite(number) or not low <= number <= high:
             raise ValueError(message)
         result[name] = float(number)
+    result["ridges"] = value.get("ridges", False)
+    if not isinstance(result["ridges"], bool):
+        raise ValueError("Detect ridges must be true or false.")
     bands = value.get("bands", 1)
-    if not finite(bands) or bands != int(bands) or not 1 <= bands <= 5:
-        raise ValueError("Depth bands must be a whole number from 1 to 5.")
+    if not finite(bands) or bands != int(bands) or not 1 <= bands <= (7 if result["ridges"] else 5):
+        raise ValueError("Depth bands must be a whole number from 1 to 5, or 1 to 7 detected ridges.")
     result["bands"] = int(bands)
     return result
 
@@ -226,10 +311,15 @@ def profile_json(terrain, request):
                 "distances": np.round(ridge["distances"], 2).tolist(), "heights": np.round(ridge["heights"], 2).tolist(),
                 "length_m": round(ridge["length"], 1),
                 "highest_m": round(float(ridge["heights"].max()), 1), "lowest_m": round(float(ridge["heights"].min()), 1)}
-    view = viewpoint(terrain, request["point"], request["bearing"], request["fov"], request["eye_m"])
-    edges = band_edges(request["bands"])
-    bands = [np.round(band(view, edges[index], edges[index+1]), 3).tolist() for index in range(request["bands"])] if request["bands"] > 1 else []
-    return {"mode": "viewpoint", "azimuths": np.round(view["azimuths"], 3).tolist(), "angles": np.round(view["angles"], 3).tolist(),
+    view = viewpoint(terrain, request["point"], request["bearing"], request["fov"], request["eye_m"], min_radius_m=request["min_radius_m"])
+    edges, found = band_edges(request["bands"]), []
+    if request["ridges"]:
+        found = ridges(view, request["bands"])
+        bands = [np.round(ridge["angles"], 3).tolist() for ridge in found]
+    else:
+        bands = [np.round(band(view, edges[index], edges[index+1]), 3).tolist() for index in range(request["bands"])] if request["bands"] > 1 else []
+    return {"mode": "viewpoint", "min_radius_m": request["min_radius_m"],
+            "ridges": [{key: round(ridge[key], 3 if key == "coverage" else 1) for key in ("distance_m", "near_m", "far_m", "coverage")} for ridge in found], "azimuths": np.round(view["azimuths"], 3).tolist(), "angles": np.round(view["angles"], 3).tolist(),
             "skyline_m": np.round(view["skyline_m"], 1).tolist(), "bands": bands, "band_edges": edges,
             "farthest_m": round(view["farthest"], 1), "eye_elevation_m": round(view["eye_m"], 1),
             "point": np.round(view["start"], 6).tolist(), "rays": view_ray_ends(view, terrain),

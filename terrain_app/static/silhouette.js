@@ -2,7 +2,8 @@
  * mount, or as a design from a preset: glow-lamp panels with a tab for the lamp base's slot, shadow-box layers in spacer
  * combs, and race profiles with ticks and medal pegs. The server lays the design out (POST /api/silhouette/<id>/outline)
  * and builds its files; this module draws it to scale, keeps the slice in step with the geography selection page's
- * profile controls, and remembers settings per framed area.
+ * profile controls, and remembers settings per framed area. Layered designs from a viewpoint use the ridges the geography
+ * page detected (one layer each, nearest at the front) and can print closer layers thicker.
  * app.js hands over a small context: state, route, options(), notify, download, units, printColors.
  */
 import * as THREE from 'three';
@@ -20,7 +21,7 @@ const PRESETS=(()=>{try{return JSON.parse($('silhouette-presets').textContent);}
 const COMB_FLOOR=3,STAND_DROP=2;
 // Numeric settings: input id, limits. Choices: select id, allowed values. Checks: checkbox ids.
 const NUMBERS={width_mm:['silhouette-width',40,400],vertical_scale:['silhouette-vertical',.5,100],base_mm:['silhouette-base',2,40],
-  thickness_mm:['silhouette-thickness',1.2,30],smoothing:['silhouette-smoothing',0,100],text_size:['silhouette-text-size',2,30],
+  thickness_mm:['silhouette-thickness',1.2,30],thickness_near_mm:['silhouette-thickness-near',1.2,30],thickness_far_mm:['silhouette-thickness-far',1.2,30],smoothing:['silhouette-smoothing',0,100],text_size:['silhouette-text-size',2,30],
   text_depth:['silhouette-text-depth',.2,5],hole_diameter:['silhouette-hole',2,10],
   slot_width:['silhouette-slot-width',1,20],slot_length:['silhouette-slot-length',20,400],slot_depth:['silhouette-slot-depth',2,30],
   slot_clearance:['silhouette-slot-clearance',0,1],box_width:['silhouette-box-width',41,500],box_height:['silhouette-box-height',20,400],
@@ -33,18 +34,19 @@ const INTEGERS=new Set(['layer_count','peg_count']);
 const CHOICES={source:['silhouette-source',['true','shaped','route','ridgeline','viewpoint']],text_style:['silhouette-text-style',['engrave','emboss','stencil']],
   text_align:['silhouette-text-align',['left','center','right']],mount:['silhouette-mount',['none','stand','holes','keyholes']]};
 const CHECKS={mirror:'silhouette-mirror',include_buildings:'silhouette-buildings',ticks:'silhouette-ticks',start_finish:'silhouette-start-finish',
-  summit_pin:'silhouette-pin',photo_slot:'silhouette-photo',led_channel:'silhouette-led'};
+  summit_pin:'silhouette-pin',photo_slot:'silhouette-photo',led_channel:'silhouette-led',thickness_by_distance:'silhouette-thickness-distance'};
 const COLORS={text_color:'silhouette-text-color',body_color:'silhouette-body-color'};
 const DEFAULTS={width_mm:180,vertical_scale:2,base_mm:8,thickness_mm:4,smoothing:0,text_size:5,text_depth:.8,hole_diameter:4,source:'true',
   text_style:'engrave',text_align:'center',mount:'none',mirror:false,trim:[0,100],text:'',text_color:'#f0ead6',body_color:'#234e40',
   preset:'custom',fit:'none',slot_width:4,slot_length:160,slot_depth:8,slot_clearance:.2,box_width:200,box_height:150,box_depth:40,
   layer_count:1,layer_positions:[],layer_step:6,layer_spacing:6,include_buildings:false,building_corridor_m:30,ticks:false,tick_every:1,
   start_finish:false,peg_count:0,peg_diameter:6,peg_length:20,summit_pin:false,pin_diameter:1.8,pin_depth:10,photo_slot:false,photo_gap:1,
-  led_channel:false,led_width:5,led_depth:2,race_kind:'running',finish_time:''};
+  led_channel:false,led_width:5,led_depth:2,race_kind:'running',finish_time:'',thickness_by_distance:false,thickness_near_mm:3,thickness_far_mm:1.5};
 // What a preset decides: choosing another preset (or Custom) resets these before applying its own. Slice, caption, colors, and the
 // lamp and box measurements are kept.
 const PRESET_OWNED=['fit','layer_count','layer_positions','layer_step','layer_spacing','include_buildings','ticks','tick_every','start_finish',
-  'peg_count','summit_pin','photo_slot','led_channel','mount','text_style','text_depth','text_size','thickness_mm','base_mm'];
+  'peg_count','summit_pin','photo_slot','led_channel','mount','text_style','text_depth','text_size','thickness_mm','base_mm','thickness_by_distance',
+  'thickness_near_mm','thickness_far_mm'];
 const CLIENT_ONLY=['layer_count','layer_positions','layer_step','race_kind','finish_time'];
 const MOUNT_HINTS={none:'',stand:'Two feet print beside the piece, each with a slot the thickness plus 0.2 mm wide; the piece stands upright in them.',
   holes:'Two holes through the base, for nails or screws.',keyholes:'Slide the piece down onto two screw heads. Keyholes need about 14 mm of height at each end.'};
@@ -76,9 +78,11 @@ const longDate=date=>new Date(`${date}T12:00:00`).toLocaleDateString(undefined,{
 
 export function createSilhouette(ctx) {
   const dialog=$('silhouette');
-  let settings=structuredClone(DEFAULTS),storeKey=null,result=null,timer=null,request=null,view='front',busy=false,three=null;
+  let settings=structuredClone(DEFAULTS),storeKey=null,result=null,timer=null,request=null,view='front',busy=false,three=null,followed=null;
   const preset=()=>PRESETS.presets[settings.preset]||PRESETS.presets.custom;
   const layered=()=>settings.fit!=='none'&&settings.layer_count>1;
+  // Thicker when closer applies to a viewpoint's layers only.
+  const byDistance=()=>layered()&&settings.thickness_by_distance&&settings.source==='viewpoint';
 
   // ---------- settings: per framed area, like the 3D model design page's projects ----------
   function areaKey() {
@@ -157,6 +161,7 @@ export function createSilhouette(ctx) {
     }
     if(settings.fit==='box'){settings.width_mm=clamp(settings.box_width-1,40,400);$('silhouette-width').value=settings.width_mm;}
     if(changed==='silhouette-finish-time'&&preset().rules?.caption==='race'){settings.text=caption('race');$('silhouette-text').value=settings.text;}
+    if(changed==='silhouette-source'&&preset().rules?.distance_thickness){settings.thickness_by_distance=settings.source==='viewpoint';$(CHECKS.thickness_by_distance).checked=settings.thickness_by_distance;}
     labels();
   }
   function labels() {
@@ -190,6 +195,16 @@ export function createSilhouette(ctx) {
     const dependents={led_channel:['silhouette-led-width','silhouette-led-depth'],photo_slot:['silhouette-photo-gap'],summit_pin:['silhouette-pin-diameter','silhouette-pin-depth'],
       ticks:['silhouette-tick-every'],include_buildings:['silhouette-corridor']};
     for(const [name,ids] of Object.entries(dependents))ids.forEach(id=>{$(id).disabled=!settings[name];});
+    // Thickness: one for every layer, or each layer's by its distance from the viewpoint.
+    const viewpoint=settings.source==='viewpoint';
+    $(CHECKS.thickness_by_distance).disabled=!viewpoint;
+    ['silhouette-thickness-near','silhouette-thickness-far'].forEach(id=>{$(id).disabled=!byDistance();});
+    $('silhouette-thickness').disabled=byDistance();
+    // A viewpoint's layers are set by distance (bands or detected ridges), not by slice positions.
+    $('silhouette-layer-positions').disabled=viewpoint;
+    $('silhouette-layer-hint').textContent=`Each layer's base is a step higher than the one in front, so every ridge shows. The front layer is ${viewpoint?'the nearest to the viewpoint':'the frame\'s near side'}.`;
+    $('silhouette-thickness-hint').textContent=!viewpoint?'Thicker when closer needs the viewpoint skyline as the heights; until then every layer is the Shape thickness.'
+      :byDistance()?'Each layer\'s thickness follows its distance from the viewpoint, Nearest to Farthest.':'Every layer is the Shape thickness.';
     const colors=layerColors(settings.layer_count),swatches=$('silhouette-layer-swatches');swatches.replaceChildren();
     if(fields.has('layers'))colors.forEach((color,index)=>{const swatch=document.createElement('span');swatch.style.background=color;swatch.title=`Layer ${index+1}`;swatches.append(swatch);});
     const u=ctx.units();$('silhouette-tick-unit').textContent=u.distanceLabel;
@@ -235,6 +250,8 @@ export function createSilhouette(ctx) {
     Object.assign(settings,structuredClone(chosen.settings||{}),{preset:id});
     if(rules.tab_thickness)settings.thickness_mm=round(clamp(settings.slot_width-settings.slot_clearance,1.2,30));
     if(rules.layers){settings.layer_count=rules.layers.count;settings.layer_step=rules.layers.step;settings.layer_positions=spread(rules.layers.count);}
+    if(rules.distance_thickness)settings.thickness_by_distance=settings.source==='viewpoint';
+    followed=null;followRidges(false);
     if(settings.fit==='box')settings.width_mm=clamp(settings.box_width-1,40,400);
     if(id==='race')settings.tick_every=settings.race_kind==='cycling'?10:1;
     if(settings.source==='route'){const scale=routeScale();if(scale)settings.vertical_scale=scale;}
@@ -257,6 +274,23 @@ export function createSilhouette(ctx) {
   }
   // Whether the geography page's profile panel currently shows this kind of profile.
   function drawn(mode) {return ['ridgeline','viewpoint'].includes(mode)&&ctx.profile?.settings.mode===mode&&ctx.profile.ready;}
+  // A layered viewpoint design with ridges detected on the geography page: one layer per ridge, as many as the preset allows.
+  // Fewer ridges than the preset's minimum: distance bands instead (ridges is false).
+  function ridgePlan() {
+    const profile=ctx.profile?.settings,rule=preset().rules?.layers;
+    if(!rule||!layered()||settings.source!=='viewpoint'||!drawn('viewpoint')||!profile.ridges||!profile.found?.length)return null;
+    const found=profile.found.length,count=clamp(found,rule.min||2,rule.max||7);
+    return {found,count,ridges:found>=count,min:rule.min||2,max:rule.max||7};
+  }
+  // The layer count follows newly detected ridges (the user may still lower it afterwards).
+  function followRidges(store=true) {
+    const plan=ridgePlan();
+    if(!plan?.ridges)return;
+    const key=JSON.stringify([settings.preset,ctx.profile.settings.found.map(ridge=>ridge.distance_m)]);
+    if(key===followed)return;
+    followed=key;
+    if(settings.layer_count!==plan.count){settings.layer_count=plan.count;settings.layer_positions=spread(plan.count);if(store){writeForm();save();}}
+  }
   function requestBody(extra={}) {
     const opts=ctx.options(),body={...structuredClone(settings),trim:[...settings.trim],direction:$('profile-direction').value,
       position:Number($('profile-position').value),relief:opts.relief,relief_strength:opts.relief_strength,units:ctx.state.units==='m'?'m':'ft'};
@@ -271,8 +305,10 @@ export function createSilhouette(ctx) {
       if(!drawn(settings.source))body.source='true';
       else if(settings.source==='ridgeline')Object.assign(body,{ridge_start:profile.start,ridge_end:profile.end});
       else {
-        Object.assign(body,{view_point:profile.point,view_bearing:profile.bearing,view_fov:profile.fov,view_eye_m:profile.eye_m});
-        // A viewpoint's layers are distance bands, nearer bands narrower (as profiles.band_edges), nearest at the front.
+        Object.assign(body,{view_point:profile.point,view_bearing:profile.bearing,view_fov:profile.fov,view_eye_m:profile.eye_m,view_min_radius_m:profile.min_radius_m||0});
+        // A viewpoint's layers are its detected ridges (the server ignores their positions), or distance bands, nearer bands
+        // narrower (as profiles.band_edges), nearest at the front.
+        if(ridgePlan()?.ridges)body.view_ridges=true;
         if(body.layers)body.layers.forEach((layer,index,all)=>{layer.position=Math.round(((index+1)/all.length)**2*1000)/10;});
       }
     }
@@ -292,7 +328,7 @@ export function createSilhouette(ctx) {
     const profile=ctx.profile?.settings;
     if(result?.profile==='route')text=`${ctx.route?.name||'Route'} · ${number(result.slice_length_m/u.distance,2)} ${u.distanceLabel} along the route`;
     else if(settings.source==='ridgeline'&&drawn('ridgeline'))text=`Ridgeline from the geography page${result?` · ${number(result.slice_length_m/u.distance,2)} ${u.distanceLabel} along the high ground`:''}`;
-    else if(settings.source==='viewpoint'&&drawn('viewpoint'))text=`Skyline from the viewpoint · ${number(profile.fov,0)}° view facing ${number(profile.bearing,0)}°${layered()?` · ${settings.layer_count} distance bands`:''}`;
+    else if(settings.source==='viewpoint'&&drawn('viewpoint'))text=`Skyline from the viewpoint · ${number(profile.fov,0)}° view facing ${number(profile.bearing,0)}°${layered()?` · ${settings.layer_count} ${ridgePlan()?.ridges?'ridges':'distance bands'}`:''}`;
     else {
       const direction=$('profile-direction').selectedOptions[0]?.textContent||'';
       text=layered()?`${direction} · ${settings.layer_count} slices`:`${direction} · ${$('profile-position').value}% across`;
@@ -333,8 +369,14 @@ export function createSilhouette(ctx) {
     (result.notes||[]).forEach(note=>add('note',note));
     if(settings.source==='route'&&!ctx.route)add('note','Upload a GPX route on the geography selection page to use its elevation profile; the slice is shown until then.');
     if(['ridgeline','viewpoint'].includes(settings.source)&&!drawn(settings.source))add('note',`Draw a ${settings.source==='ridgeline'?'ridgeline':'viewpoint skyline'} in the geography page's profile panel to use it; the slice is shown until then.`);
-    if(settings.source==='viewpoint'&&layered())add('note','Each layer is a distance band of the view, nearest ridges at the front; layer positions are set from the bands.');
-    const size=`${number(result.width_mm)} × ${number(result.height_mm)} × ${number(settings.thickness_mm)} mm`;
+    const plan=ridgePlan(),u=ctx.units();
+    if(plan?.ridges) {
+      add('note','Each layer is a ridgeline detected from the viewpoint, nearest at the front; slice positions are not used.');
+      if(plan.found>plan.count)add('note',`The geography page found ${plan.found} ridges; this design holds at most ${plan.max} layers, so they are grouped into ${plan.count}.`);
+    } else if(plan)add('note',`Only ${plan.found} ridge${plan.found>1?'s were':' was'} detected; this design needs at least ${plan.min} layers, so it uses distance bands. Lower Beyond or face toward more mountains.`);
+    else if(settings.source==='viewpoint'&&layered())add('note','Each layer is a distance band of the view, nearest ridges at the front; layer positions are set from the bands.');
+    const thicknesses=result.layers.map(layer=>layer.thickness_mm),thinnest=Math.min(...thicknesses),thickest=Math.max(...thicknesses);
+    const size=`${number(result.width_mm)} × ${number(result.height_mm)} × ${thinnest===thickest?number(thickest):`${number(thinnest)}–${number(thickest)}`} mm`;
     add(result.warnings.length?'note':'ok',`${size} · lowest point ${number(result.min_profile_mm)} mm tall`);
     if(settings.mount==='stand')add('note','The stand feet print beside the piece in the same file.');
     box.dataset.level=result.warnings.length?'warning':'ok';
@@ -348,6 +390,13 @@ export function createSilhouette(ctx) {
       item.textContent=`${part.count>1?`${part.count} × `:''}${part.name} · ${part.size.map(value=>number(value)).join(' × ')} mm`;items.append(item);
     }
     parts.append(items);
+    // Each layer front to back: its ridge's (or band's) distance from the viewpoint and its thickness.
+    const rows=$('silhouette-layer-list');rows.replaceChildren();
+    if(result.layers.length>1)for(const layer of result.layers) {
+      const item=document.createElement('li'),swatch=document.createElement('i');swatch.style.background=layer.color;
+      const away=layer.distance_m/u.distance,where=layer.distance_m===undefined?'':` · ${result.ridges.length?'ridge':'band'} ${number(away,away<.1?2:1)} ${u.distanceLabel}`;
+      item.append(swatch,`${layer.name}${where} · ${layer.thickness_mm.toFixed(1)} mm`);rows.append(item);
+    }
   }
 
   // ---------- front view: the design to scale, layers overlapped front to back as assembled ----------
@@ -430,7 +479,7 @@ export function createSilhouette(ctx) {
     const group=three.group;
     group.traverse(child=>{child.geometry?.dispose();child.material?.dispose();});
     group.clear();
-    const T=settings.thickness_mm,depth=settings.text_depth,material=color=>new THREE.MeshStandardMaterial({color,roughness:.85});
+    const depth=settings.text_depth,material=color=>new THREE.MeshStandardMaterial({color,roughness:.85});
     const extrude=(parent,shapes,amount,z,color)=>{
       const geometry=new THREE.ExtrudeGeometry(shapes,{depth:amount,bevelEnabled:false,curveSegments:4});geometry.translate(0,0,z);
       parent.add(new THREE.Mesh(geometry,material(color)));
@@ -445,10 +494,10 @@ export function createSilhouette(ctx) {
       group.add(new THREE.LineSegments(geometry,new THREE.LineBasicMaterial({color,transparent:true,opacity:.45})));
     };
     const box=result.fit,layers=result.layers,W=result.width_mm;
-    // Placements: each layer's bottom (y) and back face (z); a design without a fit stands with its middle at z = 0.
-    const shift=box.kind==='none'?-T/2:0;
+    // Placements: each layer's bottom (y) and back face (z), each at its own thickness; a design without a fit stands with its middle at z = 0.
+    const thickness=layer=>layer.thickness_mm??settings.thickness_mm,shift=box.kind==='none'?-thickness(layers[0])/2:0;
     layers.forEach((layer,index)=>{
-      const piece=new THREE.Group();piece.position.set(0,layer.y,layer.z+shift);group.add(piece);
+      const T=thickness(layer),piece=new THREE.Group();piece.position.set(0,layer.y,layer.z+shift);group.add(piece);
       extrude(piece,[shapeOf(index?layer.outline:result.outline)],T,0,layers.length>1?layer.color:settings.body_color);
       if(index)return;
       if(result.text.length) {
@@ -559,7 +608,12 @@ export function createSilhouette(ctx) {
       load();syncSlice();
       // A ridgeline or skyline drawn on the geography page becomes the profile, unless a route or another source was chosen.
       const mode=ctx.profile?.settings.mode;
-      if(drawn(mode)&&['true','shaped'].includes(settings.source)&&!(layered()&&mode==='ridgeline')){settings.source=mode;writeForm();save();}
+      if(drawn(mode)&&['true','shaped'].includes(settings.source)&&!(layered()&&mode==='ridgeline')) {
+        settings.source=mode;
+        if(mode==='viewpoint'&&preset().rules?.distance_thickness)settings.thickness_by_distance=true;
+        writeForm();save();
+      }
+      followRidges();
       $('silhouette-title').textContent=placeName()||'Your landscape';
       if(!dialog.open)dialog.showModal();
       setView(view);sliceLabel();refresh();
@@ -570,7 +624,7 @@ export function createSilhouette(ctx) {
       if(!dialog.open||!ctx.state.data)return;
       if(areaKey()!==storeKey){load();three&&(three.fitted=false);}
       $('silhouette-title').textContent=placeName()||'Your landscape';
-      syncSlice();labels();schedule();
+      followRidges();syncSlice();labels();schedule();
     },
   };
 }

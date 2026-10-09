@@ -1,5 +1,5 @@
 {
-  "about": "Silhouette design page presets (\"Start from\"). settings are applied over the page's defaults; fields name the extra setting groups shown; rules are handled in silhouette.js: tab_thickness (thickness follows the lamp tab), layers (spread positions near side first), caption (filled from the route).",
+  "about": "Silhouette design page presets (\"Start from\"). settings are applied over the page's defaults; fields name the extra setting groups shown; rules are handled in silhouette.js: tab_thickness (thickness follows the lamp tab), layers (spread positions near side first; a viewpoint with detected ridges sets the count), distance_thickness (Thicker when closer starts on for a viewpoint source), caption (filled from the route).",
   "groups": [
     {"name": "Glow lamps", "presets": ["glow-edge", "glow-stencil", "glow-layers", "glow-skyline"]},
     {"name": "Shadow boxes", "presets": ["box-diorama", "box-trail", "box-chart", "box-anniversary"]},
@@ -21,9 +21,10 @@
     },
     "glow-layers": {
       "name": "Layered glow", "summary": "Thin panels from several slices stand in a comb base that drops into the lamp; rear ridges rise above front ones.",
-      "hint": "Print the panels in translucent PETG, the front panel darkest (or most opaque) and the back palest; print the comb base clear so the lamp shines up through it.",
-      "fields": ["lamp", "layers"], "rules": {"layers": {"count": 3, "min": 2, "max": 4, "low": 25, "high": 75, "step": 8}},
-      "settings": {"fit": "lamp", "thickness_mm": 2, "layer_spacing": 6, "base_mm": 14, "width_mm": 170, "text_style": "engrave", "text_depth": 0.6}
+      "hint": "For a real view, pick a viewpoint on the geography page with Beyond and Detect ridges set: each ridge becomes a panel, closer ones thicker. Print the panels in translucent PETG, the front panel darkest (or most opaque) and the back palest; print the comb base clear so the lamp shines up through it.",
+      "fields": ["lamp", "layers"], "rules": {"layers": {"count": 3, "min": 2, "max": 4, "low": 25, "high": 75, "step": 8}, "distance_thickness": true},
+      "settings": {"fit": "lamp", "thickness_mm": 2, "thickness_near_mm": 3, "thickness_far_mm": 1.5, "layer_spacing": 6, "base_mm": 14, "width_mm": 170,
+                   "text_style": "engrave", "text_depth": 0.6}
     },
     "glow-skyline": {
       "name": "Skyline night-light", "summary": "A slice through town with the mapped buildings standing on the ground, a stencil name, and a lamp tab.",
@@ -34,9 +35,9 @@
     },
     "box-diorama": {
       "name": "Layered mountain diorama", "summary": "Layers from the near side of the frame to the far side stand in two spacer combs, each base a step higher so every ridge shows.",
-      "hint": "Print each layer in its own color, palest at the back, darkest at the front. Measure the box's inside.",
-      "fields": ["box", "layers", "led"], "rules": {"layers": {"count": 5, "min": 3, "max": 7, "low": 15, "high": 85, "step": 8}},
-      "settings": {"fit": "box", "thickness_mm": 2, "base_mm": 9, "text_style": "engrave", "text_depth": 0.6}
+      "hint": "For a real view, pick a viewpoint on the geography page with Beyond and Detect ridges set: each ridge becomes a layer, closer ones thicker. Print each layer in its own color, palest at the back, darkest at the front. Measure the box's inside.",
+      "fields": ["box", "layers", "led"], "rules": {"layers": {"count": 5, "min": 3, "max": 7, "low": 15, "high": 85, "step": 8}, "distance_thickness": true},
+      "settings": {"fit": "box", "thickness_mm": 2, "thickness_near_mm": 3, "thickness_far_mm": 1.2, "base_mm": 9, "text_style": "engrave", "text_depth": 0.6}
     },
     "box-trail": {
       "name": "Trail memory box", "summary": "The uploaded route's elevation along its length, a slot for a photo or map behind it, and a pin hole at the summit for a brass nail marker.",

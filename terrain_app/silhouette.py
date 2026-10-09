@@ -29,7 +29,7 @@ from .elevation import SOURCES
 from .features import parts as geometry_parts, to_selection
 from .mesh import ModelOptions, binary_stl, model_elevations, relief_method
 from .printing import model_xml, package_3mf
-from .profiles import band, profile_options, ridgeline, skyline_profile, viewpoint
+from .profiles import band, profile_options, ridgeline, ridges, skyline_profile, viewpoint
 from .routes import ROUTE_ID, along
 
 BED_MM = 256  # the common printer bed the size hint is measured against
@@ -66,7 +66,10 @@ class SilhouetteOptions:
     relief: str = "standard"
     relief_strength: float = 50.0
     mirror: bool = False
-    thickness_mm: float = 4.0
+    thickness_mm: float = 4.0  # every layer's, unless it has its own or its thickness follows its distance
+    thickness_by_distance: bool = False  # a viewpoint's layers: closer layers thicker, thickness_near_mm to thickness_far_mm
+    thickness_near_mm: float = 3.0
+    thickness_far_mm: float = 1.5
     text: str = ""  # up to three lines
     text_size: float = 5.0  # cap height, mm
     text_style: str = "engrave"
@@ -77,7 +80,7 @@ class SilhouetteOptions:
     body_color: str = "#234e40"
     text_color: str = "#f0ead6"
     preset: str = "custom"  # recorded in the settings file; the client applies a preset's fields
-    layers: tuple = ()  # ((position %, base mm, color), ...) front to back; empty: one layer at position and base_mm
+    layers: tuple = ()  # ((position %, base mm, color, thickness mm or None), ...) front to back; empty: one layer at position and base_mm
     fit: str = "none"  # lamp: a tab (or comb base) for an LED lamp base's slot; box: spacer combs for a shadow box
     slot_width: float = 4.0
     slot_length: float = 160.0
@@ -112,6 +115,8 @@ class SilhouetteOptions:
     view_bearing: float = 0.0
     view_fov: float = 120.0
     view_eye_m: float = 2.0
+    view_min_radius_m: float = 0.0  # terrain nearer than this is left out of the view
+    view_ridges: bool = False  # several layers are the detected ridgelines, nearest first, instead of distance bands
 
     @classmethod
     def from_dict(cls, value):
@@ -125,6 +130,8 @@ class SilhouetteOptions:
                   "smoothing": (0, 100, "Smoothing must be between 0 and 100 percent."),
                   "relief_strength": (0, 100, "The elevation profile strength must be between 0 and 100 percent."),
                   "thickness_mm": (1.2, 30, "The thickness must be between 1.2 and 30 mm."),
+                  "thickness_near_mm": (1.2, 30, "The nearest layer's thickness must be between 1.2 and 30 mm."),
+                  "thickness_far_mm": (1.2, 30, "The farthest layer's thickness must be between 1.2 and 30 mm."),
                   "text_size": (2, 30, "The text size must be between 2 and 30 mm."),
                   "text_depth": (.2, 5, "The text depth must be between 0.2 and 5 mm."),
                   "hole_diameter": (2, 10, "The wall hole diameter must be between 2 and 10 mm."),
@@ -172,7 +179,7 @@ class SilhouetteOptions:
         flags = {}
         for name, label in (("mirror", "Mirror"), ("photo_slot", "The photo slot"), ("led_channel", "The LED channel"),
                             ("include_buildings", "Include buildings"), ("summit_pin", "The summit pin hole"),
-                            ("ticks", "Distance ticks"), ("start_finish", "START and FINISH labels")):
+                            ("ticks", "Distance ticks"), ("start_finish", "START and FINISH labels"), ("thickness_by_distance", "Thicker when closer")):
             flags[name] = value.get(name, getattr(defaults, name))
             if not isinstance(flags[name], bool):
                 raise ValueError(f"{label} must be true or false.")
@@ -203,13 +210,16 @@ class SilhouetteOptions:
             if not isinstance(layer, dict):
                 raise ValueError("Supply 1 to 7 layers, each with a slice position, a base height, and a color.")
             position, base, color = layer.get("position"), layer.get("base_mm", numbers["base_mm"]), layer.get("color", colors["body_color"])
+            thickness = layer.get("thickness_mm")
             if not finite(position) or not 0 <= position <= 100:
                 raise ValueError(f"Layer {index}'s slice position must be between 0 and 100 percent.")
             if not finite(base) or not 2 <= base <= 120:
                 raise ValueError(f"Layer {index}'s base height must be between 2 and 120 mm.")
             if not isinstance(color, str) or not HEX.fullmatch(color):
                 raise ValueError(f"Choose a six-digit hex color for layer {index}.")
-            parsed.append((float(position), float(base), color.lower()))
+            if thickness is not None and (not finite(thickness) or not 1.2 <= thickness <= 30):
+                raise ValueError(f"Layer {index}'s thickness must be between 1.2 and 30 mm.")
+            parsed.append((float(position), float(base), color.lower(), None if thickness is None else float(thickness)))
         route_id = value.get("route_id", "")
         if picked["source"] == "route" and (not isinstance(route_id, str) or not ROUTE_ID.fullmatch(route_id)):
             raise ValueError("Upload a GPX route on the geography selection page to use its elevation profile.")
@@ -219,9 +229,12 @@ class SilhouetteOptions:
             drawn = {"ridge_start": ridge["start"], "ridge_end": ridge["end"]}
         elif picked["source"] == "viewpoint":
             view = profile_options({"mode": "viewpoint", "point": value.get("view_point"), "bearing": value.get("view_bearing", 0.0),
-                                    "fov": value.get("view_fov", 120.0), "eye_m": value.get("view_eye_m", 2.0)})
-            drawn = {"view_point": view["point"], "view_bearing": view["bearing"], "view_fov": view["fov"], "view_eye_m": view["eye_m"]}
-            if [position for position, _, _ in parsed] != sorted(position for position, _, _ in parsed):
+                                    "fov": value.get("view_fov", 120.0), "eye_m": value.get("view_eye_m", 2.0),
+                                    "min_radius_m": value.get("view_min_radius_m", 0.0), "ridges": value.get("view_ridges", False)})
+            drawn = {"view_point": view["point"], "view_bearing": view["bearing"], "view_fov": view["fov"], "view_eye_m": view["eye_m"],
+                     "view_min_radius_m": view["min_radius_m"], "view_ridges": view["ridges"]}
+            # Detected ridges set their own distances; distance bands go by the layers' positions.
+            if not view["ridges"] and [layer[0] for layer in parsed] != sorted(layer[0] for layer in parsed):
                 raise ValueError("A viewpoint's layers are distance bands: give each layer a farther distance than the one in front.")
         options = cls(**numbers, **picked, **colors, **flags, **drawn, trim=(float(trim[0]), float(trim[1])), text="\n".join(lines),
                       relief=relief_method(value.get("relief", "standard")), layers=tuple(parsed), peg_count=int(pegs),
@@ -229,8 +242,6 @@ class SilhouetteOptions:
         if options.fit == "box":
             options = replace(options, width_mm=options.box_width-BOX_SIDE)  # pieces fill the box's width
         count = len(layer_specs(options))
-        if options.text and options.text_style == "engrave" and options.text_depth > options.thickness_mm-.4:
-            raise ValueError("Engraved text must leave at least 0.4 mm behind it. Make the text shallower or the piece thicker.")
         if count > 1 and options.fit == "none":
             raise ValueError("Several layers need a lamp-base or shadow-box fit to stand in. Choose one, or use a single layer.")
         if count > 1 and options.source in ("route", "ridgeline"):
@@ -240,16 +251,41 @@ class SilhouetteOptions:
         if options.fit == "lamp":
             if tab_thickness(options) < .8 or options.slot_length-2*options.slot_clearance < 10:
                 raise ValueError("The lamp slot is too small for a tab. Check its width, length, and clearance.")
-            if count > 1 and options.layer_spacing-(options.thickness_mm+COMB_CLEARANCE) < SLOT_WALL:
-                raise ValueError("The layer spacing must leave at least 1.2 mm between the comb's slots. Space the layers further apart or make them thinner.")
-        if options.fit == "box":
-            box_slots(options, count)  # raises when the box is too shallow
+        if not by_distance(options) or all(layer[3] is not None for layer in options.layers):
+            check_thickness(options, layer_thicknesses(options))  # otherwise the layout checks, once the layers' distances are known
         return options
 
 
 def layer_specs(options):
-    """(position %, base mm, color) for each layer, front to back."""
-    return options.layers or ((options.position, options.base_mm, options.body_color),)
+    """(position %, base mm, color, own thickness mm or None) for each layer, front to back."""
+    return options.layers or ((options.position, options.base_mm, options.body_color, None),)
+
+
+def by_distance(options):
+    return options.thickness_by_distance and options.source == "viewpoint" and len(layer_specs(options)) > 1
+
+
+def layer_thicknesses(options, distances=None):
+    """Each layer's thickness (mm), front to back: its own when given; for a viewpoint's layers thicker when closer, by log
+    distance from thickness_near_mm at the nearest layer to thickness_far_mm at the farthest (to 0.1 mm); else thickness_mm."""
+    specs = layer_specs(options)
+    shared = [options.thickness_mm]*len(specs)
+    if by_distance(options) and distances:
+        logs = np.log(np.maximum(distances, 1.0))
+        low, high = float(logs.min()), float(logs.max())
+        shared = [round(float(options.thickness_near_mm+(options.thickness_far_mm-options.thickness_near_mm)*((value-low)/(high-low) if high > low else 0)), 1)
+                  for value in logs]
+    return [spec[3] if spec[3] is not None else value for spec, value in zip(specs, shared)]
+
+
+def check_thickness(options, thicknesses):
+    """What the layers' thicknesses must leave room for: engraved text in the front layer, and the comb's or box's slots."""
+    if options.text and options.text_style == "engrave" and options.text_depth > thicknesses[0]-.4:
+        raise ValueError("Engraved text must leave at least 0.4 mm behind it. Make the text shallower or the piece thicker.")
+    if options.fit == "lamp" and len(thicknesses) > 1:
+        lamp_comb(options, thicknesses)  # raises when slots would run together
+    if options.fit == "box":
+        box_slots(options, thicknesses)  # raises when the box is too shallow
 
 
 def tab_thickness(options):
@@ -262,10 +298,11 @@ def tab_span(options, width):
     return (width-length)/2, (width+length)/2
 
 
-def box_slots(options, count):
-    """Slots along each spacer comb, front to back: (kind, center from the comb's front end, width, depth), evenly spaced."""
-    length = options.box_depth-BOX_BACK
-    items = [("layer", options.thickness_mm+COMB_CLEARANCE, COMB_SLOT)]*count
+def box_slots(options, thicknesses):
+    """Slots along each spacer comb, front to back: (kind, center from the comb's front end, width, depth), evenly spaced;
+    each layer's slot is its thickness plus clearance."""
+    length, count = options.box_depth-BOX_BACK, len(thicknesses)
+    items = [("layer", thickness+COMB_CLEARANCE, COMB_SLOT) for thickness in thicknesses]
     if options.led_channel:
         items.append(("led", options.led_width, options.led_depth))
     if options.photo_slot:
@@ -283,12 +320,19 @@ def box_slots(options, count):
     return slots
 
 
-def lamp_comb(options, count):
-    """The comb base's depth and its layer slots' centers from its front edge."""
-    slot = options.thickness_mm+COMB_CLEARANCE
-    depth = max((count-1)*options.layer_spacing+slot+2*COMB_WALL, tab_thickness(options)+2*COMB_WALL)
-    first = depth/2-(count-1)*options.layer_spacing/2
-    return depth, [first+index*options.layer_spacing for index in range(count)]
+def lamp_comb(options, thicknesses):
+    """The comb base's depth, its layer slots' centers from its front edge (layer_spacing apart), and their widths (each
+    layer's thickness plus clearance); the slots are centered over the tab."""
+    slots, count = [thickness+COMB_CLEARANCE for thickness in thicknesses], len(thicknesses)
+    for index, (a, b) in enumerate(zip(slots, slots[1:])):
+        if options.layer_spacing-(a+b)/2 < SLOT_WALL-1e-9:
+            raise ValueError(f"The layer spacing must leave at least 1.2 mm between the comb's slots; layers {index+1} and {index+2} "
+                             f"({thicknesses[index]:g} and {thicknesses[index+1]:g} mm thick) need {(a+b)/2+SLOT_WALL:.1f} mm. "
+                             "Space the layers further apart or make them thinner.")
+    span = (count-1)*options.layer_spacing+(slots[0]+slots[-1])/2
+    depth = max(span+2*COMB_WALL, tab_thickness(options)+2*COMB_WALL)
+    first = (depth-span)/2+slots[0]/2
+    return depth, [first+index*options.layer_spacing for index in range(count)], slots
 
 
 # --- Profiles ---------------------------------------------------------------------------------------------
@@ -398,8 +442,9 @@ def with_buildings(terrain, options, position, distances, values, buildings):
     return samples, tops, len(spans)
 
 
-def profile_heights(terrain, options, position=None, sources=None):
+def profile_heights(terrain, options, position=None, sources=None, skyline=None):
     """The trimmed, smoothed profile: x (mm, before mirroring), heights (m), span (m), start (m), and mm per meter.
+    A viewpoint layer's skyline angles come from view_layers (computed once for the design), else its first layer's.
 
     Trim endpoints are interpolated, so the piece starts and ends exactly where asked. Smoothing is a moving average
     over up to 8% of the samples on each side."""
@@ -412,7 +457,7 @@ def profile_heights(terrain, options, position=None, sources=None):
         ridge = ridgeline(terrain, options.ridge_start, options.ridge_end)
         distances, values, length = ridge["distances"], ridge["heights"], ridge["length"]
     elif options.source == "viewpoint":
-        distances, values, length = view_heights(terrain, options, position)
+        distances, values, length = (view_heights(terrain, options) if skyline is None else skyline_profile(skyline, options.view_fov))
     else:
         position = options.position if position is None else position
         distances, values, length = slice_heights(terrain, options, position)
@@ -429,22 +474,39 @@ def profile_heights(terrain, options, position=None, sources=None):
     return (samples-start)*scale, heights, end-start, start, scale
 
 
-def view_heights(terrain, options, position=None):
-    """A viewpoint's skyline as a profile: lengths along a cylinder around the viewer (profiles.skyline_profile).
+def view_layers(terrain, options):
+    """A viewpoint's layers, front to back: each one's skyline angles (degrees per direction), its distance (m), and the
+    detected ridges used (None for bands). Terrain nearer than view_min_radius_m is left out.
 
-    One layer is the whole skyline. With several, each layer is a distance band: terrain between the layer in front's
-    distance and its own (percent of the farthest terrain seen), nearest ridges at the front. Directions where a band
-    holds no terrain sit just below the lowest skyline, so the shared datum stays near the view."""
-    view = viewpoint(terrain, options.view_point, options.view_bearing, options.view_fov, options.view_eye_m)
+    One layer is the whole skyline. Several are the detected ridgelines (view_ridges: layer i is the i-th nearest; their
+    positions are ignored) or distance bands: terrain between the layer in front's distance and its own (percent of the
+    farthest terrain seen), whose distance is the band's geometric middle. Directions where a layer holds no terrain sit
+    just below the lowest skyline, so the shared datum stays near the view."""
+    view = viewpoint(terrain, options.view_point, options.view_bearing, options.view_fov, options.view_eye_m,
+                     min_radius_m=options.view_min_radius_m)
     specs = layer_specs(options)
-    floor = float(view["angles"].min())-1
+    seen = view["angles"][view["angles"] > -90]
+    floor = (float(seen.min()) if len(seen) else 0.0)-1
     if len(specs) == 1:
-        angles = view["angles"]
-    else:
-        far = (options.position if position is None else position)
-        near = max((spec for spec, _, _ in specs if spec < far), default=0.0)
-        angles = np.maximum(band(view, near/100, far/100), floor)
-    return skyline_profile(angles, options.view_fov)
+        return {"angles": [np.maximum(view["angles"], floor)], "distances": [float(np.median(view["skyline_m"]))], "ridges": None}
+    if options.view_ridges:
+        found = ridges(view, len(specs))
+        if len(found) < len(specs):
+            k = len(found)
+            raise ValueError(f"Only {k} separate ridge{'s are' if k > 1 else ' is'} visible from this viewpoint; "
+                             f"use {k} layer{'s' if k > 1 else ''} or lower the minimum distance.")
+        return {"angles": [np.maximum(ridge["angles"], floor) for ridge in found], "distances": [ridge["distance_m"] for ridge in found], "ridges": found}
+    nearest, angles, distances = max(float(view["steps"][0]), options.view_min_radius_m), [], []
+    for far, *_ in specs:
+        near = max((spec[0] for spec in specs if spec[0] < far), default=0.0)
+        angles.append(np.maximum(band(view, near/100, far/100), floor))
+        distances.append(math.sqrt(max(near/100*view["farthest"], nearest)*max(far/100*view["farthest"], nearest)))
+    return {"angles": angles, "distances": distances, "ridges": None}
+
+
+def view_heights(terrain, options, index=0):
+    """One viewpoint layer's skyline as a profile: lengths along a cylinder around the viewer (profiles.skyline_profile)."""
+    return skyline_profile(view_layers(terrain, options)["angles"][index], options.view_fov)
 
 
 def ridge_points(x, heights, datum, base, scale, options):
@@ -584,14 +646,17 @@ def layout(terrain, options, sources=None):
     sources = sources or Sources()
     warnings, notes = [], []
     specs = layer_specs(options)
-    curves = [profile_heights(terrain, options, position, sources) for position, _, _ in specs]
+    views = view_layers(terrain, options) if options.source == "viewpoint" else None  # once: ridges are found for the whole design
+    curves = [profile_heights(terrain, options, spec[0], sources, None if views is None else views["angles"][index]) for index, spec in enumerate(specs)]
+    thicknesses = layer_thicknesses(options, views["distances"] if views else None)
+    check_thickness(options, thicknesses)
     # Layers share one datum, so heights compare truly between them; a single layer sits its lowest point on the base.
     datum = min(float(heights.min()) for _, heights, _, _, _ in curves)
     width = options.width_mm
     limit = options.box_height-COMB_FLOOR-.5 if options.fit == "box" else None
     multi = len(specs) > 1
     layers = []
-    for index, ((position, base, color), (x, heights, span, start, scale)) in enumerate(zip(specs, curves)):
+    for index, ((position, base, color, _), (x, heights, span, start, scale)) in enumerate(zip(specs, curves)):
         points = ridge_points(x, heights, datum, base, scale, options)
         outline = orient(make_valid(Polygon([(0, 0), *points.tolist(), (width, 0)])).buffer(0))
         height = float(points[:, 1].max())
@@ -601,7 +666,8 @@ def layout(terrain, options, sources=None):
             warnings.append(f"{name if multi else 'The piece'} is {height:.0f} mm tall, more than the box's inner height allows "
                             f"({limit:.0f} mm above the combs), so its top is cut flat. Lower the vertical scale or the base heights.")
             height = limit
-        layers.append({"name": name, "position": position, "base": base, "color": color, "outline": outline, "body": outline,
+        layers.append({"name": name, "position": position, "base": base, "color": color, "outline": outline, "body": outline, "thickness": thicknesses[index],
+                       "distance_m": None if views is None else float(views["distances"][index]),
                        "points": points, "height": height, "lowest": float(points[:, 1].min()), "span_m": span, "start_m": start, "scale": scale})
     front = layers[0]
     outline, base, height = front["outline"], front["base"], front["height"]
@@ -684,7 +750,7 @@ def layout(terrain, options, sources=None):
         x, r = float(front["points"][index, 0]), options.pin_diameter/2
         x = min(max(x, r+WALL), width-r-WALL)
         need = box(x-r-.6, height-options.pin_depth, x+r+.6, height-1.5)
-        if options.thickness_mm < options.pin_diameter+1.2:
+        if front["thickness"] < options.pin_diameter+1.2:
             warnings.append(f"The piece must be at least {options.pin_diameter+1.2:.1f} mm thick for the summit pin hole, so it is left out. Make it thicker.")
         elif height-options.pin_depth < base or not outline.buffer(.01).contains(need):
             warnings.append("The summit is too narrow or too low for the pin hole, so it is left out. Smooth the profile or raise the vertical scale.")
@@ -702,7 +768,7 @@ def layout(terrain, options, sources=None):
         if max(part["size"][:2]) > BED_MM:
             warnings.append(f"{part['name']} is {part['size'][0]:.0f} × {part['size'][1]:.0f} mm, larger than a {BED_MM} mm printer bed. "
                             "Make it narrower or lower the vertical scale.")
-    if options.mount == "stand" and options.thickness_mm < 2.4:
+    if options.mount == "stand" and front["thickness"] < 2.4:
         warnings.append("A piece thinner than 2.4 mm may wobble in its stand. Make it thicker.")
     if options.include_buildings and options.source != "route" and sources.buildings is None:
         warnings.append("Turn on the Buildings map layer and wait for it to load to include buildings.")
@@ -711,14 +777,15 @@ def layout(terrain, options, sources=None):
     return {"layers": layers, "body": body, "outline": outline, "text": text, "markings": marks, "points": front["points"],
             "mounts": mounts+peg_marks+([pin] if pin else []), "pegs": peg_marks, "pin": pin, "ticks": ticks, "fit": fit,
             "warnings": warnings, "notes": notes, "width": width, "height": max(layer["height"] for layer in layers),
-            "lowest": front["lowest"], "span_m": front["span_m"]}
+            "lowest": front["lowest"], "span_m": front["span_m"], "ridges": views["ridges"] if views else None}
 
 
 def fit_layout(options, layers, warnings, notes):
     """The lamp tab, comb base, or spacer combs, where each layer stands in the assembly (y: its bottom, z: its back face;
     the lamp slot or the box's front-to-back center is z = 0), and the parts list."""
-    width, thickness, count = options.width_mm, options.thickness_mm, len(layers)
-    parts = [{"name": layer["name"], "size": [round(width, 1), round(layer["height"], 1), thickness], "count": 1} for layer in layers]
+    width, count = options.width_mm, len(layers)
+    thicknesses = [layer["thickness"] for layer in layers]
+    parts = [{"name": layer["name"], "size": [round(width, 1), round(layer["height"], 1), layer["thickness"]], "count": 1} for layer in layers]
     result = {"kind": options.fit, "parts": parts, "placements": [{"y": 0.0, "z": 0.0} for _ in layers], "tab": None, "comb_base": None, "combs": None, "box": None}
     if options.fit == "lamp":
         t = tab_thickness(options)
@@ -731,22 +798,23 @@ def fit_layout(options, layers, warnings, notes):
             # The tab is flush with the piece's back face, so both print flat on the bed.
             result["placements"] = [{"y": 0.0, "z": round(-t/2, 3)}]
             parts[0]["name"] += " with lamp tab"
-            if thickness < t-1e-6:
-                notes.append(f"The piece is thinner than the {t:g} mm tab, so the tab stands {t-thickness:.1f} mm proud of its front face; it still prints flat.")
+            if thicknesses[0] < t-1e-6:
+                notes.append(f"The piece is thinner than the {t:g} mm tab, so the tab stands {t-thicknesses[0]:.1f} mm proud of its front face; it still prints flat.")
         else:
-            depth, centers = lamp_comb(options, count)
+            depth, centers, slots = lamp_comb(options, thicknesses)
             result["comb_base"] = {"width": round(width, 3), "depth": round(depth, 3), "height": COMB_FLOOR+COMB_SLOT, "floor": COMB_FLOOR,
-                                   "slots": [round(center, 3) for center in centers], "slot_width": round(thickness+COMB_CLEARANCE, 3)}
-            result["placements"] = [{"y": COMB_FLOOR, "z": round(depth/2-center-thickness/2, 3)} for center in centers]
+                                   "slots": [round(center, 3) for center in centers], "slot_widths": [round(slot, 3) for slot in slots],
+                                   "slot_width": round(max(slots), 3)}
+            result["placements"] = [{"y": COMB_FLOOR, "z": round(depth/2-center-thickness/2, 3)} for center, thickness in zip(centers, thicknesses)]
             parts.append({"name": "Comb base with lamp tab", "size": [round(width, 1), round(depth, 1), COMB_FLOOR+COMB_SLOT+options.slot_depth], "count": 1})
     elif options.fit == "box":
-        slots = box_slots(options, count)
+        slots = box_slots(options, thicknesses)
         length = options.box_depth-BOX_BACK
         result["combs"] = {"length": round(length, 3), "width": COMB_STRIP, "height": COMB_FLOOR+COMB_SLOT, "floor": COMB_FLOOR,
                            "slots": [{"kind": kind, "center": round(center, 3), "width": round(slot, 3), "depth": depth} for kind, center, slot, depth in slots]}
         result["box"] = {"width": options.box_width, "height": options.box_height, "depth": options.box_depth}
         centers = [center for kind, center, _, _ in slots if kind == "layer"]
-        result["placements"] = [{"y": COMB_FLOOR, "z": round(options.box_depth/2-center-thickness/2, 3)} for center in centers]
+        result["placements"] = [{"y": COMB_FLOOR, "z": round(options.box_depth/2-center-thickness/2, 3)} for center, thickness in zip(centers, thicknesses)]
         parts.append({"name": "Spacer comb", "size": [COMB_STRIP, round(length, 1), COMB_FLOOR+COMB_SLOT], "count": 2})
     return result
 
@@ -767,12 +835,14 @@ def outline_json(terrain, options, sources=None):
     shapes = layout(terrain, options, sources)
     fit = shapes["fit"]
     layers = [{"name": layer["name"], "outline": largest(layer["outline"]), "color": layer["color"], "position": layer["position"],
-               "base_mm": layer["base"], "height_mm": round(layer["height"], 3), **placement}
+               "base_mm": layer["base"], "height_mm": round(layer["height"], 3), "thickness_mm": layer["thickness"], **placement,
+               **({} if layer["distance_m"] is None else {"distance_m": round(layer["distance_m"], 1)})}
               for layer, placement in zip(shapes["layers"], fit["placements"])]
     return {"outline": largest(shapes["outline"]), "text": rings(shapes["text"]), "markings": rings(shapes["markings"]),
             "text_style": options.text_style, "mount": shapes["mounts"], "layers": layers,
             "fit": {key: value for key, value in fit.items() if key not in ("parts", "placements")}, "parts": fit["parts"],
-            "width_mm": round(shapes["width"], 3), "height_mm": round(shapes["height"], 3), "thickness_mm": options.thickness_mm,
+            "width_mm": round(shapes["width"], 3), "height_mm": round(shapes["height"], 3), "thickness_mm": max(layer["thickness"] for layer in shapes["layers"]),
+            "ridges": [{"distance_m": round(ridge["distance_m"], 1), "coverage": round(ridge["coverage"], 3)} for ridge in shapes["ridges"] or []],
             "min_profile_mm": round(shapes["lowest"], 3), "slice_length_m": round(shapes["span_m"], 2), "ticks": shapes["ticks"],
             "profile": options.source if options.source in ("route", "ridgeline", "viewpoint") else "slice", "points": len(shapes["points"]),
             "warnings": shapes["warnings"], "notes": shapes["notes"]}
@@ -806,9 +876,9 @@ def union(solids):
     return closed(mf.Manifold.batch_boolean(solids, mf.OpType.Add)) if len(solids) > 1 else solids[0]
 
 
-def foot(options, x, y, depth):
+def foot(options, x, y, depth, thickness):
     """One stand foot, flat on the bed: a block with a slot open along its length, the piece's thickness plus clearance wide."""
-    length, height, slot = foot_length(options), STAND_FLOOR+STAND_SLOT_DEPTH, options.thickness_mm+CLEARANCE
+    length, height, slot = foot_length(options), STAND_FLOOR+STAND_SLOT_DEPTH, thickness+CLEARANCE
     block = mf.Manifold.cube((length, depth, height)).translate((x, y, 0))
     cutter = mf.Manifold.cube((length+2, slot, STAND_SLOT_DEPTH+1)).translate((x-1, y+depth/2-slot/2, STAND_FLOOR))
     return closed(block-cutter)
@@ -819,9 +889,8 @@ def comb_base(options, fit):
     comb, t = fit["comb_base"], tab_thickness(options)
     width, depth, height = comb["width"], comb["depth"], comb["height"]
     block = cube(0, 0, 0, width, depth, height)
-    slot = comb["slot_width"]
     # Slot centers are measured from the front edge, which is y = depth here (front ends up toward +z when turned over).
-    cutters = [cube(-1, depth-center-slot/2, -1, width+1, depth-center+slot/2, COMB_SLOT) for center in comb["slots"]]
+    cutters = [cube(-1, depth-center-slot/2, -1, width+1, depth-center+slot/2, COMB_SLOT) for center, slot in zip(comb["slots"], comb["slot_widths"])]
     x0, x1 = tab_span(options, width)
     tab = cube(x0, depth/2-t/2, height-.01, x1, depth/2+t/2, height+options.slot_depth)
     return closed(union([closed(block-union(cutters)), tab]))
@@ -837,16 +906,18 @@ def spacer_comb(options, fit):
 
 
 def layer_parts(options, shapes, index):
-    """One layer's named parts in print position (front face up): the body with its tab, pegs, and pin hole, and for the
-    front layer its text and markings when they are a separate color."""
+    """One layer's named parts in print position (front face up), each at its own thickness: the body with its tab, pegs,
+    and pin hole, and for the front layer its text and markings when they are a separate color. Layers of a design with
+    several are named with their thickness ("Layer 2 · 2.4 mm"), so the files say which is which."""
     layer, fit = shapes["layers"][index], shapes["fit"]
-    thickness = options.thickness_mm
+    thickness = layer["thickness"]
+    name = f"{layer['name']} · {thickness:.1f} mm" if len(shapes["layers"]) > 1 else layer["name"]
     body = extrude(layer["body"], thickness)
     if fit["tab"] and len(shapes["layers"]) == 1:
         tab = fit["tab"]
         body = union([body, cube(tab["x0"], tab["y0"], 0, tab["x1"], .01, tab["thickness"])])
     if index:
-        return [(layer["name"], layer["color"], body)]
+        return [(name, layer["color"], body)]
     if shapes["pegs"]:
         body = union([body]+[mf.Manifold.cylinder(options.peg_length+.5, peg["d"]/2, peg["d"]/2, 40).translate((peg["x"], peg["y"], thickness-.5))
                              for peg in shapes["pegs"]])
@@ -865,10 +936,10 @@ def layer_parts(options, shapes, index):
         mark = min(options.text_depth if options.text_style == "engrave" else MARK_DEPTH, thickness-.4)
         body = closed(body-extrude(marks, mark+1, thickness-mark))
         parts.append(("Markings", options.text_color, extrude(marks, mark, thickness-mark)))
-    parts.insert(0, (layer["name"], layer["color"], body))
+    parts.insert(0, (name, layer["color"], body))
     if options.mount == "stand":
         reach = float(np.clip(shapes["height"]*.5, 30, 90))
-        feet = [foot(options, index*(foot_length(options)+STAND_GAP), -STAND_GAP-reach, reach) for index in range(2)]
+        feet = [foot(options, index*(foot_length(options)+STAND_GAP), -STAND_GAP-reach, reach, thickness) for index in range(2)]
         parts.append(("Stand feet", options.body_color, closed(mf.Manifold.batch_boolean(feet, mf.OpType.Add))))
     return parts
 
@@ -916,9 +987,12 @@ def mesh(solid):
 # --- Files ------------------------------------------------------------------------------------------------
 
 def metadata(terrain, options, shapes):
-    settings = asdict(options) | {"trim": list(options.trim), "layers": [{"position": p, "base_mm": b, "color": c} for p, b, c in options.layers]}
+    settings = asdict(options) | {"trim": list(options.trim), "layers": [{"position": p, "base_mm": b, "color": c, **({} if t is None else {"thickness_mm": t})}
+                                                                          for p, b, c, t in options.layers]}
     return {"kind": "silhouette", "preset": options.preset, "settings": settings,
-            "size_mm": {"width": round(shapes["width"], 3), "height": round(shapes["height"], 3), "thickness": options.thickness_mm},
+            "size_mm": {"width": round(shapes["width"], 3), "height": round(shapes["height"], 3), "thickness": max(layer["thickness"] for layer in shapes["layers"])},
+            "layers": [{"name": layer["name"], "thickness_mm": layer["thickness"], **({} if layer["distance_m"] is None else {"distance_m": round(layer["distance_m"], 1)})}
+                       for layer in shapes["layers"]],
             "parts": shapes["fit"]["parts"], "slice_length_m": round(float(shapes["span_m"]), 2), "bounds": terrain.bounds.to_dict(),
             "source": SOURCES[terrain.source]["short"], "units": "mm",
             "axes": "x along the piece, y up the piece, z out of its front face (printed front face up)"}
@@ -939,7 +1013,7 @@ def comb_profiles(options, fit):
     if fit["comb_base"]:
         comb, t = fit["comb_base"], tab_thickness(options)
         shape = box(0, 0, comb["depth"], comb["height"]).difference(unary_union(
-            [box(center-comb["slot_width"]/2, comb["floor"], center+comb["slot_width"]/2, comb["height"]+1) for center in comb["slots"]]))
+            [box(center-slot/2, comb["floor"], center+slot/2, comb["height"]+1) for center, slot in zip(comb["slots"], comb["slot_widths"])]))
         shape = unary_union([shape, box(comb["depth"]/2-t/2, -options.slot_depth, comb["depth"]/2+t/2, 0)])
         profiles.append(("comb-base", "Comb base (side view)", shape, 1))
     if fit["combs"]:
@@ -983,7 +1057,8 @@ def svg_file(options, shapes, attribution):
         output.extend(front_paths(height))
         output.append("</svg>")
         return "\n".join(output).encode("utf-8")
-    items = [(f"layer-{index+1}", layer["name"], outline_of(index), layer["color"], index == 0) for index, layer in enumerate(shapes["layers"])]
+    items = [(f"layer-{index+1}", f"{layer['name']} · {layer['thickness']:.1f} mm" if len(shapes["layers"]) > 1 else layer["name"], outline_of(index), layer["color"], index == 0)
+             for index, layer in enumerate(shapes["layers"])]
     items += [(name, title, shape, options.body_color, False) for name, title, shape, _ in profiles]
     width = max(shape.bounds[2]-min(shape.bounds[0], 0) for _, _, shape, _, _ in items)
     body, y = [], 0.0

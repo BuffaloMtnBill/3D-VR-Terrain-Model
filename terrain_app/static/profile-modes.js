@@ -16,7 +16,10 @@ export function createProfileModes(ctx) {
 
   function settings() {
     return {mode,start:points.start,end:points.end,point:points.point,bearing:Number($('view-bearing').value),
-      fov:Number($('view-fov').value),eye_m:Number($('view-eye').value),bands:Number($('view-bands').value)};
+      fov:Number($('view-fov').value),eye_m:Number($('view-eye').value),bands:Number($('view-bands').value),
+      min_radius_m:Number($('view-radius').value),ridges:$('view-ridges').checked,
+      // Detected ridgelines (nearest first) once drawn, for the silhouette page's layers and their thickness.
+      found:result?.mode==='viewpoint'?result.ridges:[]};
   }
   function save() {try{localStorage.setItem(storageKey,JSON.stringify(settings()));}catch{/* Optional persistence. */}}
   function restore() {
@@ -24,7 +27,8 @@ export function createProfileModes(ctx) {
     if(!saved)return;
     const pair=value=>Array.isArray(value)&&value.length===2&&value.every(Number.isFinite)?value:null;
     points.start=pair(saved.start);points.end=pair(saved.end);points.point=pair(saved.point);
-    for(const [id,value] of [['view-bearing',saved.bearing],['view-fov',saved.fov],['view-eye',saved.eye_m],['view-bands',saved.bands]])
+    $('view-ridges').checked=saved.ridges===true;
+    for(const [id,value] of [['view-bearing',saved.bearing],['view-fov',saved.fov],['view-eye',saved.eye_m],['view-bands',saved.bands],['view-radius',saved.min_radius_m]])
       if(Number.isFinite(value)&&[...($(id).options||[{value:String(value)}])].some(option=>Number(option.value)===value||$(id).type==='range'))$(id).value=value;
     if(['slice','ridgeline','viewpoint'].includes(saved.mode))mode=saved.mode;
   }
@@ -86,7 +90,10 @@ export function createProfileModes(ctx) {
     if(mode==='slice')return;
     if(!ready()){result=null;error=null;ctx.redraw();if(!picking)status(mode==='ridgeline'?'Pick two points on the map to follow the highest ground between them.':'Pick a viewpoint on the map to see its skyline.');return;}
     if(!ctx.state.id){status('Generate the terrain to draw this profile.');return;}
-    const token=++request,body=mode==='ridgeline'?{mode,start:points.start,end:points.end}:{mode,point:points.point,bearing:Number($('view-bearing').value),fov:Number($('view-fov').value),eye_m:Number($('view-eye').value),bands:Number($('view-bands').value)};
+    const token=++request,body=mode==='ridgeline'?{mode,start:points.start,end:points.end}:{mode,point:points.point,bearing:Number($('view-bearing').value),fov:Number($('view-fov').value),eye_m:Number($('view-eye').value),
+      bands:Number($('view-bands').value),min_radius_m:Number($('view-radius').value),ridges:$('view-ridges').checked};
+    // Distance bands go up to 5; detected ridges up to 7.
+    if(!body.ridges&&body.bands>5)body.bands=5;
     try {
       const data=await ctx.api(`/api/profile/${ctx.state.id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       if(token!==request)return;
@@ -94,7 +101,9 @@ export function createProfileModes(ctx) {
       const u=ctx.units();
       status(mode==='ridgeline'
         ?`${ctx.number(data.length_m/u.distance,2)} ${u.distanceLabel} along the high ground · highest ${ctx.number(data.highest_m*u.height)} ${u.label} · lowest ${ctx.number(data.lowest_m*u.height)} ${u.label}`
-        :`Seeing ${ctx.number(data.farthest_m/u.distance,1)} ${u.distanceLabel} to the frame's edge from ${ctx.number(data.eye_elevation_m*u.height)} ${u.label}. Generate a larger area to include more distant mountains.`);
+        :data.ridges.length
+          ?`${data.ridges.length} ridge${data.ridges.length>1?'s':''} at ${data.ridges.map(ridge=>ctx.number(ridge.distance_m/u.distance,ridge.distance_m<u.distance?2:1)).join(', ')} ${u.distanceLabel}${data.min_radius_m?` beyond ${ctx.number(data.min_radius_m/u.distance,2)} ${u.distanceLabel}`:''}, nearest first. Closer ridges print thicker in the layered designs.`
+          :`Seeing ${ctx.number(data.farthest_m/u.distance,1)} ${u.distanceLabel} to the frame's edge from ${ctx.number(data.eye_elevation_m*u.height)} ${u.label}. Generate a larger area to include more distant mountains.`);
     } catch(problem) {
       if(token!==request)return;
       result=null;error=problem.message;status(problem.message,true);
@@ -154,7 +163,8 @@ export function createProfileModes(ctx) {
     const bearing=((xs[index]%360)+360)%360;
     $('profile-tooltip').textContent=ridge
       ?`${ctx.number(value*u.height,1)} ${u.label} ASL · ${ctx.number(xs[index]/u.distance,2)} ${u.distanceLabel} from A`
-      :`${ctx.number(bearing,0)}° ${compass(bearing)} · ${ctx.number(value,1)}° up · ridge ${ctx.number(result.skyline_m[index]/u.distance,1)} ${u.distanceLabel} away`;
+      :`${ctx.number(bearing,0)}° ${compass(bearing)} · ${ctx.number(value,1)}° up · ridge ${ctx.number(result.skyline_m[index]/u.distance,1)} ${u.distanceLabel} away`
+        +(result.ridges.length?` · ${result.ridges.length} ridges`:'');
     $('profile-tooltip').style.left=`${Math.max(2,Math.min(x-60,width-185))}px`;$('profile-tooltip').hidden=false;
   }
 
@@ -172,7 +182,7 @@ export function createProfileModes(ctx) {
   $('profile-pick-ridge').addEventListener('click',()=>{delete points._first;setPicking(picking==='ridgeline'?null:'ridgeline');});
   $('profile-pick-view').addEventListener('click',()=>setPicking(picking==='viewpoint'?null:'viewpoint'));
   $('view-bearing').addEventListener('input',()=>{bearingLabel();save();schedule();});
-  for(const id of ['view-fov','view-eye','view-bands'])$(id).addEventListener('change',()=>{save();schedule(0);});
+  for(const id of ['view-fov','view-eye','view-bands','view-radius','view-ridges'])$(id).addEventListener('change',()=>{save();schedule(0);});
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&picking){delete points._first;setPicking(null);status('');}});
   bearingLabel();
 
