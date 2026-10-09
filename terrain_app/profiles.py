@@ -123,10 +123,11 @@ def bearing_direction(terrain, point, bearing):
     return vector/np.linalg.norm(vector)
 
 
-def viewpoint(terrain, point, bearing=0.0, fov=120.0, eye_m=2.0, samples=None, min_radius_m=0.0):
+def viewpoint(terrain, point, bearing=0.0, fov=120.0, eye_m=2.0, samples=None, min_radius_m=0.0, max_radius_m=0.0):
     """The skyline seen from a point: for each direction across the field of view, the highest elevation angle of the
     terrain inside the frame, with the earth's curvature and standard refraction applied. Terrain nearer than
-    min_radius_m is left out, as if the foreground were cleared away.
+    min_radius_m is left out, as if the foreground were cleared away; terrain farther than max_radius_m (0: none, out to
+    the horizon) is cut off, so the skyline, bands, and ridges end there.
 
     Returns azimuths (compass degrees, left to right), skyline angles (degrees), the distance (m) of the terrain that
     forms the skyline, a per-step angle table for depth bands, the step distances, and the farthest distance seen."""
@@ -153,11 +154,18 @@ def viewpoint(terrain, point, bearing=0.0, fov=120.0, eye_m=2.0, samples=None, m
     angles[:, distances < min_radius_m] = -np.inf
     if not np.isfinite(angles).any():
         raise ValueError("Nothing lies beyond the minimum distance inside the generated area. Lower it, or generate a larger area.")
+    if max_radius_m:
+        if max_radius_m <= min_radius_m:
+            raise ValueError("The cutoff distance must be farther than the minimum distance.")
+        angles[:, distances > max_radius_m] = -np.inf
+        if not np.isfinite(angles).any():
+            raise ValueError("Nothing lies within the cutoff distance. Raise it, or move the viewpoint.")
     horizon = angles.max(axis=1)
     farthest = float(distances[np.isfinite(angles).any(axis=0)].max())
     horizon = np.where(np.isfinite(horizon), horizon, -90.0)
     return {"azimuths": azimuths, "angles": horizon, "skyline_m": distances[angles.argmax(axis=1)],
-            "table": angles, "steps": distances, "farthest": farthest, "min_radius_m": float(min_radius_m), "eye_m": eye, "start": start,
+            "table": angles, "steps": distances, "farthest": farthest, "min_radius_m": float(min_radius_m), "max_radius_m": float(max_radius_m or 0),
+            "eye_m": eye, "start": start,
             "directions": directions}
 
 
@@ -276,13 +284,14 @@ def skyline_profile(angles, fov):
 
 
 def view_ray_ends(view, terrain):
-    """Frame coordinates of the field of view's edge rays where they leave the frame (for drawing the wedge)."""
+    """Frame coordinates of the field of view's edge rays where they leave the frame, or reach the cutoff distance (for
+    drawing the wedge)."""
     ends = []
     for direction in (view["directions"][0], view["directions"][-1]):
         origin, best = view["start"]*(terrain.width, terrain.height), 0.0
         for distance in view["steps"]:
             uv = (origin+direction*distance)/(terrain.width, terrain.height)
-            if not ((uv >= 0) & (uv <= 1)).all():
+            if not ((uv >= 0) & (uv <= 1)).all() or (view.get("max_radius_m") and distance > view["max_radius_m"]):
                 break
             best = distance
         ends.append(((origin+direction*best)/(terrain.width, terrain.height)).tolist())
@@ -300,6 +309,7 @@ def profile_options(value):
     result = {"mode": "viewpoint", "point": location(value.get("point"), "viewpoint")}
     for name, default, low, high, message in (
             ("min_radius_m", 0.0, 0, 50000, "The minimum distance must be between 0 and 50,000 meters."),
+            ("max_radius_m", 0.0, 0, 500000, "The cutoff distance must be between 0 (the horizon) and 500,000 meters."),
             ("bearing", 0.0, 0, 360, "The view direction must be a compass bearing from 0 to 360 degrees."),
             ("fov", 120.0, 10, 360, "The field of view must be between 10 and 360 degrees."),
             ("eye_m", 2.0, 0, 500, "The eye height must be between 0 and 500 meters above the ground.")):
@@ -330,14 +340,15 @@ def profile_json(terrain, request):
                 "distances": np.round(ridge["distances"], 2).tolist(), "heights": np.round(ridge["heights"], 2).tolist(),
                 "length_m": round(ridge["length"], 1),
                 "highest_m": round(float(ridge["heights"].max()), 1), "lowest_m": round(float(ridge["heights"].min()), 1)}
-    view = viewpoint(terrain, request["point"], request["bearing"], request["fov"], request["eye_m"], min_radius_m=request["min_radius_m"])
+    view = viewpoint(terrain, request["point"], request["bearing"], request["fov"], request["eye_m"], min_radius_m=request["min_radius_m"],
+                     max_radius_m=request["max_radius_m"])
     edges, found = band_edges(request["bands"]), []
     if request["ridges"]:
         found = ridges(view, request["bands"])
         bands = [np.round(ridge["angles"], 3).tolist() for ridge in found]
     else:
         bands = [np.round(band(view, edges[index], edges[index+1]), 3).tolist() for index in range(request["bands"])] if request["bands"] > 1 else []
-    return {"mode": "viewpoint", "min_radius_m": request["min_radius_m"],
+    return {"mode": "viewpoint", "min_radius_m": request["min_radius_m"], "max_radius_m": request["max_radius_m"],
             "ridges": [{**{key: round(ridge[key], 3 if key == "coverage" else 1) for key in ("distance_m", "near_m", "far_m", "coverage")},
                         "paths": crest_paths(view, ridge, terrain)} for ridge in found], "azimuths": np.round(view["azimuths"], 3).tolist(), "angles": np.round(view["angles"], 3).tolist(),
             "skyline_m": np.round(view["skyline_m"], 1).tolist(), "bands": bands, "band_edges": edges,

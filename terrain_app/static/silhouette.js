@@ -349,7 +349,8 @@ export function createSilhouette(ctx) {
       if(!drawn(s.source))body.source='true';
       else if(s.source==='ridgeline')Object.assign(body,{ridge_start:profile.start,ridge_end:profile.end});
       else {
-        Object.assign(body,{view_point:profile.point,view_bearing:profile.bearing,view_fov:profile.fov,view_eye_m:profile.eye_m,view_min_radius_m:profile.min_radius_m||0});
+        Object.assign(body,{view_point:profile.point,view_bearing:profile.bearing,view_fov:profile.fov,view_eye_m:profile.eye_m,view_min_radius_m:profile.min_radius_m||0,
+          view_max_radius_m:profile.max_radius_m||0});
         // A viewpoint's layers are its detected ridges (the server ignores their positions), or distance bands, nearer bands
         // narrower (as profiles.band_edges), nearest at the front.
         if(ridgePlan(s)?.ridges)body.view_ridges=true;
@@ -405,7 +406,11 @@ export function createSilhouette(ctx) {
     const thicknesses=(data.zones?.length?data.zones:data.layers).map(layer=>layer.thickness_mm),thinnest=Math.min(...thicknesses),thickest=Math.max(...thicknesses);
     return `${number(data.width_mm)} × ${number(data.height_mm)} × ${thinnest===thickest?number(thickest):`${number(thinnest)}–${number(thickest)}`} mm`;
   }
-  const pieceWords=data=>data.zones?.length?`1 piece · ${data.zones.length} color zones`:data.layers.length>1?`${data.layers.length} layers`:'1 piece';
+  // The cloud background is a decorative panel, not a terrain layer.
+  function pieceWords(data) {
+    const terrain=data.layers.filter(layer=>layer.kind!=='cloud').length,clouds=terrain<data.layers.length?' + clouds':'';
+    return data.zones?.length?`1 piece · ${data.zones.length} color zones`:`${terrain>1?`${terrain} layers`:'1 piece'}${clouds}`;
+  }
   function partsSummary() {
     const parts=result.parts,layers=parts.filter(part=>/^(Layer|Silhouette)/.test(part.name)).length,zones=result.zones?.length||0;
     const clouds=result.layers.some(layer=>layer.kind==='cloud');

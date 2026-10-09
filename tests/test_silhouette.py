@@ -595,6 +595,12 @@ def test_ridge_layers_in_a_box_and_their_errors():
         outline_json(terrain, SilhouetteOptions.from_dict(ridge_glow(view_min_radius_m=3000)))
     beyond = outline_json(terrain, SilhouetteOptions.from_dict(ridge_glow(2, view_min_radius_m=3000)))
     assert [round(layer["distance_m"]/1000) for layer in beyond["layers"]] == [5, 8]
+    # Out to: the layered glow ends at the cutoff, so the farthest ridge is no layer.
+    cut = outline_json(terrain, SilhouetteOptions.from_dict(ridge_glow(2, view_max_radius_m=6000)))
+    assert [round(layer["distance_m"]/1000) for layer in cut["layers"]] == [2, 5] and cut["view_farthest_m"] <= 6000
+    with pytest.raises(ValueError, match="Only 2 separate ridges"):
+        outline_json(terrain, SilhouetteOptions.from_dict(ridge_glow(view_max_radius_m=6000)))
+    assert SilhouetteOptions.from_dict(ridge_glow()).view_max_radius_m == 0
 
 
 def test_distance_bands_honor_the_minimum_distance():

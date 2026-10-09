@@ -119,6 +119,7 @@ class SilhouetteOptions:
     view_fov: float = 120.0
     view_eye_m: float = 2.0
     view_min_radius_m: float = 0.0  # terrain nearer than this is left out of the view
+    view_max_radius_m: float = 0.0  # terrain farther than this is cut off (0: out to the horizon)
     view_ridges: bool = False  # several layers are the detected ridgelines, nearest first, instead of distance bands
     color_by_distance: bool = False  # layers take distance_colors in contiguous groups, nearest first; fit parts and feet the farthest used
     distance_colors: tuple = DISTANCE_COLORS  # 1–4 colors, nearest first
@@ -243,9 +244,10 @@ class SilhouetteOptions:
         elif picked["source"] == "viewpoint":
             view = profile_options({"mode": "viewpoint", "point": value.get("view_point"), "bearing": value.get("view_bearing", 0.0),
                                     "fov": value.get("view_fov", 120.0), "eye_m": value.get("view_eye_m", 2.0),
-                                    "min_radius_m": value.get("view_min_radius_m", 0.0), "ridges": value.get("view_ridges", False)})
+                                    "min_radius_m": value.get("view_min_radius_m", 0.0), "max_radius_m": value.get("view_max_radius_m", 0.0),
+                                    "ridges": value.get("view_ridges", False)})
             drawn = {"view_point": view["point"], "view_bearing": view["bearing"], "view_fov": view["fov"], "view_eye_m": view["eye_m"],
-                     "view_min_radius_m": view["min_radius_m"], "view_ridges": view["ridges"]}
+                     "view_min_radius_m": view["min_radius_m"], "view_max_radius_m": view["max_radius_m"], "view_ridges": view["ridges"]}
             # Detected ridges set their own distances; distance bands go by the layers' positions.
             if not view["ridges"] and [layer[0] for layer in parsed] != sorted(layer[0] for layer in parsed):
                 raise ValueError("A viewpoint's layers are distance bands: give each layer a farther distance than the one in front.")
@@ -507,14 +509,15 @@ def profile_heights(terrain, options, position=None, sources=None, skyline=None)
 
 def view_layers(terrain, options):
     """A viewpoint's layers, front to back: each one's skyline angles (degrees per direction), its distance (m), and the
-    detected ridges used (None for bands). Terrain nearer than view_min_radius_m is left out.
+    detected ridges used (None for bands). Terrain nearer than view_min_radius_m is left out, and terrain farther than
+    view_max_radius_m (when set) is cut off.
 
     One layer is the whole skyline. Several are the detected ridgelines (view_ridges: layer i is the i-th nearest; their
     positions are ignored) or distance bands: terrain between the layer in front's distance and its own (percent of the
     farthest terrain seen), whose distance is the band's geometric middle. Directions where a layer holds no terrain sit
     just below the lowest skyline, so the shared datum stays near the view."""
     view = viewpoint(terrain, options.view_point, options.view_bearing, options.view_fov, options.view_eye_m,
-                     min_radius_m=options.view_min_radius_m)
+                     min_radius_m=options.view_min_radius_m, max_radius_m=options.view_max_radius_m)
     specs = layer_specs(options)
     seen = view["angles"][view["angles"] > -90]
     floor = (float(seen.min()) if len(seen) else 0.0)-1

@@ -444,6 +444,31 @@ def test_ridges_finds_separate_ridgelines_nearest_first():
     assert [round(ridge["distance_m"]/1000) for ridge in beyond] == [5, 8] and beyond[0]["near_m"] == 3000
 
 
+def test_cutoff_distance_ends_the_view():
+    """Out to: terrain farther than the cutoff is gone from the skyline, the bands, the ridges, and the map wedge; 0 is the horizon."""
+    terrain = three_ridges()
+    point = to_point(.05, .5)
+    full = viewpoint(terrain, point, bearing=90, fov=60, eye_m=2.0)
+    near = viewpoint(terrain, point, bearing=90, fov=60, eye_m=2.0, max_radius_m=6000)
+    assert near["farthest"] <= 6000 < full["farthest"] and near["max_radius_m"] == 6000
+    assert near["angles"].max() < full["angles"].max(), "The tallest, farthest ridge is cut off"
+    assert [round(ridge["distance_m"]/1000) for ridge in ridges(near, 3)] == [2, 5]
+    assert viewpoint(terrain, point, bearing=90, fov=60, eye_m=2.0, max_radius_m=0)["farthest"] == full["farthest"]
+    with pytest.raises(ValueError, match="farther than the minimum"):
+        viewpoint(terrain, point, bearing=90, fov=60, eye_m=2.0, min_radius_m=3000, max_radius_m=2000)
+    request = profile_options({"mode": "viewpoint", "point": [36.1, -82.1]})
+    assert request["max_radius_m"] == 0
+    with pytest.raises(ValueError, match="cutoff distance"):
+        profile_options({"mode": "viewpoint", "point": [36.1, -82.1], "max_radius_m": -1})
+    request = profile_options({"mode": "viewpoint", "point": point, "bearing": 90, "fov": 60, "max_radius_m": 6000, "bands": 2})
+    data = profile_json(terrain, request)
+    assert data["max_radius_m"] == 6000 and data["farthest_m"] <= 6000
+    wide = profile_json(terrain, request | {"max_radius_m": 0.0})
+    start = np.asarray(data["point"])
+    reach = lambda rays: max(np.hypot(*((np.asarray(end)-start)*(terrain.width, terrain.height))) for end in rays)
+    assert reach(data["rays"]) <= 6000+1 < reach(wide["rays"]), "The map wedge stops at the cutoff"
+
+
 def test_viewpoint_at_the_frame_edge_sees_inward():
     """A summit on the frame's edge is a common viewpoint: directions that leave the frame see nothing, the rest work."""
     heights = np.full((60, 80), 100, dtype=np.float32)

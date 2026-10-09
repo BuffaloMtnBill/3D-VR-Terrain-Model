@@ -197,7 +197,10 @@ into 1–5 distance bands. For each bearing the skyline is the highest elevation
 angle; the chart plots degrees above horizontal against bearing, with nearer
 bands in darker shades. The dashed wedge on the map shows the field of view.
 **Beyond** (everything, 250 m–10 km) leaves out terrain nearer than that, as if
-the foreground were cleared. **Detect ridges** replaces the bands with up to 7
+the foreground were cleared. **Out to** (Horizon by default, or 1–50 km) cuts off
+terrain farther than that: the skyline, the bands, the detected ridges, and the
+layered glow and diorama designs built from them end at that distance, and the
+wedge on the map stops there. **Detect ridges** replaces the bands with up to 7
 ridgelines found in the view: visible crests with hidden ground behind them,
 grouped by distance (groups at least ~16 % farther apart, so one ridge seen at a
 slant stays one), nearest first; the status lists their distances.
@@ -367,7 +370,7 @@ distance band, nearest ridges at the front, with nearer bands narrower. When the
 geography page has **Detect ridges** on, the layered presets use the detected
 ridges instead: one layer per ridge (the layer count follows them within the
 preset's limits; with fewer ridges than its minimum it falls back to bands), and
-terrain nearer than **Beyond** is left out either way. **Thicker when closer**
+terrain nearer than **Beyond** and farther than **Out to** is left out either way. **Thicker when closer**
 (on by default for the Layered glow and the Layered mountain diorama when the
 source is a viewpoint) sets each layer's thickness by its distance on a log
 scale, from **Nearest** (3 mm) to **Farthest** (1.5 mm for the lamp, 1.2 mm for
