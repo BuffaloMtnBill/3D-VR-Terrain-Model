@@ -164,3 +164,8 @@ label.route-option { justify-content: flex-start; }
 .colors-elsewhere .text-button{color:var(--tan);font-size:10px;text-decoration:underline;padding:0}
 @media(max-width:650px){.feature-option{grid-template-columns:1fr auto}}
 @media(max-width:620px){.colors-elsewhere{grid-column:span 2}}
+.view-sector-label span { display: inline-block; transform: translate(-50%, -130%); padding: 2px 6px; border-radius: 4px; background: #1d140ae6; color: #ffd28a; font: 600 10px/1.3 var(--sans); white-space: nowrap; box-shadow: 0 1px 4px #0007; }
+/* Viewpoint ridgeline crests on the map: a slow glow pulse, staggered nearest first (delay set per line). */
+@keyframes ridge-pulse { 0%, 100% { stroke-width: 5px; stroke-opacity: 1; } 50% { stroke-width: 8px; stroke-opacity: .55; } }
+.ridge-pulse { animation: ridge-pulse 1.8s ease-in-out infinite; filter: drop-shadow(0 0 3px rgba(255, 240, 200, .55)); }
+@media (prefers-reduced-motion: reduce) { .ridge-pulse { animation: none; } }

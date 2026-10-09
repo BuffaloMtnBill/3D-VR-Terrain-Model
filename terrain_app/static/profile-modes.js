@@ -1,14 +1,15 @@
 /* Profile modes beyond the straight slice: a ridgeline between two points, or the skyline seen from a viewpoint.
  * Points are latitude/longitude, picked on the map and dragged to adjust; the server (profiles.py) finds the
  * highest way between the points, or casts rays from the viewpoint across the generated terrain. */
-import {locationFraction,sampleLocation} from './selection-geometry.js';
+import {locationFraction,sampleLocation,selectionCorners} from './selection-geometry.js';
 
 const $=id=>document.getElementById(id);
 const COMPASS=['N','NE','E','SE','S','SW','W','NW'];
 const compass=degrees=>COMPASS[Math.round((((degrees%360)+360)%360)/45)%8];
 const storageKey='terrain-profile-mode';
 // Viewpoint ridgeline: each ridge's line, nearest brightest.
-const RIDGE_LINES=['#ffe3a3','#f0c27a','#cfa76f','#a99a78','#8d927f','#767f72','#646c62'];
+// Hot to cool, so near and far ridges read apart at a glance on the map and the chart.
+const RIDGE_LINES=['#ff4d2e','#ff9a1f','#ffe14a','#7be36b','#3fd3ff','#4f8bff','#b77bff'];
 const BAND_COLORS=['#2f4a36','#4f6d4f','#7d9673','#aebd9e','#d8dfc8'];  // nearest (darkest) to farthest (palest)
 
 export function createProfileModes(ctx) {
@@ -52,24 +53,51 @@ export function createProfileModes(ctx) {
     markers[key].setLatLng(points[key]);
     if(!map.hasLayer(markers[key]))markers[key].addTo(map);
   }
+  // A point `meters` away along a compass bearing (great circle), for the view sector.
+  function destination([lat,lng],bearing,meters) {
+    const radians=Math.PI/180,d=meters/6371008.8,a=bearing*radians,p1=lat*radians;
+    const p2=Math.asin(Math.sin(p1)*Math.cos(d)+Math.cos(p1)*Math.sin(d)*Math.cos(a));
+    const l2=lng*radians+Math.atan2(Math.sin(a)*Math.sin(d)*Math.cos(p1),Math.cos(d)-Math.sin(p1)*Math.sin(p2));
+    return [p2/radians,l2/radians];
+  }
+  // The field of view as a dark sector from Beyond (or the viewpoint) out to Out to, drawn from the controls so it follows
+  // every change at once; under Horizon it reaches the farthest terrain seen, or the frame's farthest corner.
+  function viewSector(group) {
+    const point=points.point,map=ctx.map,bounds=ctx.state.data?.bounds;
+    if(!point||!map)return;
+    const bearing=Number($('view-bearing').value),fov=Number($('view-fov').value),near=Number($('view-radius').value),far=Number($('view-far').value);
+    const corners=bounds?selectionCorners(bounds).map(corner=>map.distance(point,[corner.lat,corner.lng])):[0];
+    const reach=far||(result?.mode==='viewpoint'&&result.farthest_m)||Math.max(...corners);
+    if(!(reach>near))return;
+    const steps=Math.max(8,Math.round(fov/2)),arc=radius=>Array.from({length:steps+1},(_,index)=>destination(point,bearing-fov/2+fov*index/steps,radius));
+    const outer=arc(reach),inner=near?arc(near).reverse():(fov>=360?[]:[point]);
+    const style={color:'#140d05',weight:2.5,opacity:.9,fillColor:'#140d05',fillOpacity:.5,interactive:false};
+    L.polygon(inner.length?[...outer,...inner]:outer,style).addTo(group);
+    L.polyline(outer,{color:'#ffb354',weight:2.5,opacity:.95,interactive:false}).addTo(group);  // the Out to limit
+    if(near)L.polyline(arc(near),{color:'#ffb354',weight:1.5,opacity:.8,dashArray:'5 5',interactive:false}).addTo(group);  // Beyond
+    const u=ctx.units(),label=far?`${ctx.number(far/u.distance,far<u.distance?2:1)} ${u.distanceLabel}`:`Horizon · ${ctx.number(reach/u.distance,1)} ${u.distanceLabel}`;
+    L.marker(destination(point,bearing,reach),{interactive:false,keyboard:false,
+      icon:L.divIcon({className:'view-sector-label',html:`<span>${label}</span>`,iconSize:null})}).addTo(group);
+  }
   function drawMap() {
     const map=ctx.map;if(!map)return;
     overlay?.remove();overlay=null;
     const ridge=mode==='ridgeline',view=viewing();
     if(ridge){marker('start','A');marker('end','B');}else{markers.start?.remove();markers.end?.remove();}
     if(view)marker('point','◉','viewpoint');else markers.point?.remove();
+    overlay=L.layerGroup().addTo(map);
+    if(view)viewSector(overlay);
     const bounds=ctx.state.data?.bounds;
     if(!bounds||!result||result.mode!==serverMode())return;
     const at=([u,v])=>{const p=sampleLocation(bounds,u,v);return [p.lat,p.lng];};
-    overlay=L.layerGroup().addTo(map);
     if(ridge)L.polyline(result.path.map(at),{color:'#ffb354',weight:3,opacity:.95,interactive:false}).addTo(overlay);
-    else {
-      const origin=at(result.point);
-      L.polygon([origin,...result.rays.map(at)],{color:'#ffb354',weight:1.5,dashArray:'4 4',fillColor:'#ffb354',fillOpacity:mode==='viewridge'?.05:.12,interactive:false}).addTo(overlay);
-      // Where each ridgeline seen from the viewpoint runs on the ground.
-      if(mode==='viewridge')result.ridges.forEach((found,index)=>found.paths.forEach(path=>
-        L.polyline(path.map(at),{color:RIDGE_LINES[index%RIDGE_LINES.length],weight:3,opacity:.95,interactive:false}).addTo(overlay)));
-    }
+    // Where each ridgeline seen from the viewpoint runs on the ground, over a dark casing so it stands out on the map.
+    // Each ridge pulses in turn, nearest first, so the lines read as a wave moving away from the viewer.
+    else if(mode==='viewridge')result.ridges.forEach((found,index)=>found.paths.forEach(path=>{
+      L.polyline(path.map(at),{color:'#0b100c',weight:9,opacity:.8,interactive:false,lineCap:'round'}).addTo(overlay);
+      const line=L.polyline(path.map(at),{color:RIDGE_LINES[index%RIDGE_LINES.length],weight:5,opacity:1,interactive:false,lineCap:'round',className:'ridge-pulse'}).addTo(overlay);
+      line.getElement()?.style.setProperty('animation-delay',`${index*.35}s`);
+    }));
   }
 
   // ---------- picking on the map ----------
@@ -230,6 +258,7 @@ export function createProfileModes(ctx) {
   function setMode(value) {
     mode=value;$('profile-mode').value=mode;
     $('profile-slice-controls').hidden=mode!=='slice';$('profile-ridge-controls').hidden=mode!=='ridgeline';$('profile-view-controls').hidden=!viewing();$('view-ridges-label').hidden=mode==='viewridge';
+    if(mode==='viewridge'&&Number($('view-bands').value)<2)$('view-bands').value='3';  // three ridgelines by default, unless 2+ were chosen
     if(mode==='slice'){setPicking(null);status('');$('profile-units-note').textContent=`Heights in ${ctx.units().name} above sea level`;}
     else if(!ready())setPicking(viewing()?'viewpoint':mode);
     save();ctx.sliceVisible(mode==='slice');drawMap();schedule(0);ctx.redraw();ctx.changed?.();
@@ -240,8 +269,8 @@ export function createProfileModes(ctx) {
   $('profile-mode').addEventListener('change',event=>setMode(event.target.value));
   $('profile-pick-ridge').addEventListener('click',()=>{delete points._first;setPicking(picking==='ridgeline'?null:'ridgeline');});
   $('profile-pick-view').addEventListener('click',()=>setPicking(picking==='viewpoint'?null:'viewpoint'));
-  $('view-bearing').addEventListener('input',()=>{facingByHand=true;bearingLabel();save();schedule();});
-  for(const id of ['view-fov','view-eye','view-bands','view-radius','view-far','view-ridges'])$(id).addEventListener('change',()=>{save();schedule(0);});
+  $('view-bearing').addEventListener('input',()=>{facingByHand=true;bearingLabel();save();drawMap();schedule();});
+  for(const id of ['view-fov','view-eye','view-bands','view-radius','view-far','view-ridges'])$(id).addEventListener('change',()=>{save();drawMap();schedule(0);});
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&picking){delete points._first;setPicking(null);status('');}});
   bearingLabel();
 
