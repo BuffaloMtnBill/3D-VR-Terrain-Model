@@ -1,0 +1,55 @@
+/* Silhouette design page: one profile slice as a flat piece (markup in index.html, behavior in silhouette.js).
+ * It reuses the 3D model design page's layout classes from studio.css; the id-scoped rules there are repeated here. */
+.design-buttons{display:flex;flex-direction:column;gap:8px;margin-top:15px}
+.design-buttons .button.full{margin-top:0}
+
+#silhouette{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;border-radius:0;background:var(--paper);box-shadow:none;overflow:hidden}
+#silhouette[open]{display:flex;flex-direction:column}
+#silhouette::backdrop{background:var(--paper)}
+#silhouette[aria-busy=true] button:disabled{cursor:wait}
+#silhouette h3{font-size:11px;font-weight:650;letter-spacing:.4px;color:var(--tan);margin:0 0 11px;display:flex;align-items:center;gap:8px}
+#silhouette label{font-size:10px;color:var(--ink)}
+#silhouette p{margin:0}
+#silhouette .studio-body{grid-template-columns:280px minmax(0,1fr) 300px}
+#silhouette input[type=number],#silhouette select,#silhouette input:not([type]){padding:7px 8px;font-size:11px}
+#silhouette input:not([type]){width:100%;margin-top:5px}
+#silhouette .studio-inline select{max-width:62%}
+#silhouette input[type=range]{width:100%;margin:2px 0 0}
+.silhouette-range{display:flex;align-items:center;justify-content:space-between;margin:12px 0 2px}
+.silhouette-range output{font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}
+.silhouette-slice-label{font-size:10px;color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}
+
+.silhouette-view{display:flex;align-items:center;justify-content:center}
+#silhouette-svg{display:block;width:100%;height:100%}
+.silhouette-3d{position:absolute;inset:0}
+.silhouette-3d canvas{display:block;width:100%;height:100%;touch-action:none}
+#silhouette-svg .sil-grid line{stroke:#5a6748;stroke-opacity:.35;vector-effect:non-scaling-stroke;stroke-width:1}
+#silhouette-svg .sil-body{stroke:#fee0b0;stroke-opacity:.75;stroke-width:1.2;vector-effect:non-scaling-stroke}
+#silhouette-svg .sil-text{vector-effect:non-scaling-stroke}
+#silhouette-svg .sil-foot{fill:#876749;fill-opacity:.55;stroke:#c8a774;stroke-dasharray:4 3;stroke-width:1;vector-effect:non-scaling-stroke}
+#silhouette-svg .sil-dimension line{stroke:#a9ae99;stroke-width:1;vector-effect:non-scaling-stroke}
+#silhouette-svg .sil-label{fill:#c9c6ad;font-family:var(--sans)}
+
+.silhouette-exports{margin:12px 0 8px!important}
+.silhouette-exports button{padding:9px 9px!important;gap:4px!important}
+.silhouette-exports button strong{font-size:12px!important}
+.silhouette-status{min-height:15px;line-height:1.5;font-size:11px;color:var(--sage)}
+.silhouette-status.error{color:#ffb391}
+.silhouette-credits{color:var(--tan);display:inline-block;margin-top:6px}
+
+@media(max-width:1180px){#silhouette .studio-body{grid-template-columns:240px minmax(0,1fr) 270px}}
+@media(max-width:900px){
+  #silhouette{overflow-y:auto}
+  #silhouette[open]{display:block}
+  #silhouette .studio-heading{order:2;flex-basis:100%}
+  #silhouette .studio-bar{flex-wrap:wrap;gap:10px;padding:10px 14px}
+  #silhouette .studio-body{display:flex;flex-direction:column}
+  #silhouette .studio-center{order:0;height:min(58vh,480px);flex-shrink:0}
+  #silhouette .studio-left{order:1;border-right:0;border-top:1px solid var(--line);overflow:visible}
+  #silhouette .studio-right{order:2;border-left:0;border-top:1px solid var(--line);overflow:visible}
+  #silhouette .studio-view-hint{display:none}
+}
+@media(max-width:480px){
+  #silhouette .studio-toolbar{gap:6px;padding:6px 8px}
+  #silhouette .studio-checks{top:auto;bottom:8px;right:8px;left:8px;width:auto;max-height:34%}
+}

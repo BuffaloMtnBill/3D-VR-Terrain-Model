@@ -6,6 +6,7 @@ import {rotationAngle,selectionCorners,sampleLocation,geographicExtent,mercatorP
 import {buildFeatures,buildRoute,disposeFeatures,featureLabels,filterFeatures} from './feature-layers.js';
 import {paintSurface,coverLabels} from './print-palette.js';
 import {createStudio} from './print-studio.js';
+import {createSilhouette} from './silhouette.js';
 
 const $ = id => document.getElementById(id);
 const presets = {};
@@ -18,7 +19,7 @@ const paletteStops = {
 const ramps = Object.fromEntries(Object.entries(paletteStops).map(([key, stops]) => [key, stops.map(hex => new THREE.Color(hex))]));
 const state = {selection:null, selectionError:null, palette:'alpine', view:'relief', mapStyle:'terrain', data:null, id:null, loading:false, name:'', surfaceVersion:0};
 let map, mapLayer, selectionFrame, profileMapLine, renderer, scene, camera, perspective, orthographic, controls, sun, grid, model, topMesh, baseMesh, mapTexture, featureGroup;
-let toastTimer, sceneReady = false, lastMapError = 0, studio = null;
+let toastTimer, sceneReady = false, lastMapError = 0, studio = null, silhouette = null;
 let featureData=null,featureRequest=null,featureError=null,zipRequest=null,placeRequest=null;
 let waterSourceChosen=false;
 const featureCache=new Map();
@@ -387,7 +388,7 @@ function buildScene(reset=false) {
   updateProfileMapLine();
   if(reset) resetCamera();
   $('scene-detail').textContent=`${columns} × ${rows} points · ${number((rows-1)*(columns-1)*2)} surface faces${rotationAngle(data.bounds)?` · ${number(rotationAngle(data.bounds),1)}° selection`:''}`;
-  studio?.modelChanged();
+  studio?.modelChanged();silhouette?.modelChanged();
 }
 
 function contourInterval(range) {
@@ -565,7 +566,7 @@ function rebuildFeatures() {
     catch(error) {featureError=error.message;}
   }
   featureStatus();
-  studio?.modelChanged();
+  studio?.modelChanged();silhouette?.modelChanged();
 }
 
 function syncFeatureVisibility() {
@@ -862,7 +863,7 @@ function rebuildRoute() {
     routeMesh=buildRoute(routeLines,state.data,options(),$('route-color').value,Number($('route-width').value),SCALE);
     if(routeMesh)model.add(routeMesh);
   }
-  studio?.modelChanged();
+  studio?.modelChanged();silhouette?.modelChanged();
 }
 async function ensureRouteLines() {
   if(!route||!state.id)return;
@@ -947,6 +948,9 @@ const studioContext={
   get meshes(){return {topMesh,baseMesh,featureGroup,routeGroup:routeMesh};},
   options,printColors,featureStyles,featuresEnabled,routeOptions,notify,download,exportGLB,prepareExport,updatePrintPalette,updateExportDimensions,
 };
+
+// The silhouette design page reads even less: the slice controls it shares, the relief settings, units, and colors.
+const silhouetteContext={get state(){return state;},options,notify,download,units,printColors};
 
 async function screenshot() {
   if(!sceneReady||!state.data) return notify('Generate a terrain preview first.',true);
@@ -1155,6 +1159,8 @@ function wireControls() {
   $('help-button').addEventListener('click',()=>$('help-dialog').showModal());
   studio=createStudio(studioContext);
   $('export-button').addEventListener('click',()=>{if(!state.data)return notify('Generate terrain before exporting.',true);updateExportDimensions();updatePrintPalette();studio.open();});
+  silhouette=createSilhouette(silhouetteContext);
+  $('silhouette-button').addEventListener('click',()=>{if(!state.data)return notify('Generate terrain before designing a silhouette.',true);silhouette.open();});
   $('export-size').addEventListener('input',()=>{updateExportDimensions();rebuildRoute();});
   document.querySelectorAll('[data-palette]').forEach(button=>button.addEventListener('click',()=>{
     state.palette=button.dataset.palette;

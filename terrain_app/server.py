@@ -24,6 +24,7 @@ from .printing import export_3mf
 from .addons import BALL_COLOR, catalog as studio_catalog, check_project, platform_top, project_options, text_outline
 from .studio import marker_ball_file, marker_platform_file, studio_export, studio_format
 from .hydrography import HydrographyClient, HYDROGRAPHY_URL, water_source
+from .silhouette import SilhouetteOptions, outline_json, silhouette_export
 from .routes import MAX_GPX_BYTES, RouteStore, public_route, route_lines, route_options, with_route
 
 ROOT = Path(__file__).parent
@@ -538,6 +539,25 @@ def create_app(test_config=None):
         if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
             raise ValueError("Choose a six-digit hex color for the marker platform.")
         content, mimetype, filename = marker_platform_file(request.args.get("format", "stl"), color.lower())
+        return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True, download_name=filename)
+
+    # Silhouette design page: one profile slice as a flat ridgeline piece. Small and fast, so answered synchronously.
+    @app.post("/api/silhouette/<identifier>/outline")
+    def silhouette_outline(identifier):
+        terrain = find_terrain(identifier)
+        if terrain is None:
+            return jsonify(error="Terrain is unavailable. Generate the area again."), 404
+        return jsonify(outline_json(terrain, SilhouetteOptions.from_dict(request.get_json())))
+
+    @app.post("/api/silhouette/<identifier>/export")
+    def silhouette_file(identifier):
+        terrain = find_terrain(identifier)
+        if terrain is None:
+            return jsonify(error="Terrain is unavailable. Generate the area again."), 404
+        payload = request.get_json()
+        options = SilhouetteOptions.from_dict(payload)
+        attribution = (ROOT / "data" / "ATTRIBUTION.txt").read_text(encoding="utf-8")
+        content, mimetype, filename = silhouette_export(terrain, options, payload.get("format", "stl"), attribution)
         return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True, download_name=filename)
 
     @app.post("/api/routes")

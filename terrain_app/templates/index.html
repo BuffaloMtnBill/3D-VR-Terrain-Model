@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='studio.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='silhouette.css') }}">
   <script type="importmap">{"imports":{"three":"/static/vendor/three.module.js"}}</script>
   <script src="{{ url_for('static', filename='vendor/leaflet.js') }}" defer></script>
   <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
@@ -26,7 +27,7 @@
 
   <main class="workspace">
     <aside class="sidebar" aria-label="Terrain settings">
-      <div class="intro"><span class="eyebrow">STEP 1 OF 2</span><h1>Geography selection</h1><p>Find a place. Frame it. <br>Make the landscape your own.</p></div>
+      <div class="intro"><span class="eyebrow">STEP 1</span><h1>Geography selection</h1><p>Find a place. Frame it. <br>Make the landscape your own.</p></div>
       <section class="control-section">
         <div class="section-label"><h2>Your landscape</h2></div>
         <label for="place">Famous landscapes</label>
@@ -75,7 +76,7 @@
 
 
 
-      <section class="export-section"><div class="section-label"><h2>Design and export</h2></div><p>Add markers, plaques, and holders, then export.</p><button id="export-button" class="button secondary full">Open the design page <span aria-hidden="true">→</span></button><div class="export-formats">STL &nbsp; / &nbsp; OBJ &nbsp; / &nbsp; GLB &nbsp; / &nbsp; HEIGHTMAP</div></section>
+      <section class="export-section"><div class="section-label"><h2>Design and export</h2></div><p>Print the whole landscape with markers, plaques, and holders, or cut one ridgeline as a flat silhouette.</p><div class="design-buttons"><button id="export-button" class="button secondary full">3D model design <span aria-hidden="true">→</span></button><button id="silhouette-button" class="button secondary full" title="The elevation profile slice as a flat piece to print, laser cut, or stand on a desk">Silhouette design <span aria-hidden="true">→</span></button></div><div class="export-formats">STL &nbsp; / &nbsp; 3MF &nbsp; / &nbsp; OBJ &nbsp; / &nbsp; GLB &nbsp; / &nbsp; SVG</div></section>
       <div class="sidebar-foot">Real places. Real elevation.<br><a href="https://www.openstreetmap.org/fixthemap" target="_blank" rel="noopener">Report a map issue ↗</a></div>
     </aside>
 
@@ -159,7 +160,7 @@
   <dialog id="studio" aria-labelledby="studio-title">
     <header class="studio-bar">
       <button id="studio-back" type="button" class="button secondary studio-back" aria-label="Back to the geography selection page"><span aria-hidden="true">←</span> Geography selection</button>
-      <div class="studio-heading"><span class="eyebrow">STEP 2 OF 2 · DESIGN</span><h2 id="studio-title">Your landscape</h2><span id="studio-dimensions" class="studio-dimensions"></span></div>
+      <div class="studio-heading"><span class="eyebrow">STEP 2 · 3D MODEL DESIGN</span><h2 id="studio-title">Your landscape</h2><span id="studio-dimensions" class="studio-dimensions"></span></div>
       <div class="studio-projects" role="group" aria-label="Projects for this area">
         <label for="studio-project" class="sr-only">Project</label><select id="studio-project"></select>
         <button type="button" class="button secondary" data-project-action="new" title="New empty project">New</button>
@@ -238,6 +239,76 @@
           <div id="export-status" role="status"></div>
           <div class="export-extras"><button type="button" data-export="metadata" class="text-button">Optional settings & coordinates (JSON) ↓</button><a id="export-credits" class="text-button" href="/api/attribution?download=1" download="terrain-credits.txt">Source credits (TXT) ↓</a></div>
           <details class="studio-about"><summary>About the formats</summary><p class="dialog-note">Each button downloads one file. Models use the current elevation multiplier and base; the size sets the longest horizontal edge. 3MF requires the Print palette and at most four distinct colors across surfaces, enabled features, add-on colors, and nail markers (balls, platforms, and platform tops); assign its color parts to your filaments in the slicer. 3MF includes selected features as surface inlays and raised buildings. GLB includes selected map features and their colors. STL and OBJ contain terrain geometry and add-ons. Heightmaps and arrays preserve original elevations. GLB uses meters. Add-on cuts pass through every part, including map features.</p></details>
+        </section>
+      </aside>
+    </div>
+  </dialog>
+
+  <dialog id="silhouette" aria-labelledby="silhouette-title">
+    <header class="studio-bar">
+      <button id="silhouette-back" type="button" class="button secondary studio-back" aria-label="Back to the geography selection page"><span aria-hidden="true">←</span> Geography selection</button>
+      <div class="studio-heading"><span class="eyebrow">STEP 2 · SILHOUETTE DESIGN</span><h2 id="silhouette-title">Your landscape</h2><span id="silhouette-dimensions" class="studio-dimensions"></span></div>
+    </header>
+    <div class="studio-body">
+      <aside class="studio-left" aria-label="Slice and shape">
+        <section class="studio-card"><h3>Slice</h3>
+          <label class="studio-inline" for="silhouette-direction">Direction <select id="silhouette-direction"><option value="ew">West → East</option><option value="ns">North → South</option></select></label>
+          <div class="silhouette-range"><label for="silhouette-position">Position across the frame</label><output id="silhouette-position-value">50%</output></div>
+          <input id="silhouette-position" type="range" min="0" max="100" step="1" value="50">
+          <div class="silhouette-range"><label for="silhouette-trim-start">Print from</label><output id="silhouette-trim-start-value">0%</output></div>
+          <input id="silhouette-trim-start" type="range" min="0" max="95" step="1" value="0">
+          <div class="silhouette-range"><label for="silhouette-trim-end">Print to</label><output id="silhouette-trim-end-value">100%</output></div>
+          <input id="silhouette-trim-end" type="range" min="5" max="100" step="1" value="100">
+          <span id="silhouette-slice-note" class="small-hint">Shares its slice with the geography selection page's elevation profile.</span>
+        </section>
+        <section class="studio-card"><h3>Shape</h3>
+          <label class="studio-inline" for="silhouette-width">Width (mm) <input id="silhouette-width" type="number" min="40" max="400" step="1" value="180"></label>
+          <label class="studio-inline" for="silhouette-vertical">Vertical scale (×) <input id="silhouette-vertical" type="number" min="0.5" max="10" step="0.1" value="2"></label>
+          <label class="studio-inline" for="silhouette-base">Base height (mm) <input id="silhouette-base" type="number" min="2" max="40" step="0.5" value="8"></label>
+          <label class="studio-inline" for="silhouette-thickness">Thickness (mm) <input id="silhouette-thickness" type="number" min="1.2" max="30" step="0.2" value="4"></label>
+          <div class="silhouette-range"><label for="silhouette-smoothing">Smoothing</label><output id="silhouette-smoothing-value">0%</output></div>
+          <input id="silhouette-smoothing" type="range" min="0" max="100" step="5" value="0">
+          <label class="studio-inline" for="silhouette-source">Heights <select id="silhouette-source"><option value="true">True elevation</option><option value="shaped">Model's elevation profile</option></select></label>
+          <label class="studio-check" for="silhouette-mirror"><input id="silhouette-mirror" type="checkbox"> Mirror (flip left and right)</label>
+          <span class="small-hint">The vertical scale multiplies true proportions at this width; 1× is the land's real shape.</span>
+        </section>
+      </aside>
+      <section class="studio-center" aria-label="Silhouette preview">
+        <div class="studio-toolbar">
+          <div class="view-tabs studio-views" role="group" aria-label="Silhouette view"><button type="button" data-silhouette-view="front" aria-pressed="true" class="active">Front</button><button type="button" data-silhouette-view="3d" aria-pressed="false">3D</button></div>
+          <span id="silhouette-slice-label" class="silhouette-slice-label"></span>
+        </div>
+        <div id="silhouette-view" class="studio-view silhouette-view">
+          <svg id="silhouette-svg" role="img" aria-label="The silhouette piece, front view, to scale"></svg>
+          <div id="silhouette-3d" class="silhouette-3d" hidden></div>
+          <div id="silhouette-checks" class="studio-checks" aria-live="polite"><strong>Checks</strong><ul id="silhouette-check-list"><li class="info">Loading the slice…</li></ul></div>
+          <div class="studio-view-hint" id="silhouette-view-hint">Front view to scale · the grid is 10 mm</div>
+        </div>
+      </section>
+      <aside class="studio-right" aria-label="Text, mounting, and export">
+        <section class="studio-card"><h3>Text</h3>
+          <label for="silhouette-text">Caption on the base</label><input id="silhouette-text" maxlength="60" autocomplete="off" placeholder="No text">
+          <label class="studio-inline" for="silhouette-text-style">Style <select id="silhouette-text-style"><option value="engrave">Engraved</option><option value="emboss">Raised (emboss)</option><option value="stencil">Cut through (stencil)</option></select></label>
+          <label class="studio-inline" for="silhouette-text-size">Size (mm, capitals) <input id="silhouette-text-size" type="number" min="2" max="30" step="0.5" value="5"></label>
+          <label class="studio-inline" for="silhouette-text-depth">Depth (mm) <input id="silhouette-text-depth" type="number" min="0.2" max="5" step="0.1" value="0.8"></label>
+          <label class="studio-inline" for="silhouette-text-align">Position <select id="silhouette-text-align"><option value="left">Left</option><option value="center" selected>Center</option><option value="right">Right</option></select></label>
+          <label class="studio-inline" for="silhouette-text-color">Text color (3MF) <input id="silhouette-text-color" type="color" value="#f0ead6"></label>
+        </section>
+        <section class="studio-card"><h3>Mounting</h3>
+          <label class="studio-inline" for="silhouette-mount">Mount <select id="silhouette-mount"><option value="none">None</option><option value="stand">Desk stand (two feet)</option><option value="holes">Two wall holes</option><option value="keyholes">Two keyholes</option></select></label>
+          <div id="silhouette-hole-block" hidden><label class="studio-inline" for="silhouette-hole">Hole diameter (mm) <input id="silhouette-hole" type="number" min="2" max="10" step="0.5" value="4"></label></div>
+          <span id="silhouette-mount-hint" class="small-hint"></span>
+        </section>
+        <section class="studio-card studio-export"><h3>Export</h3>
+          <label class="studio-inline" for="silhouette-body-color">Body color (3MF) <input id="silhouette-body-color" type="color" value="#234e40"></label>
+          <div class="export-choices silhouette-exports">
+            <button type="button" data-silhouette-export="stl"><strong>STL <span>↓</span></strong><span>One solid, lying flat</span></button>
+            <button type="button" data-silhouette-export="3mf"><strong>3MF <span>↓</span></strong><span>Body and text as color parts</span></button>
+            <button type="button" data-silhouette-export="svg"><strong>SVG <span>↓</span></strong><span>Outline in mm for laser or vinyl</span></button>
+            <button type="button" data-silhouette-export="json"><strong>Settings <span>↓</span></strong><span>These choices as JSON</span></button>
+          </div>
+          <div id="silhouette-status" class="silhouette-status" role="status"></div>
+          <a class="text-button silhouette-credits" href="/api/attribution?download=1" download="terrain-credits.txt">Source credits (TXT) ↓</a>
         </section>
       </aside>
     </div>

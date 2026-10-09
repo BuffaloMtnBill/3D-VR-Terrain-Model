@@ -73,8 +73,10 @@ environment removes those too), and leaves downloaded data in the
 
 ## Use
 
-Terrain Studio has two pages: the **geography selection page**, where you find, frame,
-and style a place, and the **design page**, where you add markers and other add-ons and export.
+Terrain Studio starts on the **geography selection page**, where you find, frame, and style a place.
+Its **Design and export** section opens one of two design pages: **3D model design**, where you add
+markers and other add-ons to the whole landscape and export it, and **Silhouette design**, where one
+elevation-profile slice becomes a flat ridgeline piece to print, laser cut, or stand on a desk.
 
 1. Pick a preset, **search for an address, city, or place name**, or enter a
    **US ZIP code** (five digits or ZIP+4). The search box zooms to fit the place
@@ -107,7 +109,7 @@ and style a place, and the **design page**, where you add markers and other add-
    The **Elevation multiplier**, **Base thickness**, and **Contour lines**
    controls sit below Terrain detail and update the model immediately.
 4. Use the right-hand **Make it yours** panel, which is always open, to adjust the
-   palette and map features. **Open the design page** stays in the left sidebar. Orbit with the mouse, scroll to zoom, and
+   palette and map features. The **3D model design** and **Silhouette design** buttons stay in the left sidebar. Orbit with the mouse, scroll to zoom, and
    use the camera reset or auto-rotate buttons. Under **Map features**, check
    roads, train tracks, water, or buildings. **Boundaries** opens a submenu for
    borders, city boundaries, and park boundaries; **Trails** opens one for the AT
@@ -229,7 +231,7 @@ as the model's zero-height reference. Retain source attribution when sharing.
 
 ## Design page add-ons
 
-**Open the design page** (the Print Studio) opens a full-page workspace where a *project* (several named projects per framed area)
+**3D model design** (the Print Studio) opens a full-page workspace where a *project* (several named projects per framed area)
 adds parametric add-ons to the printed model: holes, nail markers, pencil holders, photo
 slots, pockets, coaster recesses, stand grooves, magnet pockets and wall hangers in the
 underside, plaques (flatten, level or raise a pad, with optional engraved or raised text),
@@ -281,6 +283,36 @@ API: `GET /api/studio/catalog` (add-on types and parameters), `POST /api/studio/
 returns JSON mesh parts at a coarser grid), `GET /api/studio/marker-ball?format=stl|3mf|blend`, and
 `GET /api/studio/marker-platform?format=stl|3mf|blend` (both take `&color=` for the 3MF).
 `POST /api/export/<id>` also accepts an optional `project`.
+
+## Silhouette design page
+
+**Silhouette design** turns the elevation profile's slice into a flat piece: the ridgeline on top
+of a solid base strip, shown to scale in a front view (and a 3D view you can orbit). Its direction
+and position sliders are the geography selection page's own profile controls, so the chart and the
+dashed line on the map follow them; **Print from** and **Print to** keep only part of the slice.
+
+- **Shape:** width (the piece's length, 40–400 mm; the printed part of the slice fills it), vertical
+  scale (× true proportions at that width; it starts at the elevation multiplier), base height under the
+  lowest point, thickness, smoothing (a moving average plus a simplification that drops points), true
+  elevations or the model's shaped elevation profile, and mirror.
+- **Text:** a one-line caption on the base (DejaVu Sans Bold, starting as the place name), engraved,
+  raised from the front face, or cut through as a stencil (thin bridges keep the insides of O, A, and e
+  attached), at the left, center, or right.
+- **Mounting:** a desk stand (two feet with a slot the thickness plus 0.2 mm wide, printed beside the
+  piece in the same file), two round wall holes, or two keyholes.
+- **Exports:** STL (one solid, lying flat with its front face up), 3MF (the body, the text when engraved
+  or raised, and the stand as colored parts), SVG (the outline, wall holes, and text as paths in
+  millimeters for laser cutting or vinyl), and the settings as JSON. Checks list the size, the lowest
+  point, text that is trimmed or too small, and pieces larger than a 256 mm bed.
+
+Settings are saved in the browser for each framed area. The API is
+`POST /api/silhouette/<id>/outline` (the preview: outline, text, and mount marks in mm, x from 0 at
+the left and y up, with size and warnings) and `POST /api/silhouette/<id>/export` with the same JSON
+body plus `format` (`stl`, `3mf`, `svg`, or `json`), `thickness_mm`, `body_color`, and `text_color`.
+The body takes `direction` (`ew` or `ns`), `position` and `trim` (percent), `width_mm`,
+`vertical_scale`, `base_mm`, `smoothing`, `source` (`true` or `shaped`, with `relief` and
+`relief_strength`), `mirror`, `text`, `text_size`, `text_style` (`engrave`, `emboss`, `stencil`),
+`text_depth`, `text_align`, `mount` (`none`, `stand`, `holes`, `keyholes`), and `hole_diameter`.
 
 ## Elevation source and geographic limits
 
@@ -507,6 +539,8 @@ land-cover regions for tests and never alters the production app on port 8000. S
 to the Playwright package directory if it is installed outside this project.
 Run `node tests/browser-water.cjs` against the same server to verify USGS/OSM
 switching, cached sources, saved preferences, and late-response handling.
+`node tests/browser-studio.cjs` covers the 3D model design page and `node tests/browser-silhouette.cjs`
+the silhouette design page (the shared slice, text and mount settings, STL and SVG downloads, saved settings).
 Set `TERRAIN_CHROMIUM_PATH` when using an existing Chromium executable.
 The test intercepts map, ZIP, and feature requests with fixtures, exercises ZIP
 navigation and errors, two-point alignment with mouse/touch, cancellation,
