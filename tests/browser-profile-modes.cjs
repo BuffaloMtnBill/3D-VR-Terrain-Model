@@ -6,6 +6,7 @@ const assert=require('node:assert/strict');
 
 const url=process.env.TERRAIN_TEST_URL||'http://127.0.0.1:8019';
 const errors=[];
+let outlineAfter;
 
 (async()=>{
   const browser=await chromium.launch({
@@ -17,6 +18,7 @@ const errors=[];
   try {
     const context=await browser.newContext({viewport:{width:1500,height:950}});
     const page=await context.newPage();
+    outlineAfter=test=>page.waitForResponse(r=>/\/api\/silhouette\/[^/]+\/outline$/.test(r.url())&&test(r.request().postDataJSON()||{}));
 
     page.on('pageerror',error=>errors.push(error.message));
     page.on('console',msg=>{if(msg.type()==='error')errors.push(msg.text())});
@@ -167,6 +169,27 @@ const errors=[];
     await page.locator('[data-silhouette-export="stl"]').click();
     const body=(await exported).postDataJSON();await download;
     assert.deepEqual([body.view_ridges,body.thickness_by_distance,body.layers.length],[true,true,found.length]);
+    // The same ridges as color zones of one flat piece: stepped, each zone its distance color, exported as a 3MF.
+    assert.equal(await page.locator('#silhouette-pieces-block').isHidden(),false,'One piece is offered for a viewpoint\'s ridges');
+    const zoned=outlineAfter(body=>body.color_zones===true);
+    await page.locator('#silhouette-pieces').selectOption('zones');
+    const zoneOutline=await (await zoned).json();
+    assert.ok(zoneOutline.zones.length>=2&&zoneOutline.layers.length===1,'One piece with a zone per showing ridge');
+    assert.deepEqual(zoneOutline.zones.map(zone=>zone.thickness_mm)[0],3,'The nearest zone is the thickest');
+    await page.waitForFunction(count=>document.querySelectorAll('#silhouette-svg path.sil-zone').length===count,zoneOutline.zones.length);
+    assert.equal(await page.locator('#silhouette-spacing-block').isHidden(),true,'The comb spacing steps aside for one piece');
+    assert.match(await page.locator('#silhouette-parts').innerText(),/Silhouette with lamp tab[\s\S]*Zone 1 \(nearest\) · ridge [\d.]+ mi · 3\.0 mm · color #/);
+    assert.match(await page.locator('#silhouette-filaments').innerText(),/^[234] of 4 filament colors$/);
+    assert.equal(await page.locator('#silhouette-color-distance').isDisabled(),true,'Zones always use the distance colors');
+    const zoneExport=page.waitForRequest(r=>/\/api\/silhouette\/[^/]+\/export$/.test(r.url())&&r.postDataJSON()?.format==='3mf');
+    const zoneDownload=page.waitForEvent('download');
+    await page.locator('[data-silhouette-export="3mf"]').click();
+    const zoneBody=(await zoneExport).postDataJSON(),saved=await zoneDownload;
+    assert.equal(zoneBody.color_zones,true);assert.equal(zoneBody.distance_colors.length,4);
+    assert.ok(zoneBody.distance_colors.every(color=>/^#[0-9a-f]{6}$/.test(color)));
+    assert.match(saved.suggestedFilename(),/silhouette\.3mf$/);
+    assert.equal(await page.locator('#silhouette-status').innerText(),'Your file has been downloaded.');
+    await page.locator('#silhouette-pieces').selectOption('layers');
     await page.locator('#silhouette-back').click();
     await page.waitForTimeout(300);
 

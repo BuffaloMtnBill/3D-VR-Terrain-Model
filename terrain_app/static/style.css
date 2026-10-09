@@ -157,3 +157,10 @@ label.route-option { justify-content: flex-start; }
 .aligning-profile, .aligning-profile .leaflet-interactive { cursor: crosshair !important; }
 .profile-check { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .profile-check input { width: 12px; height: 12px; margin: 0; accent-color: var(--sage); }
+
+/* Map layers sidebar: colors moved to the design pages' Colors card, so feature rows have no swatch column. */
+.feature-option{grid-template-columns:1fr auto}
+.colors-elsewhere{margin:0 0 4px}
+.colors-elsewhere .text-button{color:var(--tan);font-size:10px;text-decoration:underline;padding:0}
+@media(max-width:650px){.feature-option{grid-template-columns:1fr auto}}
+@media(max-width:620px){.colors-elsewhere{grid-column:span 2}}

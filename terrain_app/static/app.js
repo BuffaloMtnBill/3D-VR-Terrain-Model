@@ -467,16 +467,20 @@ function updatePrintPalette() {
   const count=new Set([...Object.values(printColors()),...Object.values(featureStyles()).filter(style=>style.enabled).map(style=>style.color),...routeColors()]).size;
   $('print-color-count').textContent=count<=4?`${count} distinct colors including enabled features · ready for a four-color printer.`:`${count} distinct colors including enabled features · share palette and feature colors to fit four filaments.`;
   $('print-color-count').classList.toggle('error',count>4);
-  $('print-summary').textContent=`${surfaceCount} surface colors · ${count} total with enabled features.`;
+  $('print-summary').textContent=`${surfaceCount} surface colors.`;
   $('print-controls').hidden=state.palette!=='print';
-  $('print-feature-color-count').hidden=state.palette!=='print';
-  $('print-feature-color-count').textContent=`3MF: ${count} / 4 filament colors across surfaces and enabled features.`;
-  $('print-feature-color-count').classList.toggle('error',count>4);
   $('contours').disabled=state.palette==='print';
+  // The Colors card (3D model design page) dims colors of layers that are off and shows the route color only with a route.
+  const styles=featureStyles();
+  document.querySelectorAll('[data-color-row]').forEach(row=>row.classList.toggle('off',!styles[row.dataset.colorRow]?.enabled));
+  $('route-color-row').hidden=!route;$('route-color-row').classList.toggle('off',!routeShown());
   // A disabled button cannot explain itself on click, so the button says why 3MF is unavailable.
   // Add-on fill colors and marker balls from the design page project also need filaments.
-  const printCount=new Set([...Object.values(printColors()),...Object.values(featureStyles()).filter(style=>style.enabled).map(style=>style.color),...routeColors(),...(studio?.extraColors()||[])]).size;
-  const unavailable=state.palette!=='print'?'Select the Print palette to enable':printCount>4?`${printCount} colors · share colors to fit four filaments`:'';
+  const printCount=new Set([...Object.values(printColors()),...Object.values(styles).filter(style=>style.enabled).map(style=>style.color),...routeColors(),...(studio?.extraColors()||[])]).size;
+  $('print-feature-color-count').hidden=state.palette!=='print';
+  $('print-feature-color-count').textContent=`3MF: ${printCount} / 4 filament colors across surfaces, enabled features${route?', the route':''}, and add-ons.`;
+  $('print-feature-color-count').classList.toggle('error',printCount>4);
+  const unavailable=state.palette!=='print'?'Choose the Print palette under Colors to enable':printCount>4?`${printCount} colors · share colors to fit four filaments`:'';
   document.querySelector('[data-export="3mf"]').disabled=Boolean(unavailable);
   $('export-3mf-hint').textContent=unavailable||'Print palette · separate solid color parts';
   $('cover-status').classList.toggle('error',Boolean(coverError));
@@ -978,7 +982,7 @@ function updateSelectionParameters() {
 
 const styleDefaultsKey='terrain-style-defaults';
 function styleInputs() {
-  return [...document.querySelectorAll('#terrain-controls input[id], #terrain-controls select[id], #style-editor input[id], [data-print-color]')];
+  return [...document.querySelectorAll('#terrain-controls input[id], #terrain-controls select[id], #style-editor input[id], [data-feature-color], [data-print-color]')];
 }
 const controlValues=inputs=>Object.fromEntries(inputs.map(input=>[input.id,input.type==='checkbox'?input.checked:input.type==='range'?Number(input.value):input.value]));
 // Only well-formed values for existing controls are applied; anything else keeps its current setting.
@@ -997,9 +1001,9 @@ function applyControls(inputs,saved) {
   for(const name of ['roads','water'])$(`detail-${name}-value`).textContent=`${$(`detail-${name}`).value}%`;
 }
 
-// The right-hand column: palette, map features, their colors and detail, and the print palette.
+// The right-hand Map layers column plus the design page's Colors card: palette, feature colors, and the print palette (not the route color, saved with the route).
 function renderingInputs() {
-  return [...document.querySelectorAll('#style-editor input[id], [data-print-color]')];
+  return [...document.querySelectorAll('#style-editor input[id], [data-feature-color], [data-print-color]')];
 }
 function renderingSettings() {
   return {palette:state.palette,controls:controlValues(renderingInputs())};
@@ -1053,7 +1057,7 @@ function reloadSurface() {
 
 function wireControls() {
   // Keep the copyable parameters in step with the rendering settings.
-  for(const type of ['input','change','click'])for(const id of ['style-sidebar','print-palette-dialog'])$(id).addEventListener(type,updateSelectionParameters);
+  for(const type of ['input','change','click'])for(const id of ['style-sidebar','studio-colors'])$(id).addEventListener(type,updateSelectionParameters);
   $('relief-method').addEventListener('change',reloadSurface);
   $('relief-strength').addEventListener('input',updateReliefControls);
   $('relief-strength').addEventListener('change',reloadSurface);
@@ -1125,8 +1129,6 @@ function wireControls() {
   } catch { /* Saved colors are optional. */ }
   restoreStyleDefaults();
   updatePrintPalette();
-  $('edit-print-palette').addEventListener('click',()=>$('print-palette-dialog').showModal());
-  $('apply-print-palette').addEventListener('click',()=>$('print-palette-dialog').close());
   $('cover-retry').addEventListener('click',()=>ensureCover(true).catch(()=>{}));
   document.querySelectorAll('[data-print-color]').forEach(input=>input.addEventListener('input',()=>{
     try{localStorage.setItem('terrain-print-palette',JSON.stringify(printColors()));}catch{/* Optional persistence. */}
@@ -1155,6 +1157,11 @@ function wireControls() {
   $('help-button').addEventListener('click',()=>$('help-dialog').showModal());
   studio=createStudio(studioContext);
   $('export-button').addEventListener('click',()=>{if(!state.data)return notify('Generate terrain before exporting.',true);updateExportDimensions();updatePrintPalette();studio.open();});
+  // Colors are chosen on the design page; the geography page's hint opens it at the Colors card.
+  $('open-colors').addEventListener('click',()=>{
+    $('export-button').click();
+    if($('studio').open){$('studio-colors').scrollIntoView({block:'start'});document.querySelector('[data-palette].active')?.focus({preventScroll:true});}
+  });
   silhouette=createSilhouette(silhouetteContext);
   $('silhouette-button').addEventListener('click',()=>{if(!state.data)return notify('Generate terrain before designing a silhouette.',true);silhouette.open();});
   $('export-size').addEventListener('input',()=>{updateExportDimensions();rebuildRoute();});
@@ -1163,9 +1170,10 @@ function wireControls() {
     document.querySelectorAll('[data-palette]').forEach(item=>{const active=item===button;item.classList.toggle('active',active);item.setAttribute('aria-pressed',String(active));});
     if(state.palette==='print') {
       if(state.view==='map')changeView('relief');
-      $('print-palette-dialog').showModal();ensureCover().catch(()=>{});
+      ensureCover().catch(()=>{});
     }
     updatePrintPalette();buildScene();
+    if(state.palette==='print')$('print-controls').scrollIntoView({block:'nearest'});
   }));
   document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>changeView(button.dataset.view)));
   $('exaggeration').addEventListener('input',()=>{$('exaggeration-value').textContent=`${Number($('exaggeration').value).toFixed(1)}×`;buildScene();updateExportDimensions();});

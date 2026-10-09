@@ -109,8 +109,8 @@ function routeGPX() {
     assert.equal(await page.locator('#silhouette-mount').inputValue(),'holes');
 
     // Start from: presets grouped under their headings.
-    assert.deepEqual(await page.locator('.silhouette-preset-heading').allInnerTexts(),['GLOW LAMPS','SHADOW BOXES','RACE PROFILE']);
-    assert.equal(await page.locator('[data-silhouette-preset]').count(),10);
+    assert.deepEqual(await page.locator('.silhouette-preset-heading').allInnerTexts(),['GLOW LAMPS','SHADOW BOXES','FLAT PIECES','RACE PROFILE']);
+    assert.equal(await page.locator('[data-silhouette-preset]').count(),11);
     assert.equal(await page.locator('#silhouette-fit-card').isVisible(),false,'Custom has no preset settings');
     // A glow lamp: layered panels in a comb base with the lamp-base slot fields.
     let next=outlineAfter(page,body=>body.preset==='glow-layers'&&body.fit==='lamp'&&body.layers?.length===3);

@@ -14,7 +14,8 @@ from terrain_app.printing import CORE
 from terrain_app.server import create_app
 from terrain_app.routes import prepare_route
 from terrain_app.silhouette import (FORMATS, MOUNTS, PRESET_DATA, PRESETS, TEXT_STYLES, SilhouetteOptions, Sources, layout, mesh, outline_json,
-                                    part_groups, profile_points, route_profile, silhouette_export, slice_heights, solids, view_layers, with_buildings)
+                                    part_groups, profile_points, route_profile, silhouette_export, slice_heights, solids, view_layers, with_buildings,
+                                    COLOR_LIMIT)
 
 FIXTURES = __import__("pathlib").Path(__file__).parent / "fixtures"
 
@@ -126,7 +127,8 @@ def test_stl_3mf_svg_and_json_files(terrain):
     objects = [item for item in model.findall("m:resources/m:object", ns) if item.find("m:mesh", ns) is not None]
     assert [item.attrib["name"] for item in objects] == ["Color 1: Silhouette", "Color 2: Text", "Color 3: Stand feet"]
     colors = [item.attrib["displaycolor"] for item in model.findall("m:resources/m:basematerials/m:base", ns)]
-    assert colors == ["#112233FF", "#FFFFFFFF", "#112233FF"]
+    assert colors == ["#112233FF", "#FFFFFFFF"]  # the stand feet share the body's material
+    assert [item.attrib["pindex"] for item in objects] == ["0", "1", "0"]
     stencil, _, _ = silhouette_export(terrain, options(text="ROAN", text_style="stencil"), "3mf", "credits")
     with ZipFile(BytesIO(stencil)) as archive:
         model = ET.fromstring(archive.read("3D/3dmodel.model"))
@@ -161,6 +163,12 @@ def test_stl_3mf_svg_and_json_files(terrain):
     ({"fit": "box", "layers": [{"position": 10, "thickness_mm": 50}]}, "Layer 1's thickness"),
     ({"fit": "lamp", "layer_spacing": 3.8, "thickness_mm": 2, "layers": [{"position": 10, "thickness_mm": 3}, {"position": 20}]}, "layers 1 and 2 \\(3 and 2 mm thick\\)"),
     ({"source": "viewpoint", "view_point": [36.1, -82.1], "view_min_radius_m": 60000}, "minimum distance"),
+    ({"color_by_distance": "on"}, "Color by distance must be true or false"), ({"distance_colors": []}, "one to four six-digit hex colors"),
+    ({"distance_colors": ["#000000"]*5}, "one to four"), ({"distance_colors": ["green"]}, "one to four"),
+    ({"color_zones": True, "fit": "lamp", "layers": [{"position": 10}, {"position": 20}]}, "Color zones need a viewpoint with at least two ridges or bands."),
+    ({"color_zones": True, "source": "viewpoint", "view_point": [36.1, -82.1]}, "Color zones need a viewpoint with at least two ridges or bands."),
+    ({"color_zones": True, "source": "viewpoint", "view_point": [36.1, -82.1], "fit": "box", "layers": [{"position": 30}, {"position": 100}]},
+     "Color zones make one piece; turn off the shadow-box fit or the zones."),
 ])
 def test_validation_errors_are_sentences(value, message):
     with pytest.raises(ValueError, match=message):
@@ -222,6 +230,8 @@ def preset_payload(name, route=None, **extra):
         positions = np.linspace(rule["high"], rule["low"], rule["count"])  # ew: the near (south) side is the front
         payload["layers"] = [{"position": float(position), "base_mm": payload["base_mm"]+index*rule["step"], "color": "#234e40"}
                              for index, position in enumerate(positions)]
+    if payload.get("source") == "viewpoint":  # the ridge test terrain's three ridges, as zones
+        payload |= VIEW | {"view_ridges": True, "layers": payload["layers"][:3]}
     if payload.get("source") == "route":
         payload["route_id"] = route["id"]
     if rules.get("caption"):
@@ -243,30 +253,32 @@ EXPECTED = {
     "box-chart": ["Silhouette", "Text", "Markings", "Spacer comb (left)", "Spacer comb (right)"],
     "box-anniversary": ["Silhouette", "Spacer comb (left)", "Spacer comb (right)"],
     "race": ["Silhouette", "Text", "Markings"],
+    "flat-zones": ["Zone 1 (nearest)", "Zone 2", "Zone 3 (farthest)", "Text", "Stand feet"],
 }
 
 
 def test_every_preset_is_listed_once():
     listed = [name for group in PRESET_DATA["groups"] for name in group["presets"]]
     assert sorted(listed+["custom"]) == sorted(PRESETS) and set(EXPECTED) == set(PRESETS)
-    assert [group["name"] for group in PRESET_DATA["groups"]] == ["Glow lamps", "Shadow boxes", "Race profile"]
+    assert [group["name"] for group in PRESET_DATA["groups"]] == ["Glow lamps", "Shadow boxes", "Flat pieces", "Race profile"]
 
 
 @pytest.mark.parametrize("name", PRESETS)
 def test_every_preset_makes_closed_named_parts(terrain, route, name):
     buildings = json.loads((FIXTURES / "features.json").read_text())["layers"]["buildings"]
     choice = SilhouetteOptions.from_dict(preset_payload(name, route))
+    terrain = ridge_terrain() if choice.source == "viewpoint" else terrain
     shapes = layout(terrain, choice, Sources(route, buildings))
     parts = solids(terrain, choice, shapes)
     assert [part for part, _, _ in parts] == EXPECTED[name], shapes["warnings"]
     for part, _, solid in parts:
         assert solid.status().name == "NoError" and solid.volume() > 0, part
         assert_closed(*mesh(solid))
-        if part not in ("Text", "Markings"):
+        if part not in ("Text", "Markings", "Stand feet") and not part.startswith("Zone"):  # two feet; a zone may show in several places
             assert len(solid.decompose()) == 1, part
     assert not [warning for warning in shapes["warnings"] if "trimmed" in warning or "need a base" in warning or "printer bed" in warning]
     # Parts lie side by side on the bed, never overlapping (inlays sit inside their own part).
-    boxes = [solid.bounding_box() for part, _, solid in parts if part not in ("Text", "Markings")]
+    boxes = [solid.bounding_box() for part, _, solid in parts if part not in ("Text", "Markings") and not part.startswith("Zone")]
     for index, a in enumerate(boxes):
         assert min(a[2], a[5]) >= -1e-6 or name == "custom"
         for b in boxes[index+1:]:
@@ -550,3 +562,105 @@ def test_distance_bands_honor_the_minimum_distance():
     assert [layer["thickness_mm"] for layer in data["layers"]] == [3, 1.5] and data["ridges"] == []
     single = view_layers(terrain, SilhouetteOptions.from_dict({k: v for k, v in payload.items() if k != "layers"} | {"view_min_radius_m": 1000}))
     assert len(single["angles"]) == 1 and single["angles"][0].max() == pytest.approx(cleared["angles"][1].max())
+
+
+# --- Colors by distance and color zones ----------------------------------------------------------------------
+
+def bases_and_objects(content):
+    with ZipFile(BytesIO(content)) as archive:
+        model = ET.fromstring(archive.read("3D/3dmodel.model"))
+    ns = {"m": CORE}
+    bases = [base.attrib["displaycolor"] for base in model.findall("m:resources/m:basematerials/m:base", ns)]
+    objects = [item for item in model.findall("m:resources/m:object", ns) if item.find("m:mesh", ns) is not None]
+    return bases, {item.attrib["name"].split(": ", 1)[1]: bases[int(item.attrib["pindex"])] for item in objects}
+
+
+PALE = ["#112233", "#445566", "#778899", "#aabbcc"]
+
+
+def test_distance_palette_groups_layers_nearest_first(terrain):
+    payload = preset_payload("box-diorama", color_by_distance=True, distance_colors=PALE, text_color="#aabbcc",
+                             layers=[{"position": p, "color": "#ff0000"} for p in (90, 78, 66, 54, 42, 30, 18)])
+    choice = SilhouetteOptions.from_dict(payload)
+    data = outline_json(terrain, choice)
+    # Seven layers in four contiguous groups, as even as possible, nearest (front) first; the combs take the farthest color.
+    assert [layer["color"] for layer in data["layers"]] == ["#112233"]*2+["#445566"]*2+["#778899"]*2+["#aabbcc"]
+    assert data["colors"] == PALE and not any("four colors" in warning for warning in data["warnings"])
+    bases, parts = bases_and_objects(silhouette_export(terrain, choice, "3mf", "credits")[0])
+    assert len(bases) == 4 and parts["Spacer comb (left)"] == "#AABBCCFF" and parts["Text"] == "#AABBCCFF"
+    assert parts["Layer 2 · 2.0 mm"] == parts["Layer 1 (front) · 2.0 mm"] == "#112233FF"
+    # Fewer layers than colors use the nearest ones; a caption in its own color would be a fifth filament.
+    two = outline_json(terrain, SilhouetteOptions.from_dict(payload | {"layers": payload["layers"][:2]}))
+    assert [layer["color"] for layer in two["layers"]] == ["#112233", "#445566"]
+    fifth = SilhouetteOptions.from_dict(payload | {"text_color": "#ffffff"})
+    assert COLOR_LIMIT in outline_json(terrain, fifth)["warnings"]
+    with pytest.raises(ValueError, match="Use at most four colors: share the text color with one of the distance colors."):
+        silhouette_export(terrain, fifth, "3mf", "credits")
+    assert silhouette_export(terrain, SilhouetteOptions.from_dict(payload | {"text_color": "#ffffff", "text_style": "stencil"}), "3mf", "credits")
+    # Off, every layer keeps its own color.
+    assert {layer["color"] for layer in outline_json(terrain, SilhouetteOptions.from_dict(payload | {"color_by_distance": False}))["layers"]} == {"#ff0000"}
+
+
+def zone_options(**extra):
+    return SilhouetteOptions.from_dict(VIEW | {"view_ridges": True, "color_zones": True, "thickness_by_distance": True, "thickness_near_mm": 4,
+                                               "thickness_far_mm": 1.6, "vertical_scale": 3, "text": "ROAN", "distance_colors": PALE, "text_color": "#aabbcc",
+                                               "layers": [{"position": 50}]*3} | extra)
+
+
+def test_color_zones_tile_one_stepped_piece():
+    terrain = ridge_terrain()
+    choice = zone_options()
+    shapes = layout(terrain, choice)
+    zones = shapes["zones"]
+    assert [zone["name"] for zone in zones] == ["Zone 1 (nearest)", "Zone 2", "Zone 3 (farthest)"] and len(shapes["layers"]) == 1
+    assert [zone["thickness"] for zone in zones][::2] == [4, 1.6] and 1.6 < zones[1]["thickness"] < 4
+    # The zones tile the piece: their areas add up to its outline, and none overlaps another.
+    assert sum(zone["polygon"].area for zone in zones) == pytest.approx(shapes["outline"].area, rel=1e-6)
+    for index, a in enumerate(zones):
+        for b in zones[index+1:]:
+            assert a["polygon"].intersection(b["polygon"]).area < 1e-6
+    assert zones[0]["polygon"].contains(shapes["text"])  # the caption sits on the nearest zone's base strip
+    parts = solids(terrain, choice, shapes)
+    assert [name for name, _, _ in parts] == ["Zone 1 (nearest)", "Zone 2", "Zone 3 (farthest)", "Text"]
+    for (name, _, solid), zone in zip(parts, zones):
+        assert solid.status().name == "NoError" and solid.bounding_box()[2] == pytest.approx(0)  # a shared flat back
+        assert solid.bounding_box()[5] == pytest.approx(zone["thickness"])  # stepped: nearer zones stand thicker
+        assert_closed(*mesh(solid))
+    for index, (_, _, a) in enumerate(parts[:3]):
+        for _, _, b in parts[index+1:3]:
+            assert (a ^ b).volume() < 1e-3
+    data = outline_json(terrain, choice)
+    assert [zone["thickness_mm"] for zone in data["zones"]] == [zone["thickness"] for zone in zones] and data["thickness_mm"] == 4
+    assert data["parts"] == [{"name": "Silhouette", "size": [180, pytest.approx(data["height_mm"], abs=.1), 4], "count": 1}]
+    assert data["colors"] == PALE  # three zones and the caption
+    # 3MF: one part per color; STL: one merged solid; SVG: a group per zone in its color.
+    bases, colors = bases_and_objects(silhouette_export(terrain, choice, "3mf", "credits")[0])
+    assert colors == {"Zone 1 (nearest)": "#112233FF", "Zone 2": "#445566FF", "Zone 3 (farthest)": "#778899FF", "Text": "#AABBCCFF"} and len(bases) == 4
+    stl, mimetype, _ = silhouette_export(terrain, choice, "stl", "credits")
+    assert mimetype == "model/stl"
+    from manifold3d import Manifold
+    merged = Manifold.batch_boolean([solid for _, _, solid in parts[:3]], __import__("manifold3d").OpType.Add)
+    assert len(merged.decompose()) == 1
+    svg = ET.fromstring(silhouette_export(terrain, choice, "svg", "credits")[0])
+    groups = [(item.attrib["id"], item[0].attrib["fill"]) for item in svg if item.tag.endswith("g")]
+    assert groups == [("zone-1", "#112233"), ("zone-2", "#445566"), ("zone-3", "#778899"), ("text", "#aabbcc")]
+    # Thicker when closer off: one thickness; two ridges sharing a color make one part.
+    flat = layout(terrain, zone_options(thickness_by_distance=False, thickness_mm=3))
+    assert {zone["thickness"] for zone in flat["zones"]} == {3}
+    shared = solids(terrain, zone_options(distance_colors=["#112233", "#445566"]))
+    assert [name for name, _, _ in shared] == ["Zones 1, 2", "Zone 3 (farthest)", "Text"]  # 2 + 1, nearest first
+
+
+def test_color_zones_with_the_lamp_tab_and_mounts():
+    terrain = ridge_terrain()
+    lamp = zone_options(fit="lamp", text_style="engrave", text_depth=.6)
+    data = outline_json(terrain, lamp)
+    assert data["fit"]["tab"] and data["fit"]["comb_base"] is None and data["parts"][0]["name"] == "Silhouette with lamp tab"
+    body = solids(terrain, lamp)[0][2]
+    assert body.bounding_box()[1] == pytest.approx(-8)  # the tab hangs from the nearest zone
+    for mount in ("holes", "keyholes", "stand"):
+        choice = zone_options(mount=mount, base_mm=16, distance_colors=PALE[:3])
+        for name, _, solid in solids(terrain, choice):
+            assert solid.status().name == "NoError", (mount, name)
+        if mount != "stand":
+            assert len(outline_json(terrain, choice)["outline"]["holes"]) == 2

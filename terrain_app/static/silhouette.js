@@ -3,7 +3,8 @@
  * combs, and race profiles with ticks and medal pegs. The server lays the design out (POST /api/silhouette/<id>/outline)
  * and builds its files; this module draws it to scale, keeps the slice in step with the geography selection page's
  * profile controls, and remembers settings per framed area. Layered designs from a viewpoint use the ridges the geography
- * page detected (one layer each, nearest at the front) and can print closer layers thicker.
+ * page detected (one layer each, nearest at the front) and can print closer layers thicker. Colors can follow distance (up to
+ * four filament colors, nearest first), and a viewpoint's ridges can instead be color zones of one flat piece.
  * app.js hands over a small context: state, route, options(), notify, download, units, printColors.
  */
 import * as THREE from 'three';
@@ -34,19 +35,22 @@ const INTEGERS=new Set(['layer_count','peg_count']);
 const CHOICES={source:['silhouette-source',['true','shaped','route','ridgeline','viewpoint']],text_style:['silhouette-text-style',['engrave','emboss','stencil']],
   text_align:['silhouette-text-align',['left','center','right']],mount:['silhouette-mount',['none','stand','holes','keyholes']]};
 const CHECKS={mirror:'silhouette-mirror',include_buildings:'silhouette-buildings',ticks:'silhouette-ticks',start_finish:'silhouette-start-finish',
-  summit_pin:'silhouette-pin',photo_slot:'silhouette-photo',led_channel:'silhouette-led',thickness_by_distance:'silhouette-thickness-distance'};
+  summit_pin:'silhouette-pin',photo_slot:'silhouette-photo',led_channel:'silhouette-led',thickness_by_distance:'silhouette-thickness-distance',
+  color_by_distance:'silhouette-color-distance'};
+const DISTANCE_IDS=[1,2,3,4].map(index=>`silhouette-distance-color-${index}`);
 const COLORS={text_color:'silhouette-text-color',body_color:'silhouette-body-color'};
 const DEFAULTS={width_mm:180,vertical_scale:2,base_mm:8,thickness_mm:4,smoothing:0,text_size:5,text_depth:.8,hole_diameter:4,source:'true',
   text_style:'engrave',text_align:'center',mount:'none',mirror:false,trim:[0,100],text:'',text_color:'#f0ead6',body_color:'#234e40',
   preset:'custom',fit:'none',slot_width:4,slot_length:160,slot_depth:8,slot_clearance:.2,box_width:200,box_height:150,box_depth:40,
   layer_count:1,layer_positions:[],layer_step:6,layer_spacing:6,include_buildings:false,building_corridor_m:30,ticks:false,tick_every:1,
   start_finish:false,peg_count:0,peg_diameter:6,peg_length:20,summit_pin:false,pin_diameter:1.8,pin_depth:10,photo_slot:false,photo_gap:1,
-  led_channel:false,led_width:5,led_depth:2,race_kind:'running',finish_time:'',thickness_by_distance:false,thickness_near_mm:3,thickness_far_mm:1.5};
+  led_channel:false,led_width:5,led_depth:2,race_kind:'running',finish_time:'',thickness_by_distance:false,thickness_near_mm:3,thickness_far_mm:1.5,
+  color_by_distance:false,distance_colors:['#234e40','#678272','#acb6a4','#f0ead6'],color_zones:false};
 // What a preset decides: choosing another preset (or Custom) resets these before applying its own. Slice, caption, colors, and the
 // lamp and box measurements are kept.
 const PRESET_OWNED=['fit','layer_count','layer_positions','layer_step','layer_spacing','include_buildings','ticks','tick_every','start_finish',
   'peg_count','summit_pin','photo_slot','led_channel','mount','text_style','text_depth','text_size','thickness_mm','base_mm','thickness_by_distance',
-  'thickness_near_mm','thickness_far_mm'];
+  'thickness_near_mm','thickness_far_mm','color_zones'];
 const CLIENT_ONLY=['layer_count','layer_positions','layer_step','race_kind','finish_time'];
 const MOUNT_HINTS={none:'',stand:'Two feet print beside the piece, each with a slot the thickness plus 0.2 mm wide; the piece stands upright in them.',
   holes:'Two holes through the base, for nails or screws.',keyholes:'Slide the piece down onto two screw heads. Keyholes need about 14 mm of height at each end.'};
@@ -80,7 +84,11 @@ export function createSilhouette(ctx) {
   const dialog=$('silhouette');
   let settings=structuredClone(DEFAULTS),storeKey=null,result=null,timer=null,request=null,view='front',busy=false,three=null,followed=null;
   const preset=()=>PRESETS.presets[settings.preset]||PRESETS.presets.custom;
-  const layered=()=>settings.fit!=='none'&&settings.layer_count>1;
+  // One piece in color zones: a viewpoint's ridges (or bands) on one base strip, each zone its own color; not in a shadow box.
+  const zonesAllowed=()=>settings.source==='viewpoint'&&drawn('viewpoint')&&settings.layer_count>1&&settings.fit!=='box';
+  const zoned=()=>settings.color_zones&&zonesAllowed();
+  const layered=()=>settings.layer_count>1&&(settings.fit!=='none'||zoned());
+  const distanceColored=()=>settings.color_by_distance||zoned();
   // Thicker when closer applies to a viewpoint's layers only.
   const byDistance=()=>layered()&&settings.thickness_by_distance&&settings.source==='viewpoint';
 
@@ -105,6 +113,8 @@ export function createSilhouette(ctx) {
     if(Array.isArray(saved.layer_positions))clean.layer_positions=saved.layer_positions.filter(Number.isFinite).slice(0,7).map(value=>clamp(value,0,100));
     if(['running','cycling'].includes(saved.race_kind))clean.race_kind=saved.race_kind;
     if(typeof saved.finish_time==='string')clean.finish_time=saved.finish_time.slice(0,20);
+    if(Array.isArray(saved.distance_colors)&&saved.distance_colors.length===4&&saved.distance_colors.every(isHex))clean.distance_colors=saved.distance_colors.map(color=>color.toLowerCase());
+    clean.color_zones=saved.color_zones===true;
     for(const name of INTEGERS)clean[name]=Math.round(clean[name]);
     if(clean.layer_count>1&&clean.layer_positions.length!==clean.layer_count)clean.layer_count=Math.max(1,clean.layer_positions.length);
     return clean;
@@ -121,6 +131,8 @@ export function createSilhouette(ctx) {
       const colors=ctx.printColors();
       settings={...structuredClone(DEFAULTS),vertical_scale:clamp(Number($('exaggeration').value)||2,.5,100),text:placeName().slice(0,60),
         body_color:isHex(colors.dark_foliage)?colors.dark_foliage:DEFAULTS.body_color,text_color:isHex(colors.snow)?colors.snow:DEFAULTS.text_color};
+      // Distance colors fade from the body color to the text color, so an engraved caption shares the farthest filament.
+      settings.distance_colors=[0,1/3,2/3,1].map(t=>mix(settings.body_color,settings.text_color,t));
     }
     writeForm();
   }
@@ -134,6 +146,8 @@ export function createSilhouette(ctx) {
     $('silhouette-trim-start').value=settings.trim[0];$('silhouette-trim-end').value=settings.trim[1];
     $('silhouette-layer-positions').value=settings.layer_positions.join(', ');
     $('silhouette-finish-time').value=settings.finish_time;
+    DISTANCE_IDS.forEach((id,index)=>{$(id).value=settings.distance_colors[index];});
+    $('silhouette-pieces').value=settings.color_zones?'zones':'layers';
     labels();
   }
   function readForm(changed=null) {
@@ -145,6 +159,7 @@ export function createSilhouette(ctx) {
     for(const [name,id] of Object.entries(CHECKS))settings[name]=$(id).checked;
     for(const [name,id] of Object.entries(COLORS))settings[name]=$(id).value.toLowerCase();
     settings.text=cleanText($('silhouette-text').value);settings.finish_time=$('silhouette-finish-time').value.slice(0,20);
+    settings.distance_colors=DISTANCE_IDS.map(id=>$(id).value.toLowerCase());settings.color_zones=$('silhouette-pieces').value==='zones';
     // The trim keeps at least 5% of the slice; the handle not being moved gives way.
     let start=Number($('silhouette-trim-start').value),end=Number($('silhouette-trim-end').value);
     if(end-start<5){if(changed==='silhouette-trim-end')start=Math.max(0,end-5);else end=Math.min(100,start+5);start=Math.min(start,end-5);}
@@ -188,7 +203,17 @@ export function createSilhouette(ctx) {
     $('silhouette-fit-card').hidden=!fields.size;
     $('silhouette-fit-title').textContent=current.name;
     document.querySelectorAll('[data-fit-block]').forEach(block=>{block.hidden=!fields.has(block.dataset.fitBlock);});
-    $('silhouette-spacing-block').hidden=settings.fit!=='lamp';
+    $('silhouette-spacing-block').hidden=settings.fit!=='lamp'||zoned();
+    $('silhouette-step-block').hidden=zoned();  // zones share one base strip
+    $('silhouette-layer-count-label').textContent=zoned()?'Zones (ridges)':'Layers';
+    // Colors: distance colors in use (fewer with fewer layers), and the one-piece choice where it applies.
+    const used=distanceColored()?Math.min(4,layered()?settings.layer_count:1):0;
+    DISTANCE_IDS.forEach((id,index)=>{$(id).disabled=index>=used;});
+    $(CHECKS.color_by_distance).disabled=zoned();
+    $('silhouette-pieces-block').hidden=!zonesAllowed();
+    $('silhouette-colors-hint').textContent=zoned()?'Color zones always use the distance colors: each ridge is the color of its distance group, nearest first.'
+      :distanceColored()?`Layers take these colors nearest first, in ${used} even groups; ${settings.fit==='none'?'stand feet':'the combs'} take the farthest one used.`
+      :'Each part prints in its own color.';
     $('silhouette-layer-count').min=current.rules?.layers?.min||2;$('silhouette-layer-count').max=current.rules?.layers?.max||7;
     $('silhouette-position').disabled=layered()||['route','ridgeline','viewpoint'].includes(settings.source);
     // Sizes of an option that is off stay visible but greyed out.
@@ -202,7 +227,8 @@ export function createSilhouette(ctx) {
     $('silhouette-thickness').disabled=byDistance();
     // A viewpoint's layers are set by distance (bands or detected ridges), not by slice positions.
     $('silhouette-layer-positions').disabled=viewpoint;
-    $('silhouette-layer-hint').textContent=`Each layer's base is a step higher than the one in front, so every ridge shows. The front layer is ${viewpoint?'the nearest to the viewpoint':'the frame\'s near side'}.`;
+    $('silhouette-layer-hint').textContent=zoned()?'One piece: each zone is what of a ridge (or band) shows above the nearer ones, all on one base strip; the nearest zone holds the caption.'
+      :`Each layer's base is a step higher than the one in front, so every ridge shows. The front layer is ${viewpoint?'the nearest to the viewpoint':'the frame\'s near side'}.`;
     $('silhouette-thickness-hint').textContent=!viewpoint?'Thicker when closer needs the viewpoint skyline as the heights; until then every layer is the Shape thickness.'
       :byDistance()?'Each layer\'s thickness follows its distance from the viewpoint, Nearest to Farthest.':'Every layer is the Shape thickness.';
     const colors=layerColors(settings.layer_count),swatches=$('silhouette-layer-swatches');swatches.replaceChildren();
@@ -213,7 +239,7 @@ export function createSilhouette(ctx) {
       ?`Route: ${route.name} · ${number(route.distance_m/u.distance,1)} ${u.distanceLabel}${route.has_elevation===false?' · no GPX elevations, so the terrain is sampled (the whole route must be framed)':''}`
       :'Upload a GPX route on the geography selection page to use its elevation profile. Until then the slice is used.';
     document.querySelectorAll('[data-race-kind]').forEach(button=>{const active=button.dataset.raceKind===settings.race_kind;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));});
-    const parts=(layered()?settings.layer_count:1)+(settings.fit==='lamp'&&layered()?1:settings.fit==='box'?2:0);
+    const parts=(layered()&&!zoned()?settings.layer_count:1)+(settings.fit==='lamp'&&layered()&&!zoned()?1:settings.fit==='box'?2:0);
     $('silhouette-stl-note').textContent=parts>1?`A ZIP of ${parts} STL parts`:'One solid, lying flat';
   }
   // Layer positions spread across the frame, front (the near side) first: looking north at a west → east slice the near side
@@ -224,8 +250,9 @@ export function createSilhouette(ctx) {
     const nearHigh=($('profile-direction').value==='ew')!==settings.mirror;
     return (nearHigh?values.reverse():values).map(value=>round(value,1));
   }
-  // Front darkest, back palest (the body color fading toward paper).
-  const layerColors=count=>Array.from({length:count},(_,index)=>count>1?mix(settings.body_color,'#f3eedf',index/(count-1)*.72):settings.body_color);
+  // Front darkest, back palest (the body color fading toward paper); by distance, contiguous groups take the distance colors, as the server does.
+  const layerColors=count=>Array.from({length:count},(_,index)=>distanceColored()?settings.distance_colors[Math.floor(index*Math.min(count,4)/count)]
+    :count>1?mix(settings.body_color,'#f3eedf',index/(count-1)*.72):settings.body_color);
   function caption(kind) {
     const route=ctx.route,u=ctx.units(),date=route?.date?longDate(route.date):'';
     const name=(route?.name||placeName()||'').slice(0,60);
@@ -296,6 +323,7 @@ export function createSilhouette(ctx) {
     const opts=ctx.options(),body={...structuredClone(settings),trim:[...settings.trim],direction:$('profile-direction').value,
       position:Number($('profile-position').value),relief:opts.relief,relief_strength:opts.relief_strength,units:ctx.state.units==='m'?'m':'ft'};
     for(const name of CLIENT_ONLY)delete body[name];
+    body.color_zones=zoned();
     if(layered()) {
       const colors=layerColors(settings.layer_count);
       body.layers=settings.layer_positions.slice(0,settings.layer_count).map((position,index)=>({position,base_mm:Math.min(120,settings.base_mm+index*settings.layer_step),color:colors[index]}));
@@ -356,8 +384,8 @@ export function createSilhouette(ctx) {
     }
   }
   function partsSummary() {
-    const parts=result.parts,layers=parts.filter(part=>/^(Layer|Silhouette)/.test(part.name)).length;
-    const words=[layers===1?'1 piece':`${layers} layers`];
+    const parts=result.parts,layers=parts.filter(part=>/^(Layer|Silhouette)/.test(part.name)).length,zones=result.zones?.length||0;
+    const words=[zones?`1 piece in ${zones} color zone${zones>1?'s':''}`:layers===1?'1 piece':`${layers} layers`];
     for(const part of parts.filter(part=>!/^(Layer|Silhouette)/.test(part.name)))words.push(part.count>1?`${part.count} ${part.name.toLowerCase()}s`:part.name.toLowerCase());
     return `Parts: ${words.join(', ')}`;
   }
@@ -371,12 +399,13 @@ export function createSilhouette(ctx) {
     if(settings.source==='route'&&!ctx.route)add('note','Upload a GPX route on the geography selection page to use its elevation profile; the slice is shown until then.');
     if(['ridgeline','viewpoint'].includes(settings.source)&&!drawn(settings.source))add('note',`Draw a ${settings.source==='ridgeline'?'ridgeline':'viewpoint skyline'} in the geography page's profile panel to use it; the slice is shown until then.`);
     const plan=ridgePlan(),u=ctx.units();
-    if(plan?.ridges) {
+    if(plan?.ridges&&result.zones?.length)add('note','Each color zone is a ridgeline detected from the viewpoint: what of it shows above the nearer ridges.');
+    else if(plan?.ridges) {
       add('note','Each layer is a ridgeline detected from the viewpoint, nearest at the front; slice positions are not used.');
       if(plan.found>plan.count)add('note',`The geography page found ${plan.found} ridges; this design holds at most ${plan.max} layers, so they are grouped into ${plan.count}.`);
     } else if(plan)add('note',`Only ${plan.found} ridge${plan.found>1?'s were':' was'} detected; this design needs at least ${plan.min} layers, so it uses distance bands. Lower Beyond or face toward more mountains.`);
     else if(settings.source==='viewpoint'&&layered())add('note','Each layer is a distance band of the view, nearest ridges at the front; layer positions are set from the bands.');
-    const thicknesses=result.layers.map(layer=>layer.thickness_mm),thinnest=Math.min(...thicknesses),thickest=Math.max(...thicknesses);
+    const thicknesses=(result.zones?.length?result.zones:result.layers).map(layer=>layer.thickness_mm),thinnest=Math.min(...thicknesses),thickest=Math.max(...thicknesses);
     const size=`${number(result.width_mm)} × ${number(result.height_mm)} × ${thinnest===thickest?number(thickest):`${number(thinnest)}–${number(thickest)}`} mm`;
     add(result.warnings.length?'note':'ok',`${size} · lowest point ${number(result.min_profile_mm)} mm tall`);
     if(settings.mount==='stand')add('note','The stand feet print beside the piece in the same file.');
@@ -386,13 +415,25 @@ export function createSilhouette(ctx) {
     const parts=$('silhouette-parts');parts.replaceChildren();
     const heading=document.createElement('strong');heading.textContent=partsSummary();parts.append(heading);
     const items=document.createElement('ul');
+    const away=distance=>{const value=distance/u.distance;return `${result.ridges.length?'ridge':'band'} ${number(value,value<.1?2:1)} ${u.distanceLabel}`;};
+    const zoneText=zone=>`${zone.name}${zone.distance_m===undefined?'':` · ${away(zone.distance_m)}`} · ${zone.thickness_mm.toFixed(1)} mm`;
     for(const part of result.parts) {
       const item=document.createElement('li');
       item.textContent=`${part.count>1?`${part.count} × `:''}${part.name} · ${part.size.map(value=>number(value)).join(' × ')} mm`;items.append(item);
+      // A color-zone piece lists its zones under it, each with its filament color.
+      if(/^Silhouette/.test(part.name))for(const zone of result.zones||[]) {
+        const row=document.createElement('li'),swatch=document.createElement('i');swatch.style.background=zone.color;
+        row.className='silhouette-zone-list';row.append(swatch,`${zoneText(zone)} · color ${zone.color}`);items.append(row);
+      }
     }
     parts.append(items);
+    const filaments=$('silhouette-filaments'),count=result.colors?.length||0;
+    filaments.textContent=distanceColored()?`${count} of 4 filament colors`:'';filaments.classList.toggle('error',distanceColored()&&count>4);
     // Each layer front to back: its ridge's (or band's) distance from the viewpoint and its thickness.
     const rows=$('silhouette-layer-list');rows.replaceChildren();
+    for(const zone of result.zones||[]) {
+      const item=document.createElement('li'),swatch=document.createElement('i');swatch.style.background=zone.color;item.append(swatch,zoneText(zone));rows.append(item);
+    }
     if(result.layers.length>1)for(const layer of result.layers) {
       const item=document.createElement('li'),swatch=document.createElement('i');swatch.style.background=layer.color;
       const away=layer.distance_m/u.distance,where=layer.distance_m===undefined?'':` · ${result.ridges.length?'ridge':'band'} ${number(away,away<.1?2:1)} ${u.distanceLabel}`;
@@ -426,7 +467,9 @@ export function createSilhouette(ctx) {
       svg('path',{class:'sil-body sil-layer','fill-rule':'evenodd',fill:layer.color,transform:`translate(0 ${-layer.y})`,d:polygonPath(layer.outline)},root);
     }
     const front=svg('g',{transform:`translate(0 ${-layers[0].y})`},root);
-    svg('path',{class:'sil-body','fill-rule':'evenodd',fill:layers.length>1?layers[0].color:settings.body_color,d:polygonPath(result.outline)},front);
+    // A color-zone piece draws each zone in its color.
+    if(result.zones?.length)for(const zone of result.zones)svg('path',{class:'sil-body sil-zone','fill-rule':'evenodd',fill:zone.color,d:zone.polygons.map(polygonPath).join('')},front);
+    else svg('path',{class:'sil-body','fill-rule':'evenodd',fill:layers.length>1||distanceColored()?layers[0].color:settings.body_color,d:polygonPath(result.outline)},front);
     if(result.text.length) {
       const style=result.text_style,fill=style==='stencil'?'#101b14':settings.text_color;
       svg('path',{class:'sil-text','fill-rule':'evenodd',fill,stroke:style==='emboss'?'#00000088':'none','stroke-width':style==='emboss'?1:0,
@@ -499,7 +542,9 @@ export function createSilhouette(ctx) {
     const thickness=layer=>layer.thickness_mm??settings.thickness_mm,shift=box.kind==='none'?-thickness(layers[0])/2:0;
     layers.forEach((layer,index)=>{
       const T=thickness(layer),piece=new THREE.Group();piece.position.set(0,layer.y,layer.z+shift);group.add(piece);
-      extrude(piece,[shapeOf(index?layer.outline:result.outline)],T,0,layers.length>1?layer.color:settings.body_color);
+      // Color zones stand from the shared flat back, each at its own thickness, so thicker-when-closer shows as steps.
+      if(!index&&result.zones?.length)result.zones.forEach(zone=>extrude(piece,zone.polygons.map(shapeOf),zone.thickness_mm,0,zone.color));
+      else extrude(piece,[shapeOf(index?layer.outline:result.outline)],T,0,layers.length>1||distanceColored()?layer.color:settings.body_color);
       if(index)return;
       if(result.text.length) {
         const shapes=result.text.map(shapeOf);
@@ -583,9 +628,9 @@ export function createSilhouette(ctx) {
     $('profile-position').addEventListener('input',sliceChanged);
     $('profile-direction').addEventListener('change',sliceChanged);
     const inputs=[...Object.values(NUMBERS).map(([id])=>id),...Object.values(CHOICES).map(([id])=>id),...Object.values(COLORS),...Object.values(CHECKS),
-      'silhouette-text','silhouette-trim-start','silhouette-trim-end','silhouette-layer-positions','silhouette-finish-time'];
+      'silhouette-text','silhouette-trim-start','silhouette-trim-end','silhouette-layer-positions','silhouette-finish-time',...DISTANCE_IDS,'silhouette-pieces'];
     for(const id of inputs) {
-      const element=$(id),settled=id.endsWith('color')||element.tagName==='SELECT'||element.type==='checkbox'||id==='silhouette-layer-positions';
+      const element=$(id),settled=id.endsWith('color')||element.type==='color'||element.tagName==='SELECT'||element.type==='checkbox'||id==='silhouette-layer-positions';
       element.addEventListener(settled?'change':'input',()=>{
         readForm(id);save();
         // Colors only repaint; everything else changes the outline.

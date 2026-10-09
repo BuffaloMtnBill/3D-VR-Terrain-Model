@@ -294,7 +294,9 @@ async function main() {
   await page.waitForFunction(()=>document.getElementById('place-status').textContent.includes('00501'));
   await page.locator('#place').selectOption('roan');
   assert.equal(await page.locator('[data-feature]').count(),9);
-  assert.equal(await page.locator('[data-feature-color]').count(),9);
+  assert.equal(await page.locator('#studio-colors [data-feature-color]').count(),9,'Feature colors live in the design page\'s Colors card');
+  assert.equal(await page.locator('#style-sidebar input[type=color]').count()+await page.locator('.sidebar input[type=color]').count(),0,'The geography page has no color pickers');
+  assert.equal(await page.locator('#studio-colors #route-color').count()+await page.locator('#studio-colors [data-palette]').count()+await page.locator('#studio-colors [data-print-color]').count(),1+4+6);
   await page.locator('#feature-roads').check();
   await page.waitForFunction(()=>document.getElementById('feature-retry').hidden===false);
   assert.match(await page.locator('#feature-status').innerText(),/busy/);
@@ -365,8 +367,12 @@ async function main() {
   await page.locator('#feature-borders').check();
   await page.screenshot({path:path.join(output,'feature-layers.png'),fullPage:true});
 
+  // Palettes are chosen on the design page; its Colors link opens the page at the Colors card.
+  await page.locator('#open-colors').click();
+  assert.equal(await page.locator('#studio-colors').isVisible(),true);
   await page.locator('[data-palette="desert"]').click();
   assert.equal(await page.locator('[data-palette="desert"]').getAttribute('aria-pressed'),'true');
+  await page.locator('#studio-back').click();
   // Elevation profile: both methods reshape the model while readouts keep real elevations.
   assert.equal(await page.locator('#relief-method').inputValue(),'standard');
   assert.equal(await page.locator('#relief-strength-block').isHidden(),true);
@@ -582,33 +588,39 @@ async function main() {
   await page.locator('#feature-roads').check();
   for(const name of layerNames)await page.locator('#color-'+name).evaluate(element=>{element.value='#b99570';element.dispatchEvent(new Event('input',{bubbles:true}));});
   const featureState=await page.locator('[data-feature]').evaluateAll(elements=>elements.map(element=>[element.dataset.feature,element.checked]));
+  await page.locator('#export-button').click();
+  assert.equal(await page.locator('#print-controls').isHidden(),true,'Print colors stay folded until Print is chosen');
+  assert.match(await page.locator('#export-3mf-hint').innerText(),/Print palette under Colors/);
   await page.locator('[data-palette="print"]').click();
-  assert.equal(await page.locator('#print-palette-dialog').isVisible(),true);
+  assert.equal(await page.locator('#print-controls').isVisible(),true);
   assert.equal(await page.locator('[data-print-color]').count(),6);
   assert.match(await page.locator('#print-color-count').innerText(),/4 distinct colors/);
   await page.waitForFunction(()=>document.getElementById('cover-retry').hidden===false);
   assert.match(await page.locator('#cover-status').innerText(),/busy/);
-  await page.locator('#apply-print-palette').click();
   await page.locator('#cover-retry').click();
   await page.waitForFunction(()=>document.getElementById('cover-status').textContent.includes('loaded'));
   assert.equal(await page.locator('#scene-mode').innerText(),'MAPPED PRINT COLORS');
   assert.equal(await page.locator('#contours').isDisabled(),true);
-  await page.locator('#edit-print-palette').click();
   await page.locator('#print-dark_foliage').evaluate(element=>{element.value='#114477';element.dispatchEvent(new Event('input',{bubbles:true}));});
   assert.match(await page.locator('#print-color-count').innerText(),/5 distinct colors/);
   assert.equal(await page.locator('[data-export="3mf"]').isDisabled(),true);
   await page.locator('#print-water').evaluate(element=>{element.value='#114477';element.dispatchEvent(new Event('input',{bubbles:true}));});
   assert.match(await page.locator('#print-color-count').innerText(),/4 distinct colors/);
-  await page.locator('#apply-print-palette').click();
+  assert.match(await page.locator('#print-feature-color-count').innerText(),/3MF: 4 \/ 4/);
   assert.deepEqual(await page.locator('[data-feature]').evaluateAll(elements=>elements.map(element=>[element.dataset.feature,element.checked])),featureState,'Print palette must preserve map-feature choices');
   assert.equal(await page.locator('#print-legend span').count(),6);
   await page.locator('#color-at').evaluate(element=>{element.value='#ff0000';element.dispatchEvent(new Event('input',{bubbles:true}));});
   assert.equal(await page.locator('[data-export="3mf"]').isDisabled(),true,'Feature colors must count toward the four-filament limit');
-  await page.locator('#feature-at').uncheck();
-  assert.equal(await page.locator('[data-export="3mf"]').isDisabled(),false,'Unchecked feature colors must not consume a filament');
-  await page.locator('#color-at').evaluate(element=>{element.value='#f0ead6';element.dispatchEvent(new Event('input',{bubbles:true}));});
-  await page.locator('#feature-at').check();
+  assert.equal(await page.locator('#print-feature-color-count').evaluate(element=>element.classList.contains('error')),true);
   await page.screenshot({path:path.join(output,'print-palette.png'),fullPage:true});
+  await page.locator('#studio-back').click();
+  await page.locator('#feature-at').uncheck();
+  await page.locator('#export-button').click();
+  assert.equal(await page.locator('[data-export="3mf"]').isDisabled(),false,'Unchecked feature colors must not consume a filament');
+  assert.equal(await page.locator('[data-color-row="at"]').evaluate(element=>element.classList.contains('off')),true,'Colors of layers that are off are dimmed');
+  await page.locator('#color-at').evaluate(element=>{element.value='#f0ead6';element.dispatchEvent(new Event('input',{bubbles:true}));});
+  await page.locator('#studio-back').click();
+  await page.locator('#feature-at').check();
   await page.locator('#export-button').click();
   const printGLBWaiting=page.waitForEvent('download');await page.locator('[data-export="glb"]').click();
   const printGLBDownload=await printGLBWaiting;await printGLBDownload.saveAs(path.join(output,'print-terrain.glb'));
@@ -640,7 +652,8 @@ async function main() {
   await page.locator('#studio-back').click();
   const printSnapshot=page.waitForEvent('download');await page.locator('#screenshot').click();
   const printImage=await printSnapshot;await printImage.saveAs(path.join(output,'print-preview.png'));
-  await page.locator('[data-palette="alpine"]').click();assert.equal(await page.locator('#contours').isDisabled(),false);
+  await page.locator('#export-button').click();await page.locator('[data-palette="alpine"]').click();await page.locator('#studio-back').click();
+  assert.equal(await page.locator('#contours').isDisabled(),false);
   await page.locator('#help-button').click();assert.equal(await page.locator('#help-dialog').isVisible(),true);
   await page.keyboard.press('Escape');
   await page.locator('#export-button').click();
@@ -681,11 +694,12 @@ async function main() {
   const toolbar=await mobilePage.locator('.map-tools').boundingBox(),mobileMap=await mobilePage.locator('#map').boundingBox();
   assert.ok(toolbar.x>=mobileMap.x&&toolbar.x+toolbar.width<=mobileMap.x+mobileMap.width,'Ratio toolbar must fit on mobile');
   await mobilePage.screenshot({path:path.join(output,'mobile.png'),fullPage:true});
+  await mobilePage.locator('#open-colors').click();
   await mobilePage.locator('[data-palette="print"]').click();
-  assert.equal(await mobilePage.locator('#print-palette-dialog').isVisible(),true);
-  assert.equal(await mobilePage.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-  await mobilePage.screenshot({path:path.join(output,'mobile-print-menu.png'),fullPage:true});
-  await mobilePage.locator('#apply-print-palette').click();
+  assert.equal(await mobilePage.locator('#print-controls').isVisible(),true);
+  assert.equal(await mobilePage.locator('#studio').evaluate(element=>element.scrollWidth<=element.clientWidth),true,'The Colors card fits a phone');
+  await mobilePage.screenshot({path:path.join(output,'mobile-print-menu.png')});
+  await mobilePage.locator('#studio-back').click();
   assert.deepEqual(errors,[]);
   // Free the software renderer before starting another page with default layers.
   await context.close();await mobile.close();
@@ -701,7 +715,7 @@ async function main() {
   assert.equal(await defaultsPage.evaluate(()=>navigator.clipboard.readText()),await defaultsPage.locator('#selection-parameters').inputValue());
   for(const id of ['feature-roads','feature-water','contours'])assert.equal(await defaultsPage.locator('#'+id).isChecked(),true,id+' is selected on a first start');
   assert.equal(await defaultsPage.locator('#feature-buildings').isChecked(),false);
-  await defaultsPage.locator('[data-palette="earth"]').click();
+  await defaultsPage.locator('#export-button').click();await defaultsPage.locator('[data-palette="earth"]').click();await defaultsPage.locator('#studio-back').click();
   await defaultsPage.evaluate(()=>{
     for(const [id,value] of [['exaggeration','4.2'],['base','5'],['detail-roads','27'],['color-roads','#123456'],['print-water','#123456']])document.getElementById(id).value=value;
     document.getElementById('contours').checked=false;
@@ -731,7 +745,7 @@ async function main() {
   assert.equal(await defaultsPage.locator('#building-options').isVisible(),true);
   assert.equal(await defaultsPage.locator('#buildings-detailed').isChecked(),true);
   assert.equal(await defaultsPage.locator('#trail-options').isHidden(),true);
-  await defaultsPage.locator('[data-palette="desert"]').click();
+  await defaultsPage.locator('#export-button').click();await defaultsPage.locator('[data-palette="desert"]').click();await defaultsPage.locator('#studio-back').click();
   await defaultsPage.reload();
   await defaultsPage.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('160 × 117'));
   assert.equal(await defaultsPage.locator('[data-palette="earth"]').getAttribute('aria-pressed'),'true','Unsaved edits must not replace saved defaults');

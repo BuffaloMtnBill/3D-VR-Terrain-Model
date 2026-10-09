@@ -109,15 +109,18 @@ cut, stand on a desk, light on an LED lamp base, or layer in a shadow box.
    progress; your previous model stays available while the new one is built.
    The **Elevation multiplier**, **Base thickness**, and **Contour lines**
    controls sit below Terrain detail and update the model immediately.
-4. Use the right-hand **Make it yours** panel, which is always open, to adjust the
-   palette and map features. The **3D model design** and **Silhouette design** buttons stay in the left sidebar. Orbit with the mouse, scroll to zoom, and
+4. Use the right-hand **Map layers** panel, which is always open, to choose map
+   features. Colors are chosen on the design pages: its **Open Colors** link (or
+   **3D model design**) opens the **Colors** card holding the surface palette, the
+   Print palette's surface colors, each map feature's color, and the GPS route color.
+   The **3D model design** and **Silhouette design** buttons stay in the left sidebar. Orbit with the mouse, scroll to zoom, and
    use the camera reset or auto-rotate buttons. Under **Map features**, check
    roads, train tracks, water, or buildings. **Boundaries** opens a submenu for
    borders, city boundaries, and park boundaries; **Trails** opens one for the AT
    (Appalachian Trail) and other trails. Checking **Buildings** reveals a
    **3D buildings** option. Submenus appear only while their category is checked;
    unchecking the category hides all of its layers and keeps your choices.
-   Each has its own color selector; changes apply immediately to loaded layers.
+   Each has its own color in the design page's Colors card; changes apply immediately to loaded layers.
    Roads and Water also have detail sliders. Lower detail omits minor roads,
    creeks, and smaller water areas while retaining larger mapped features.
 5. Move the cross-section slider to inspect profiles along the frame's axes
@@ -135,8 +138,8 @@ The Famous landscapes list comes from `terrain_app/data/DefaultProfiles.txt`.
 
 | Control | Effect |
 | --- | --- |
-| Alpine / Earth / Desert | Three elevation-based color palettes |
-| Print | Mapped surface colors for four-filament printing; opens a six-surface color menu |
+| Alpine / Earth / Desert | Three elevation-based color palettes (Colors card, 3D model design page) |
+| Print | Mapped surface colors for four-filament printing; shows six surface colors in the Colors card |
 | Elevation profile | How heights are shaped before the multiplier: Standard, Local relief, or Lowland emphasis (see below) |
 | Elevation multiplier | 1× preserves the horizontal-to-vertical ratio; values above 1× emphasize relief |
 | Base thickness | Height of the solid base beneath the terrain, as a percentage of the longest horizontal edge |
@@ -146,7 +149,7 @@ The Famous landscapes list comes from `terrain_app/data/DefaultProfiles.txt`.
 | Wireframe | Shows terrain triangles |
 | Elevation | Top-down elevation color map, in the selected frame's orientation |
 | Profile | A movable geographic cross-section, showing unexaggerated elevations |
-| Map features and colors | Optional OSM geometry draped over the terrain; railways have two rails and ties, boundaries use dashed lines, and water areas retain islands |
+| Map features | Optional OSM geometry draped over the terrain; railways have two rails and ties, boundaries use dashed lines, and water areas retain islands. Checkboxes on the geography page, colors in the Colors card |
 
 ## Elevation profile
 
@@ -229,7 +232,7 @@ Choose the **longest horizontal edge in millimeters** (default: 180 mm).
 Geometry exports use the current multiplier and base thickness; models always have a solid base. The UI
 uses the original elevations; the smoothing slider has been removed.
 
-- **Four-color 3MF:** select Print and use at most four
+- **Four-color 3MF:** select Print in the **Colors** card and use at most four
   distinct colors across surfaces and enabled map features. Downloads a native `terrain-print.3mf` file with
   millimeter geometry, shared materials, and a multi-part assembly. Each color
   has a closed solid part; identical colors merge into one part. Open it in
@@ -291,6 +294,13 @@ slots, pockets, coaster recesses, stand grooves, magnet pockets and wall hangers
 underside, plaques (flatten, level or raise a pad, with optional engraved or raised text),
 and text labels. Sizes are millimeters of the exported model. "Print as is" (a project
 without add-ons) exports exactly as before.
+
+Its right column holds the **Colors** card: the surface palette (Alpine, Earth, Desert,
+Print), the Print palette's six surface colors with the surface-map status and color count,
+one color per map feature in the geography page's order (colors of layers that are off are
+dimmed but stay editable), and the GPS route color once a route is loaded. A line under the
+feature colors counts 3MF filaments across surfaces, enabled features, the route, and add-ons.
+Changes repaint both the design page's view and the geography page's preview.
 
 - Cuts go through everything, including map-feature inlays and buildings. Holes, slots, and
   grooves are measured from the surface at their position; pockets and coasters have a flat
@@ -370,6 +380,31 @@ mm"). A ridgeline makes a single layer. Silhouette requests use `source:
 `thickness_mm` overrides it. Outlines give each layer `thickness_mm` and, for a
 viewpoint, `distance_m`, plus the `ridges` used.
 
+**Colors** (in the Export card) fit a four-filament printer. **Color by distance** gives the layers
+up to four colors, **Nearest**, 2, 3, and **Farthest**: the layers, nearest first (front to back for
+slices), fall into contiguous groups as even as possible (seven layers: 2, 2, 2, 1), and fewer
+layers than colors use the nearest ones. Comb bases, spacer combs, and stand feet take the farthest
+color used, so the 3MF has at most four materials; parts sharing a color share one material. A
+caption or markings in their own color count too: a fifth color is a check warning, and the 3MF
+export refuses it ("Use at most four colors: share the text color with one of the distance
+colors."). New pieces fade the four colors from the body color to the text color, so an engraved
+caption shares the farthest one. The card shows "N of 4 filament colors".
+
+With a viewpoint's ridges or bands (two or more, not in a shadow box), **Pieces** can be **One
+piece, color zones** instead of separate layers: every ridge stands on one base strip, zone 1 is the
+nearest ridge's outline with the base strip, and each farther zone is what of its ridge shows above
+the nearer ones (slivers under 0.2 mm wide join the next zone), so the zones tile the piece. Each
+zone takes its distance color and, with **Thicker when closer**, its own thickness from the shared
+flat back, so the piece steps toward you and prints flat. Text, ticks, and pegs sit on the nearest
+zone; wall holes, keyholes, the desk stand, and the lamp tab (hanging from the base strip) apply to
+the whole piece; the comb's spacing and base steps are hidden. The 3MF has one part per color
+(ridges sharing a color merge, "Zones 1, 2"), the STL is the zones merged into one solid, and the
+SVG puts each color's zones in its own filled group under the cut outline. The front and 3D views
+draw the zones in color (and the steps), and the parts list names each zone ("Zone 1 (nearest) ·
+ridge 0.6 mi · 4.0 mm · color #234e40"). Requests use `color_by_distance`, `distance_colors` (one to
+four hex colors, nearest first), and `color_zones`; outlines add `zones` (each with `name`, `color`,
+`thickness_mm`, `distance_m`, and `polygons`) and the filament `colors`.
+
 - **Shape:** width (the piece's length, 40–400 mm; the printed part of the slice fills it), vertical
   scale (× true proportions at that width, 0.5–100; it starts at the elevation multiplier), base height
   under the lowest point, thickness, smoothing (a moving average plus a simplification that drops
@@ -432,6 +467,10 @@ behind the last layer holds a photo, card, or map.
   switch), labeled where they have room.
 - **Anniversary box:** a stencil caption of names and a date, one layer at the chosen slice, and a
   photo slot behind.
+
+**Flat pieces — Ridgeline color zones:** one piece from a viewpoint with detected ridges (2–7, 4 by
+default) as color zones, thicker when closer (4 mm nearest to 1.6 mm farthest), a 12 mm base with a
+0.6 mm engraved caption, and a desk stand. Assign each 3MF color part its filament.
 
 **Race profile — running or cycling:** the race's elevation along its length from the uploaded GPX,
 distance ticks (running every 1 mile or kilometer, cycling every 10), START and FINISH engraved at the
@@ -596,10 +635,11 @@ features without that raster imagery. The UI shows this distinction in Map view.
 
 ## Four-color Print palette
 
-**Print** replaces Slate in the surface palettes. Selecting it opens a menu for
-Dark foliage, Light foliage, Dirt, Snow, Water, and Buildings. Every surface has
-its own color picker. Matching hex colors share one material; the menu counts
-unique colors and asks you to share them when more than four are selected.
+**Print** replaces Slate in the surface palettes. Selecting it in the design page's
+**Colors** card shows colors for Dark foliage, Light foliage, Dirt, Snow, Water,
+and Buildings beneath the palette. Every surface has its own color picker. Matching
+hex colors share one material; the card counts unique colors and asks you to share
+them when more than four are selected.
 Choices are saved locally in the browser. Feature checkboxes and feature colors
 are independent and stay selected when changing the surface palette.
 
@@ -755,8 +795,9 @@ The route is stored in geographic coordinates (cached under `routes/` in the
 cache folder), so moving or resizing the frame never rescales it: each frame
 shows the part of the route inside it. **Frame the route** fits the selection
 around it, and a route far from the current frame is framed automatically.
-Choose its **line color** and **line thickness** (0.4–6 mm on the printed
-model). In 3MF files the route is a color part printed like a trail inlay, and
+Choose its **line thickness** (0.4–6 mm on the printed model) beside the
+route; its **line color** is in the 3D model design page's **Colors** card,
+which shows it while a route is loaded. In 3MF files the route is a color part printed like a trail inlay, and
 its color counts toward the four-filament limit; GLB files and preview images
 include it. STL and OBJ files contain terrain geometry only, as with other map
 features.
@@ -771,8 +812,9 @@ always unexaggerated heights above sea level.
 Print dimensions stay in millimeters, while raw elevation data and GLB retain
 their documented metric units.
 
-Adjust the terrain controls in the left sidebar and the palette and map features
-in **Make it yours**, then click **Save as default** to remember those
+Adjust the terrain controls in the left sidebar, the map features in **Map layers**,
+and the palette and colors in the design page's **Colors** card, then click
+**Save as default** (in **Map layers**) to remember those
 selections in this browser. This includes the elevation multiplier, base
 thickness, contour lines, feature colors and detail levels, building options, boundary and
 trail selections, and all six Print palette colors. Later edits do not replace
@@ -780,8 +822,8 @@ these defaults until you save again.
 
 Below **Find your frame**, **Current box parameters** is collapsed by default.
 Open it for copyable JSON describing the current view: the unrotated geographic
-bounds and clockwise rotation, the map zoom, and the right-hand rendering
-settings (surface palette, map-feature checkboxes, colors, detail levels, 3D
+bounds and clockwise rotation, the map zoom, and the rendering settings from
+**Map layers** and the Colors card (surface palette, map-feature checkboxes, colors, detail levels, 3D
 buildings, and print palette). It follows the map and every setting change,
 even before new terrain is generated. The **Copy** button in the panel's
 header copies it to the clipboard, whether or not the panel is open.

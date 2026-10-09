@@ -72,21 +72,21 @@ def model_xml(parts, metadata, attribution, balls=None, title="Terrain Studio fo
               f'<metadata name="Description">{escape(json.dumps(metadata))}</metadata>',
               f'<metadata name="Copyright">{escape(attribution)}</metadata>',
               '<resources><basematerials id="1">']
-    output.extend(f"<base{attributes(name=part['name'], displaycolor=part['color'].upper()+'FF')}/>" for part in parts)
-    # A ball (or platform top) sharing a part's color reuses its material, so slicers list no extra filament.
-    materials = [part["color"].lower() for part in parts]
+    # Parts, balls, and platform tops sharing a color share its material, so slicers list no extra filament.
+    materials = []
     def material(color, name):
         if color.lower() not in materials:
             materials.append(color.lower())
             output.append(f"<base{attributes(name=name, displaycolor=color.upper()+'FF')}/>")
         return materials.index(color.lower())
+    part_indices = [material(part["color"], part["name"]) for part in parts]
     marker_name = (balls or {}).get("name", "Marker ball")
     ball_index = material(balls["color"], marker_name) if balls else None
     tops = (balls or {}).get("tops") or []
     top_indices = [material(top["color"], "Platform top") if top else None for top in tops]
     output.append("</basematerials>")
     for index, part in enumerate(parts):
-        output.append(f"<object{attributes(id=index+2, type='model', pid=1, pindex=index, name=f'Color {index+1}: {part['name']}')}>"
+        output.append(f"<object{attributes(id=index+2, type='model', pid=1, pindex=part_indices[index], name=f'Color {index+1}: {part['name']}')}>"
                       f"<mesh>{mesh_xml(part['vertices'], part['faces'])}</mesh></object>")
     assembly_id = len(parts)+2
     output.append(f'<object id="{assembly_id}" type="model" name="Terrain Studio - assign color parts to filaments"><components>')

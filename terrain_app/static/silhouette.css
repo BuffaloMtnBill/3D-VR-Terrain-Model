@@ -44,6 +44,18 @@
 .silhouette-parts ul{list-style:none;margin:0;padding:0;font-variant-numeric:tabular-nums}
 #silhouette .silhouette-parts li{font-size:10px;line-height:1.5;padding:0;color:var(--muted)}
 #silhouette [data-fit-block] label:not(.studio-inline):not(.studio-check){display:block;margin-top:10px}
+/* Colors by distance: four filament colors, nearest first, and how many the 3MF uses. */
+.silhouette-colors{border-top:1px solid #2c3a2c;margin-top:10px;padding-top:2px}
+.silhouette-colors .silhouette-subhead{margin-top:6px}
+.silhouette-distance-colors{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:6px 0 8px}
+#silhouette .silhouette-distance-colors label{display:flex;flex-direction:column;align-items:stretch;gap:3px;font-size:9px;color:var(--muted)}
+.silhouette-distance-colors input[type=color]{width:100%;height:24px;padding:1px;border:1px solid #49543c;background:#122118;border-radius:4px}
+.silhouette-distance-colors input:disabled{opacity:.35}
+.silhouette-filaments{display:block;font-size:10px;color:var(--sage);font-variant-numeric:tabular-nums;margin-top:6px}
+.silhouette-filaments:empty{display:none}
+.silhouette-filaments.error{color:#ffb391;font-weight:600}
+.silhouette-zone-list{margin-top:2px!important}
+.silhouette-parts li i{display:inline-block;width:8px;height:8px;border-radius:2px;border:1px solid #0004;margin-right:5px;vertical-align:-1px}
 #silhouette .studio-inline select{max-width:62%}
 #silhouette input[type=range]{width:100%;margin:2px 0 0}
 .silhouette-range{display:flex;align-items:center;justify-content:space-between;margin:12px 0 2px}

@@ -51,6 +51,9 @@ FITS = ("none", "lamp", "box")
 PRESET_DATA = json.loads((Path(__file__).parent / "data" / "silhouette-presets.json").read_text(encoding="utf-8"))
 PRESETS = tuple(PRESET_DATA["presets"])
 MAX_LAYERS = 7
+# Colored by distance: nearest first, dark to pale, the farthest the default text color so a caption can share it.
+DISTANCE_COLORS = ("#234e40", "#678272", "#acb6a4", "#f0ead6")
+COLOR_LIMIT = "Use at most four colors: share the text color with one of the distance colors."
 
 
 @dataclass(frozen=True)
@@ -117,6 +120,9 @@ class SilhouetteOptions:
     view_eye_m: float = 2.0
     view_min_radius_m: float = 0.0  # terrain nearer than this is left out of the view
     view_ridges: bool = False  # several layers are the detected ridgelines, nearest first, instead of distance bands
+    color_by_distance: bool = False  # layers take distance_colors in contiguous groups, nearest first; fit parts and feet the farthest used
+    distance_colors: tuple = DISTANCE_COLORS  # 1–4 colors, nearest first
+    color_zones: bool = False  # a viewpoint's layers become color zones of one flat piece instead of separate layers
 
     @classmethod
     def from_dict(cls, value):
@@ -179,7 +185,8 @@ class SilhouetteOptions:
         flags = {}
         for name, label in (("mirror", "Mirror"), ("photo_slot", "The photo slot"), ("led_channel", "The LED channel"),
                             ("include_buildings", "Include buildings"), ("summit_pin", "The summit pin hole"),
-                            ("ticks", "Distance ticks"), ("start_finish", "START and FINISH labels"), ("thickness_by_distance", "Thicker when closer")):
+                            ("ticks", "Distance ticks"), ("start_finish", "START and FINISH labels"), ("thickness_by_distance", "Thicker when closer"),
+                            ("color_by_distance", "Color by distance"), ("color_zones", "Color zones")):
             flags[name] = value.get(name, getattr(defaults, name))
             if not isinstance(flags[name], bool):
                 raise ValueError(f"{label} must be true or false.")
@@ -199,6 +206,10 @@ class SilhouetteOptions:
             if not isinstance(color, str) or not HEX.fullmatch(color):
                 raise ValueError(f"Choose a six-digit hex color for the {name.split('_')[0]}.")
             colors[name] = color.lower()
+        palette = value.get("distance_colors", list(DISTANCE_COLORS))
+        if (not isinstance(palette, (list, tuple)) or not 1 <= len(palette) <= 4
+                or not all(isinstance(color, str) and HEX.fullmatch(color) for color in palette)):
+            raise ValueError("Choose one to four six-digit hex colors for the distance colors, nearest first.")
         pegs = value.get("peg_count", 0)
         if not finite(pegs) or pegs != int(pegs) or not 0 <= pegs <= 8:
             raise ValueError("The number of medal pegs must be a whole number from 0 to 8.")
@@ -238,11 +249,16 @@ class SilhouetteOptions:
                 raise ValueError("A viewpoint's layers are distance bands: give each layer a farther distance than the one in front.")
         options = cls(**numbers, **picked, **colors, **flags, **drawn, trim=(float(trim[0]), float(trim[1])), text="\n".join(lines),
                       relief=relief_method(value.get("relief", "standard")), layers=tuple(parsed), peg_count=int(pegs),
+                      distance_colors=tuple(color.lower() for color in palette),
                       route_id=route_id if picked["source"] == "route" else "")
         if options.fit == "box":
             options = replace(options, width_mm=options.box_width-BOX_SIDE)  # pieces fill the box's width
         count = len(layer_specs(options))
-        if count > 1 and options.fit == "none":
+        if options.color_zones and (options.source != "viewpoint" or count < 2):
+            raise ValueError("Color zones need a viewpoint with at least two ridges or bands.")
+        if options.color_zones and options.fit == "box":
+            raise ValueError("Color zones make one piece; turn off the shadow-box fit or the zones.")
+        if count > 1 and options.fit == "none" and not options.color_zones:
             raise ValueError("Several layers need a lamp-base or shadow-box fit to stand in. Choose one, or use a single layer.")
         if count > 1 and options.source in ("route", "ridgeline"):
             raise ValueError(f"A {options.source} profile makes a single layer. Use one layer.")
@@ -265,6 +281,17 @@ def by_distance(options):
     return options.thickness_by_distance and options.source == "viewpoint" and len(layer_specs(options)) > 1
 
 
+def by_color(options):
+    return options.color_by_distance or options.color_zones
+
+
+def distance_palette(options, count):
+    """Each of `count` layers' color, nearest first, colored by distance: contiguous groups of layers, as even as possible,
+    take the distance colors in order (fewer layers than colors use the nearest ones)."""
+    used = min(count, len(options.distance_colors))
+    return [options.distance_colors[index*used//count] for index in range(count)]
+
+
 def layer_thicknesses(options, distances=None):
     """Each layer's thickness (mm), front to back: its own when given; for a viewpoint's layers thicker when closer, by log
     distance from thickness_near_mm at the nearest layer to thickness_far_mm at the farthest (to 0.1 mm); else thickness_mm."""
@@ -282,7 +309,7 @@ def check_thickness(options, thicknesses):
     """What the layers' thicknesses must leave room for: engraved text in the front layer, and the comb's or box's slots."""
     if options.text and options.text_style == "engrave" and options.text_depth > thicknesses[0]-.4:
         raise ValueError("Engraved text must leave at least 0.4 mm behind it. Make the text shallower or the piece thicker.")
-    if options.fit == "lamp" and len(thicknesses) > 1:
+    if options.fit == "lamp" and len(thicknesses) > 1 and not options.color_zones:
         lamp_comb(options, thicknesses)  # raises when slots would run together
     if options.fit == "box":
         box_slots(options, thicknesses)  # raises when the box is too shallow
@@ -654,9 +681,10 @@ def layout(terrain, options, sources=None):
     datum = min(float(heights.min()) for _, heights, _, _, _ in curves)
     width = options.width_mm
     limit = options.box_height-COMB_FLOOR-.5 if options.fit == "box" else None
-    multi = len(specs) > 1
+    multi = len(specs) > 1 and not options.color_zones
     layers = []
     for index, ((position, base, color, _), (x, heights, span, start, scale)) in enumerate(zip(specs, curves)):
+        base = options.base_mm if options.color_zones else base  # one piece: every ridge on the same base strip
         points = ridge_points(x, heights, datum, base, scale, options)
         outline = orient(make_valid(Polygon([(0, 0), *points.tolist(), (width, 0)])).buffer(0))
         height = float(points[:, 1].max())
@@ -669,6 +697,13 @@ def layout(terrain, options, sources=None):
         layers.append({"name": name, "position": position, "base": base, "color": color, "outline": outline, "body": outline, "thickness": thicknesses[index],
                        "distance_m": None if views is None else float(views["distances"][index]),
                        "points": points, "height": height, "lowest": float(points[:, 1].min()), "span_m": span, "start_m": start, "scale": scale})
+    palette = distance_palette(options, len(layers)) if by_color(options) else None
+    for layer, color in zip(layers, palette or []):
+        layer["color"] = color
+    zones = None
+    if options.color_zones:
+        piece, zones = zone_layout(layers)
+        layers = [piece]
     front = layers[0]
     outline, base, height = front["outline"], front["base"], front["height"]
     mounts = []
@@ -691,8 +726,9 @@ def layout(terrain, options, sources=None):
     bottom = options.peg_diameter+2*WALL if pegs else hidden
     top = base-(WALL+TICK_LENGTH+.8+TICK_LABEL+.8) if options.ticks else base
     banded = pegs or options.ticks or "\n" in options.text or options.start_finish or hidden
-    room = outline.buffer(-WALL) if options.text_style != "emboss" else outline
-    engrave_room = outline.buffer(-WALL)
+    near = zones[0]["polygon"] if zones else outline  # text and markings stay on the nearest zone, the base strip's
+    room = near.buffer(-WALL) if options.text_style != "emboss" else near
+    engrave_room = near.buffer(-WALL)
     text, markings, ticks = Polygon(), [], 0
     if options.text:
         center = (bottom+top)/2 if banded else base/2
@@ -750,7 +786,7 @@ def layout(terrain, options, sources=None):
         x, r = float(front["points"][index, 0]), options.pin_diameter/2
         x = min(max(x, r+WALL), width-r-WALL)
         need = box(x-r-.6, height-options.pin_depth, x+r+.6, height-1.5)
-        if front["thickness"] < options.pin_diameter+1.2:
+        if (min(zone["thickness"] for zone in zones) if zones else front["thickness"]) < options.pin_diameter+1.2:
             warnings.append(f"The piece must be at least {options.pin_diameter+1.2:.1f} mm thick for the summit pin hole, so it is left out. Make it thicker.")
         elif height-options.pin_depth < base or not outline.buffer(.01).contains(need):
             warnings.append("The summit is too narrow or too low for the pin hole, so it is left out. Smooth the profile or raise the vertical scale.")
@@ -760,10 +796,26 @@ def layout(terrain, options, sources=None):
     if len(geometry_parts(body, "Polygon")) > 1:
         warnings.append("The stencil text splits the piece into separate parts. Move or shrink the text.")
     front.update(outline=outline, body=body)
+    if zones:
+        cuts = front["piece"].difference(body) if body is not front["piece"] else Polygon()  # wall holes and stencil letters
+        for zone in zones:
+            zone["body"] = make_valid(zone["polygon"].difference(cuts)) if not cuts.is_empty else zone["polygon"]
     for layer in layers:
         if layer["lowest"] < 3:
             warnings.append(f"The thinnest point of {layer['name'].lower() if multi else 'the piece'} is {layer['lowest']:.1f} mm tall and may snap. Raise the base.")
     fit = fit_layout(options, layers, warnings, notes)
+    if zones:
+        fit["parts"][0]["size"][2] = max(zone["thickness"] for zone in zones)
+    # The filaments a 3MF uses: the layers' (or zones') colors, the text's in its own color, and the fit parts' and feet's.
+    fit_color = palette[-1] if palette else options.body_color
+    colors = [zone["color"] for zone in zones] if zones else [layer["color"] for layer in layers]
+    if (not text.is_empty and options.text_style != "stencil") or not marks.is_empty:
+        colors.append(options.text_color)
+    if fit["comb_base"] or fit["combs"] or options.mount == "stand":
+        colors.append(fit_color)
+    colors = list(dict.fromkeys(colors))
+    if by_color(options) and len(colors) > 4:
+        warnings.append(COLOR_LIMIT)
     for part in fit["parts"]:
         if max(part["size"][:2]) > BED_MM:
             warnings.append(f"{part['name']} is {part['size'][0]:.0f} × {part['size'][1]:.0f} mm, larger than a {BED_MM} mm printer bed. "
@@ -777,7 +829,42 @@ def layout(terrain, options, sources=None):
     return {"layers": layers, "body": body, "outline": outline, "text": text, "markings": marks, "points": front["points"],
             "mounts": mounts+peg_marks+([pin] if pin else []), "pegs": peg_marks, "pin": pin, "ticks": ticks, "fit": fit,
             "warnings": warnings, "notes": notes, "width": width, "height": max(layer["height"] for layer in layers),
-            "lowest": front["lowest"], "span_m": front["span_m"], "ridges": views["ridges"] if views else None}
+            "lowest": front["lowest"], "span_m": front["span_m"], "ridges": views["ridges"] if views else None,
+            "zones": zones, "colors": colors, "fit_color": fit_color}
+
+
+def zone_layout(layers):
+    """One flat piece from a viewpoint's layers (on one datum and base strip), nearest first: zone 1 is the nearest ridge's
+    outline with the base strip, zone k what of ridge k shows above the nearer zones. Slivers thinner than 0.2 mm are
+    dropped, and the next zone fills down into them, so the zones tile the piece. Returns the piece (as one layer) and the
+    zones that show, each {number, name, color, thickness, distance_m, polygon}."""
+    zones, covered, total = [], Polygon(), len(layers)
+    for number, layer in enumerate(layers, 1):
+        shape = make_valid(layer["outline"].difference(covered)) if zones else layer["outline"]
+        kept = [part for part in geometry_parts(shape, "Polygon") if part.area > .5 and 2*part.area/part.length > .2]
+        if not kept:
+            continue
+        polygon = orient(unary_union(kept)) if len(kept) == 1 else unary_union(kept)
+        zones.append({"number": number, "name": f"Zone {number}" + (" (nearest)" if number == 1 else " (farthest)" if number == total else ""),
+                      "color": layer["color"], "thickness": layer["thickness"], "distance_m": layer["distance_m"], "polygon": polygon})
+        covered = unary_union([covered, polygon])
+    outline = orient(make_valid(unary_union([zone["polygon"] for zone in zones])).buffer(0))
+    # The skyline over every ridge: the highest of them at each x.
+    xs = np.unique(np.concatenate([layer["points"][:, 0] for layer in layers]))
+    top = np.max([np.interp(xs, layer["points"][:, 0], layer["points"][:, 1]) for layer in layers], axis=0)
+    front = layers[0]
+    piece = front | {"name": "Silhouette", "outline": outline, "body": outline, "piece": outline, "points": np.column_stack((xs, top)),
+                     "height": float(top.max()), "lowest": float(top.min()), "color": zones[0]["color"], "thickness": zones[0]["thickness"]}
+    return piece, zones
+
+
+def zone_groups(shapes):
+    """The color zones merged by color (one 3MF part each): [(name, color, zones)], nearest first."""
+    groups = {}
+    for zone in shapes["zones"]:
+        groups.setdefault(zone["color"], []).append(zone)
+    return [(members[0]["name"] if len(members) == 1 else "Zones " + ", ".join(str(zone["number"]) for zone in members), color, members)
+            for color, members in groups.items()]
 
 
 def fit_layout(options, layers, warnings, notes):
@@ -829,6 +916,10 @@ def largest(geometry):
     return max(found, key=lambda ring: Polygon(ring["outer"]).area) if found else {"outer": [], "holes": []}
 
 
+def thickest(shapes):
+    return max(item["thickness"] for item in shapes["zones"] or shapes["layers"])
+
+
 def outline_json(terrain, options, sources=None):
     """The client preview: outlines, text, markings, and mount marks in mm (y up, x from 0 at the left), the fit and the
     assembly, plus size and hints. No solids are built here: it answers every slider move."""
@@ -841,7 +932,10 @@ def outline_json(terrain, options, sources=None):
     return {"outline": largest(shapes["outline"]), "text": rings(shapes["text"]), "markings": rings(shapes["markings"]),
             "text_style": options.text_style, "mount": shapes["mounts"], "layers": layers,
             "fit": {key: value for key, value in fit.items() if key not in ("parts", "placements")}, "parts": fit["parts"],
-            "width_mm": round(shapes["width"], 3), "height_mm": round(shapes["height"], 3), "thickness_mm": max(layer["thickness"] for layer in shapes["layers"]),
+            "width_mm": round(shapes["width"], 3), "height_mm": round(shapes["height"], 3), "thickness_mm": thickest(shapes),
+            "zones": [{"number": zone["number"], "name": zone["name"], "color": zone["color"], "thickness_mm": zone["thickness"], "polygons": rings(zone["body"]),
+                       **({} if zone["distance_m"] is None else {"distance_m": round(zone["distance_m"], 1)})} for zone in shapes["zones"] or []],
+            "colors": shapes["colors"],
             "ridges": [{"distance_m": round(ridge["distance_m"], 1), "coverage": round(ridge["coverage"], 3)} for ridge in shapes["ridges"] or []],
             "min_profile_mm": round(shapes["lowest"], 3), "slice_length_m": round(shapes["span_m"], 2), "ticks": shapes["ticks"],
             "profile": options.source if options.source in ("route", "ridgeline", "viewpoint") else "slice", "points": len(shapes["points"]),
@@ -912,7 +1006,12 @@ def layer_parts(options, shapes, index):
     layer, fit = shapes["layers"][index], shapes["fit"]
     thickness = layer["thickness"]
     name = f"{layer['name']} · {thickness:.1f} mm" if len(shapes["layers"]) > 1 else layer["name"]
-    body = extrude(layer["body"], thickness)
+    zoned = []  # color zones: one part per color, each zone at its own thickness from the flat back, so steps stand out in front
+    if shapes["zones"]:
+        zoned = [(group, color, union([extrude(zone["body"], zone["thickness"]) for zone in members])) for group, color, members in zone_groups(shapes)]
+        (name, _, body), zoned = zoned[0], zoned[1:]
+    else:
+        body = extrude(layer["body"], thickness)
     if fit["tab"] and len(shapes["layers"]) == 1:
         tab = fit["tab"]
         body = union([body, cube(tab["x0"], tab["y0"], 0, tab["x1"], .01, tab["thickness"])])
@@ -924,7 +1023,9 @@ def layer_parts(options, shapes, index):
     if shapes["pin"]:
         pin = shapes["pin"]
         drill = mf.Manifold.cylinder(pin["y1"]-pin["y0"]+1, pin["d"]/2, pin["d"]/2, 24).rotate((-90, 0, 0))
-        body = closed(body-drill.translate((pin["x"], pin["y0"], thickness/2)))
+        drill = drill.translate((pin["x"], pin["y0"], (min(zone["thickness"] for zone in shapes["zones"]) if zoned else thickness)/2))
+        body = closed(body-drill)
+        zoned = [(group, color, closed(solid-drill)) for group, color, solid in zoned]
     text, depth, parts = shapes["text"], options.text_depth, []
     if not text.is_empty and options.text_style == "engrave":
         body = closed(body-extrude(text, depth+1, thickness-depth))
@@ -936,11 +1037,11 @@ def layer_parts(options, shapes, index):
         mark = min(options.text_depth if options.text_style == "engrave" else MARK_DEPTH, thickness-.4)
         body = closed(body-extrude(marks, mark+1, thickness-mark))
         parts.append(("Markings", options.text_color, extrude(marks, mark, thickness-mark)))
-    parts.insert(0, (name, layer["color"], body))
+    parts[:0] = [(name, layer["color"], body)]+zoned
     if options.mount == "stand":
         reach = float(np.clip(shapes["height"]*.5, 30, 90))
         feet = [foot(options, index*(foot_length(options)+STAND_GAP), -STAND_GAP-reach, reach, thickness) for index in range(2)]
-        parts.append(("Stand feet", options.body_color, closed(mf.Manifold.batch_boolean(feet, mf.OpType.Add))))
+        parts.append(("Stand feet", shapes["fit_color"], closed(mf.Manifold.batch_boolean(feet, mf.OpType.Add))))
     return parts
 
 
@@ -950,10 +1051,10 @@ def part_groups(terrain, options, shapes=None, sources=None):
     groups = [layer_parts(options, shapes, index) for index in range(len(shapes["layers"]))]
     fit = shapes["fit"]
     if fit["comb_base"]:
-        groups.append([("Comb base", options.body_color, comb_base(options, fit))])
+        groups.append([("Comb base", shapes["fit_color"], comb_base(options, fit))])
     if fit["combs"]:
         comb = spacer_comb(options, fit)
-        groups.extend([[("Spacer comb (left)", options.body_color, comb)], [("Spacer comb (right)", options.body_color, comb)]])
+        groups.extend([[("Spacer comb (left)", shapes["fit_color"], comb)], [("Spacer comb (right)", shapes["fit_color"], comb)]])
     return groups
 
 
@@ -990,7 +1091,10 @@ def metadata(terrain, options, shapes):
     settings = asdict(options) | {"trim": list(options.trim), "layers": [{"position": p, "base_mm": b, "color": c, **({} if t is None else {"thickness_mm": t})}
                                                                           for p, b, c, t in options.layers]}
     return {"kind": "silhouette", "preset": options.preset, "settings": settings,
-            "size_mm": {"width": round(shapes["width"], 3), "height": round(shapes["height"], 3), "thickness": max(layer["thickness"] for layer in shapes["layers"])},
+            "size_mm": {"width": round(shapes["width"], 3), "height": round(shapes["height"], 3), "thickness": thickest(shapes)},
+            "zones": [{"name": zone["name"], "color": zone["color"], "thickness_mm": zone["thickness"],
+                       **({} if zone["distance_m"] is None else {"distance_m": round(zone["distance_m"], 1)})} for zone in shapes["zones"] or []],
+            "colors": shapes["colors"],
             "layers": [{"name": layer["name"], "thickness_mm": layer["thickness"], **({} if layer["distance_m"] is None else {"distance_m": round(layer["distance_m"], 1)})}
                        for layer in shapes["layers"]],
             "parts": shapes["fit"]["parts"], "slice_length_m": round(float(shapes["span_m"]), 2), "bounds": terrain.bounds.to_dict(),
@@ -1053,13 +1157,18 @@ def svg_file(options, shapes, attribution):
         x0, y0, x1, y1 = geometry.bounds
         width, height = shapes["width"], shapes["height"]
         output = head(width, height-min(y0, 0))  # y is flipped about the top, so a lamp tab below the piece extends the drawing down
-        output.append(f'<path id="outline" fill-rule="evenodd" fill="{options.body_color}" stroke="#ff0000" stroke-width="0.1" d="{svg_path(geometry, height)}"/>')
+        fill = "none" if shapes["zones"] else shapes["layers"][0]["color"]
+        output.append(f'<path id="outline" fill-rule="evenodd" fill="{fill}" stroke="#ff0000" stroke-width="0.1" d="{svg_path(geometry, height)}"/>')
+        if shapes["zones"]:  # color zones, one group per color, drawn where they sit in the piece
+            for index, (name, color, members) in enumerate(zone_groups(shapes), 1):
+                output.append(f'<g id="zone-{index}" data-name={quoteattr(name)}><path fill-rule="evenodd" fill="{color}" stroke="none" '
+                              f'd="{svg_path(unary_union([zone["body"] for zone in members]), height)}"/></g>')
         output.extend(front_paths(height))
         output.append("</svg>")
         return "\n".join(output).encode("utf-8")
     items = [(f"layer-{index+1}", f"{layer['name']} · {layer['thickness']:.1f} mm" if len(shapes["layers"]) > 1 else layer["name"], outline_of(index), layer["color"], index == 0)
              for index, layer in enumerate(shapes["layers"])]
-    items += [(name, title, shape, options.body_color, False) for name, title, shape, _ in profiles]
+    items += [(name, title, shape, shapes["fit_color"], False) for name, title, shape, _ in profiles]
     width = max(shape.bounds[2]-min(shape.bounds[0], 0) for _, _, shape, _, _ in items)
     body, y = [], 0.0
     for name, title, shape, color, front in items:
@@ -1107,6 +1216,8 @@ def silhouette_export(terrain, options, format, attribution, sources=None):
                     archive.writestr("credits.txt", attribution)
                 content, (mimetype, filename) = buffer.getvalue(), PARTS_ZIP
         else:
+            if by_color(options) and len(shapes["colors"]) > 4:
+                raise ValueError(COLOR_LIMIT)
             colored = [{"name": name, "color": color, **dict(zip(("vertices", "faces"), mesh(solid)))} for name, color, solid in laid_out(groups)]
             content = package_3mf(model_xml(colored, info, attribution, title="Terrain Studio silhouette")).getvalue()
     return content, mimetype, filename

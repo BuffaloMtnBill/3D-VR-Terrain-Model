@@ -58,13 +58,22 @@ const CATALOG={font:'DejaVu Sans Bold',marker_ball:{name:'Push-pin marker ball',
     const page=await context.newPage();
     await page.goto(url);
     await page.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('160 × 117'));
-    await page.locator('[data-palette="print"]').click();
-    await page.locator('#apply-print-palette').click();
-    await page.waitForFunction(()=>document.getElementById('cover-status').textContent.includes('loaded'));
     page.on('pageerror',error=>errors.push(error.message));
     await page.locator('#export-button').click();
     assert.equal(await page.locator('#studio').isVisible(),true,'Export opens the design page');
     await page.waitForSelector('[data-addon-type="hole"]');
+    // The surface palette is chosen in the design page's Colors card, and the studio's own 3D view follows it.
+    assert.equal(await page.locator('#studio-colors').isVisible(),true,'The Colors card sits on the design page');
+    assert.equal(await page.locator('[data-export="3mf"]').isDisabled(),true);
+    assert.match(await page.locator('#export-3mf-hint').innerText(),/Print palette under Colors/);
+    const colorsCard=await page.locator('#studio-colors').boundingBox(),rightColumn=await page.locator('#studio .studio-right').boundingBox();
+    assert.ok(colorsCard.x>=rightColumn.x&&colorsCard.x+colorsCard.width<=rightColumn.x+rightColumn.width+.5,'The Colors card fits the right column');
+    const studioShot=async()=>{await page.waitForTimeout(400);return page.locator('#studio-view').screenshot({mask:[page.locator('#studio-checks'),page.locator('#studio-view-hint')]});};
+    const alpineView=await studioShot();
+    await page.locator('[data-palette="print"]').click();
+    await page.waitForFunction(()=>document.getElementById('cover-status').textContent.includes('loaded'));
+    assert.equal(await page.locator('#print-controls').isVisible(),true,'Print colors open inline in the Colors card');
+    assert.ok(!alpineView.equals(await studioShot()),'Choosing a palette repaints the design page\'s 3D view');
     assert.equal(await page.locator('#studio-view canvas').count(),1,'The studio has its own 3D view');
     assert.match(await page.locator('#studio-title').innerText(),/Roan Mountain/);
     assert.match(await page.locator('#studio-dimensions').innerText(),/mm/);
@@ -159,8 +168,20 @@ const CATALOG={font:'DejaVu Sans Bold',marker_ball:{name:'Push-pin marker ball',
     assert.equal(await page.locator('#studio-marker-style').inputValue(),'ball');
     await page.locator('#studio-undo').click();
     assert.equal(await page.locator('#studio-addons li').count(),3,'Undo restores the Desk set');
+    // The GPS route's color appears in the Colors card only once a route is loaded; its thickness stays on the geography page.
+    assert.equal(await page.locator('#route-color-row').isHidden(),true,'No route color without a route');
     await page.locator('#studio-back').click();
     assert.equal(await page.locator('#studio').isVisible(),false);
+    assert.equal(await page.locator('.sidebar #route-color').count(),0);
+    const gpx=`<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>Colors test</name><trkseg>${Array.from({length:40},(_,i)=>`<trkpt lat="${(36.09+.04*i/39).toFixed(6)}" lon="${(-82.15+.08*i/39).toFixed(6)}"><ele>${900+i}</ele></trkpt>`).join('')}</trkseg></trk></gpx>`;
+    await page.locator('#route-file').setInputFiles({name:'colors.gpx',mimeType:'application/gpx+xml',buffer:Buffer.from(gpx)});
+    await page.waitForFunction(()=>!document.getElementById('route-controls').hidden);
+    await page.locator('#export-button').click();
+    assert.equal(await page.locator('#route-color-row').isVisible(),true,'The route color joins the Colors card');
+    await page.locator('#route-color').evaluate(element=>{element.value='#3366ff';element.dispatchEvent(new Event('input',{bubbles:true}));});
+    await page.locator('#studio-back').click();
+    assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('terrain-route')).color),'#3366ff');
+    await page.locator('#route-remove').click();
     await context.close();
 
     const mobile=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});

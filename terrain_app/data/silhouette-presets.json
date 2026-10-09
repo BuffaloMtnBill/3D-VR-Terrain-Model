@@ -3,6 +3,7 @@
   "groups": [
     {"name": "Glow lamps", "presets": ["glow-edge", "glow-stencil", "glow-layers", "glow-skyline"]},
     {"name": "Shadow boxes", "presets": ["box-diorama", "box-trail", "box-chart", "box-anniversary"]},
+    {"name": "Flat pieces", "presets": ["flat-zones"]},
     {"name": "Race profile", "presets": ["race"]}
   ],
   "presets": {
@@ -58,6 +59,13 @@
       "hint": "Light or a photo behind the piece shows through the cut-out letters.",
       "fields": ["box", "photo"], "rules": {"caption": "names"},
       "settings": {"fit": "box", "photo_slot": true, "thickness_mm": 3, "text_style": "stencil", "text_size": 8, "base_mm": 30}
+    },
+    "flat-zones": {
+      "name": "Ridgeline color zones", "summary": "One flat piece in up to four colors: each ridge seen from the viewpoint is its own color zone, nearer ridges darker and thicker so the piece steps toward you.",
+      "hint": "Pick a viewpoint on the geography page with Beyond and Detect ridges set. Print front face up on a four-filament printer: assign each 3MF color part its filament; the caption shares the farthest color.",
+      "fields": ["layers"], "rules": {"layers": {"count": 4, "min": 2, "max": 7, "low": 25, "high": 75, "step": 0}, "distance_thickness": true},
+      "settings": {"fit": "none", "source": "viewpoint", "color_zones": true, "color_by_distance": true, "thickness_mm": 3, "thickness_near_mm": 4,
+                   "thickness_far_mm": 1.6, "base_mm": 12, "width_mm": 180, "mount": "stand", "text_style": "engrave", "text_depth": 0.6, "text_size": 6}
     },
     "race": {
       "name": "Running or cycling race profile", "summary": "The race's elevation along its length with distance ticks, START and FINISH, a caption with your finish time, and pegs to hang medals.",

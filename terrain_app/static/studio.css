@@ -148,3 +148,25 @@
   .studio-center:has(.studio-profile:not([hidden])){height:auto}
   .studio-center:has(.studio-profile:not([hidden])) .studio-view{height:min(48vh,420px);flex:none}
 }
+
+/* Colors card: surface palette, Print palette surfaces, map feature and route colors (moved from the geography selection page). */
+.studio-colors-sub{display:block;font-size:9px;font-weight:650;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin:12px 0 6px}
+.studio-colors h3+.studio-colors-sub{margin-top:0}
+.studio-colors .palettes{margin:0 0 4px;gap:5px}
+.studio-colors .palette{padding:4px 3px 6px;min-width:0}
+.studio-colors .swatch{height:22px;margin-bottom:5px}
+#studio-colors #print-controls{margin:6px 0 0}
+#studio-colors .print-color-options{grid-template-columns:1fr 1fr;gap:6px 12px;margin:8px 0 2px}
+#studio-colors .print-color-options label,.studio-color{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0;font-size:10px;min-width:0;cursor:pointer}
+#studio-colors input[type=color]{width:34px;height:24px;padding:2px;flex-shrink:0;background:#263627;border:1px solid #87764f;border-radius:4px;cursor:pointer}
+#studio-colors input[type=color]::-webkit-color-swatch-wrapper{padding:0}
+#studio-colors input[type=color]::-webkit-color-swatch{border:0;border-radius:2px}
+.studio-color span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.studio-color-list{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}
+#route-color-row{margin-top:6px}
+.studio-color.off,#route-color-row.off .studio-color{opacity:.45}
+.studio-color.off:hover,.studio-color.off:focus-within{opacity:.8}
+#print-feature-color-count.error{color:#edbb8b}
+@media(max-width:1180px) and (min-width:901px){.studio-color-list,#studio-colors .print-color-options{grid-template-columns:1fr}}
+#studio-colors #print-color-count{font-size:10px;margin:2px 0 0;color:var(--tan)}
+#studio-colors #print-color-count.error{color:#edbb8b}
