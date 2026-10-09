@@ -30,7 +30,7 @@ const NUMBERS={width_mm:['silhouette-width',40,400],vertical_scale:['silhouette-
   pin_diameter:['silhouette-pin-diameter',1,4],pin_depth:['silhouette-pin-depth',3,30],photo_gap:['silhouette-photo-gap',.3,5],
   led_width:['silhouette-led-width',2,20],led_depth:['silhouette-led-depth',.5,5]};
 const INTEGERS=new Set(['layer_count','peg_count']);
-const CHOICES={source:['silhouette-source',['true','shaped','route']],text_style:['silhouette-text-style',['engrave','emboss','stencil']],
+const CHOICES={source:['silhouette-source',['true','shaped','route','ridgeline','viewpoint']],text_style:['silhouette-text-style',['engrave','emboss','stencil']],
   text_align:['silhouette-text-align',['left','center','right']],mount:['silhouette-mount',['none','stand','holes','keyholes']]};
 const CHECKS={mirror:'silhouette-mirror',include_buildings:'silhouette-buildings',ticks:'silhouette-ticks',start_finish:'silhouette-start-finish',
   summit_pin:'silhouette-pin',photo_slot:'silhouette-photo',led_channel:'silhouette-led'};
@@ -171,6 +171,8 @@ export function createSilhouette(ctx) {
     $('silhouette-text-color').disabled=!text||settings.text_style==='stencil';
     $('silhouette-width').disabled=settings.fit==='box';
     $('silhouette-source').querySelector('[value=route]').disabled=!ctx.route&&settings.source!=='route';
+    // Ridgeline and viewpoint profiles are drawn on the geography page; offer them once one is.
+    for(const mode of ['ridgeline','viewpoint'])$('silhouette-source').querySelector(`[value=${mode}]`).disabled=!drawn(mode)&&settings.source!==mode;
     // The preset picker and the settings its preset shows.
     const current=preset(),fields=new Set(current.fields||[]);
     document.querySelectorAll('[data-silhouette-preset]').forEach(button=>{
@@ -183,7 +185,7 @@ export function createSilhouette(ctx) {
     document.querySelectorAll('[data-fit-block]').forEach(block=>{block.hidden=!fields.has(block.dataset.fitBlock);});
     $('silhouette-spacing-block').hidden=settings.fit!=='lamp';
     $('silhouette-layer-count').min=current.rules?.layers?.min||2;$('silhouette-layer-count').max=current.rules?.layers?.max||7;
-    $('silhouette-position').disabled=layered()||settings.source==='route';
+    $('silhouette-position').disabled=layered()||['route','ridgeline','viewpoint'].includes(settings.source);
     // Sizes of an option that is off stay visible but greyed out.
     const dependents={led_channel:['silhouette-led-width','silhouette-led-depth'],photo_slot:['silhouette-photo-gap'],summit_pin:['silhouette-pin-diameter','silhouette-pin-depth'],
       ticks:['silhouette-tick-every'],include_buildings:['silhouette-corridor']};
@@ -253,6 +255,8 @@ export function createSilhouette(ctx) {
       group.presets.forEach(id=>PRESETS.presets[id]&&button(id,grid));
     }
   }
+  // Whether the geography page's profile panel currently shows this kind of profile.
+  function drawn(mode) {return ['ridgeline','viewpoint'].includes(mode)&&ctx.profile?.settings.mode===mode&&ctx.profile.ready;}
   function requestBody(extra={}) {
     const opts=ctx.options(),body={...structuredClone(settings),trim:[...settings.trim],direction:$('profile-direction').value,
       position:Number($('profile-position').value),relief:opts.relief,relief_strength:opts.relief_strength,units:ctx.state.units==='m'?'m':'ft'};
@@ -262,6 +266,16 @@ export function createSilhouette(ctx) {
       body.layers=settings.layer_positions.slice(0,settings.layer_count).map((position,index)=>({position,base_mm:Math.min(120,settings.base_mm+index*settings.layer_step),color:colors[index]}));
     }
     if(settings.source==='route'){if(ctx.route)body.route_id=ctx.route.id;else body.source='true';}
+    if(['ridgeline','viewpoint'].includes(settings.source)) {
+      const profile=ctx.profile?.settings;
+      if(!drawn(settings.source))body.source='true';
+      else if(settings.source==='ridgeline')Object.assign(body,{ridge_start:profile.start,ridge_end:profile.end});
+      else {
+        Object.assign(body,{view_point:profile.point,view_bearing:profile.bearing,view_fov:profile.fov,view_eye_m:profile.eye_m});
+        // A viewpoint's layers are distance bands, nearer bands narrower (as profiles.band_edges), nearest at the front.
+        if(body.layers)body.layers.forEach((layer,index,all)=>{layer.position=Math.round(((index+1)/all.length)**2*1000)/10;});
+      }
+    }
     return {...body,...extra};
   }
 
@@ -275,7 +289,10 @@ export function createSilhouette(ctx) {
   function sliceLabel() {
     const u=ctx.units();
     let text;
+    const profile=ctx.profile?.settings;
     if(result?.profile==='route')text=`${ctx.route?.name||'Route'} · ${number(result.slice_length_m/u.distance,2)} ${u.distanceLabel} along the route`;
+    else if(settings.source==='ridgeline'&&drawn('ridgeline'))text=`Ridgeline from the geography page${result?` · ${number(result.slice_length_m/u.distance,2)} ${u.distanceLabel} along the high ground`:''}`;
+    else if(settings.source==='viewpoint'&&drawn('viewpoint'))text=`Skyline from the viewpoint · ${number(profile.fov,0)}° view facing ${number(profile.bearing,0)}°${layered()?` · ${settings.layer_count} distance bands`:''}`;
     else {
       const direction=$('profile-direction').selectedOptions[0]?.textContent||'';
       text=layered()?`${direction} · ${settings.layer_count} slices`:`${direction} · ${$('profile-position').value}% across`;
@@ -315,6 +332,8 @@ export function createSilhouette(ctx) {
     result.warnings.forEach(warning=>add('warning',warning));
     (result.notes||[]).forEach(note=>add('note',note));
     if(settings.source==='route'&&!ctx.route)add('note','Upload a GPX route on the geography selection page to use its elevation profile; the slice is shown until then.');
+    if(['ridgeline','viewpoint'].includes(settings.source)&&!drawn(settings.source))add('note',`Draw a ${settings.source==='ridgeline'?'ridgeline':'viewpoint skyline'} in the geography page's profile panel to use it; the slice is shown until then.`);
+    if(settings.source==='viewpoint'&&layered())add('note','Each layer is a distance band of the view, nearest ridges at the front; layer positions are set from the bands.');
     const size=`${number(result.width_mm)} × ${number(result.height_mm)} × ${number(settings.thickness_mm)} mm`;
     add(result.warnings.length?'note':'ok',`${size} · lowest point ${number(result.min_profile_mm)} mm tall`);
     if(settings.mount==='stand')add('note','The stand feet print beside the piece in the same file.');
@@ -538,6 +557,9 @@ export function createSilhouette(ctx) {
     open() {
       if(!ctx.state.data)return;
       load();syncSlice();
+      // A ridgeline or skyline drawn on the geography page becomes the profile, unless a route or another source was chosen.
+      const mode=ctx.profile?.settings.mode;
+      if(drawn(mode)&&['true','shaped'].includes(settings.source)&&!(layered()&&mode==='ridgeline')){settings.source=mode;writeForm();save();}
       $('silhouette-title').textContent=placeName()||'Your landscape';
       if(!dialog.open)dialog.showModal();
       setView(view);sliceLabel();refresh();

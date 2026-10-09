@@ -3,6 +3,7 @@ import { OrbitControls } from './vendor/OrbitControls.js';
 import { GLTFExporter } from './vendor/GLTFExporter.js';
 import { SelectionFrame } from './map-frame.js';
 import {rotationAngle,selectionCorners,sampleLocation,geographicExtent,mercatorPixel} from './selection-geometry.js';
+import {createProfileModes} from './profile-modes.js';
 import {buildFeatures,buildRoute,disposeFeatures,featureLabels,filterFeatures} from './feature-layers.js';
 import {paintSurface,coverLabels} from './print-palette.js';
 import {createStudio} from './print-studio.js';
@@ -24,6 +25,7 @@ let featureData=null,featureRequest=null,featureError=null,placeRequest=null;
 let waterSourceChosen=false;
 const featureCache=new Map();
 let coverData=null,coverRequest=null,coverError=null;
+let profileModes=null;
 let route=null,routeLines=null,routeLinesKey=null,routeMesh=null,routeLayer=null;
 const coverCache=new Map();
 const tileImages = new Map();
@@ -454,6 +456,7 @@ async function loadSurface(id, reset=false, loadedName=null) {
   if(featuresEnabled())ensureFeatures().catch(()=>{});
   if(state.palette==='print')ensureCover().catch(()=>{});
   ensureRouteLines().catch(error=>routeMessage(error.message,true));
+  if(changedArea)profileModes?.terrainChanged();
 }
 
 function printColors() {return Object.fromEntries(Object.keys(coverLabels).map(name=>[name,$(`print-${name}`).value]));}
@@ -730,6 +733,7 @@ function profileSamples() {
 }
 
 function updateProfileMapLine() {
+  if(profileModes?.active()){if(profileMapLine){map.removeLayer(profileMapLine);profileMapLine=null;}return;}
   const profile=profileSamples(); if(!profile) return;
   const {horizontal,fraction}=profile,data=state.data;
   const bounds=data.bounds;
@@ -741,6 +745,7 @@ function updateProfileMapLine() {
 }
 
 function drawProfile(pointer=null) {
+  if(profileModes?.active())return profileModes.draw($('profile'),pointer);  // ridgeline or viewpoint skyline
   const canvas=$('profile'),rect=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);
   canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);
   const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
@@ -941,7 +946,7 @@ const studioContext={
 };
 
 // The silhouette design page reads even less: the slice controls it shares, the relief settings, units, colors, and the uploaded route.
-const silhouetteContext={get state(){return state;},get route(){return route;},options,notify,download,units,printColors};
+const silhouetteContext={get state(){return state;},get route(){return route;},get profile(){return profileModes;},options,notify,download,units,printColors};
 
 async function screenshot() {
   if(!sceneReady||!state.data) return notify('Generate a terrain preview first.',true);
@@ -1031,7 +1036,7 @@ function setUnits(value) {
   $('profile').setAttribute('aria-label',`Elevation cross section in ${units().name} above sea level`);
   if(state.selection)updateSelectionSize();
   if(state.data){updateLegend();updateStats();drawProfile();}
-  routeStats();silhouette?.modelChanged();
+  routeStats();profileModes?.unitsChanged();silhouette?.modelChanged();
 }
 
 const reliefHints={standard:'Every height is multiplied equally.',local:'Fine relief is amplified; broad landforms keep their height.',lowland:'Low ground gets a larger share of the model height.'};
@@ -1185,6 +1190,9 @@ async function init() {
     state.selection={...initialPlace.bounds};state.name=initialPlace.name;
     $('place').value=config.default_place;
     setupMap(config); setupScene(); wireControls(); wireRoute();
+    profileModes=createProfileModes({get map(){return map;},get state(){return state;},api,units,number,
+      redraw:()=>drawProfile(),sliceVisible:()=>updateProfileMapLine(),changed:()=>silhouette?.modelChanged()});
+    profileModes.attach(map);
     if(config.example_available) {
       state.loadedName=initialPlace.name;
       await loadSurface('example',true);

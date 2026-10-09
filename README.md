@@ -170,6 +170,43 @@ the profile chart, contour lines, surface colors, and the CSV, NumPy, and
 heightmap exports keep the real elevations. The chosen profile and strength
 are saved in export metadata and in **Save as default**.
 
+### Profile panel: choosing the slice type
+
+The profile panel on the geography selection page chooses the type of elevation
+profile to display. **Straight slice** uses the slider and direction selector to
+show a cross-section east–west or north–south (at zero rotation).
+
+**Ridgeline · two points** shows the highest way between two locations. Press
+**Pick two points**, then click two places on the map to set markers A and B
+(draggable). The ridgeline first finds the highest saddle that any path between
+the points must cross (the bottleneck of a maximum spanning tree), then follows
+the shortest path that never drops below that saddle, weighted toward high
+ground to trace the crest. The orange line on the map shows the path; the chart
+plots elevation against distance from A.
+
+**Viewpoint skyline** displays the highest elevations visible from a location
+across a chosen bearing and field of view, with Earth's curvature and standard
+atmospheric refraction (k = 0.13) applied. Press **Pick viewpoint**, then click
+where you stand (draggable marker). **Facing** sets the compass bearing
+(0–360°), **View** the field of view (60–360°), **Eye** the eye height (standing
+2 m, tower 15 m, hilltop 100 m, aerial 400 m), and **Layers** splits the view
+into 1–5 distance bands. For each bearing the skyline is the highest elevation
+angle; the chart plots degrees above horizontal against bearing, with nearer
+bands in darker shades. The dashed wedge on the map shows the field of view.
+
+Both modes see only the generated terrain inside the frame: to include distant
+mountains, frame and generate a larger area. Points stay as latitude/longitude,
+so moving or resizing the frame keeps them on the ground; the chosen mode and
+all points are remembered in the browser.
+
+API: `POST /api/profile/<terrain id>` with `{"mode": "ridgeline", "start":
+[lat, lon], "end": [lat, lon]}` or `{"mode": "viewpoint", "point": [lat, lon],
+"bearing": 0–360, "fov": 10–360, "eye_m": 0–500, "bands": 1–5}`. Responses
+include `mode`, `path`, `distances`, `heights`, `length_m`, `highest_m`,
+`lowest_m` (ridgeline) or `azimuths`, `angles`, `skyline_m`, `bands`,
+`band_edges`, `farthest_m`, `eye_elevation_m`, `point`, `rays`, `bearing`, `fov`
+(viewpoint).
+
 ## Exports
 
 Choose the **longest horizontal edge in millimeters** (default: 180 mm).
@@ -291,6 +328,17 @@ returns JSON mesh parts at a coarser grid), `GET /api/studio/marker-ball?format=
 of a solid base strip, shown to scale in a front view (and a 3D view you can orbit). Its direction
 and position sliders are the geography selection page's own profile controls, so the chart and the
 dashed line on the map follow them; **Print from** and **Print to** keep only part of the slice.
+
+The **Heights** source can also be **Ridgeline (geography page)** or **Viewpoint
+skyline (geography page)**, using the profile drawn on the geography page;
+opening the silhouette page while the geography page shows one of them selects
+it automatically. A viewpoint skyline is printed as it looks from the viewpoint
+(lengths on a cylinder around the viewer, so true proportions match the view);
+with multiple layers (shadow box or layered lamp presets) each layer is one
+distance band, nearest ridges at the front, with nearer bands narrower. A
+ridgeline makes a single layer. Silhouette requests use `source: "ridgeline"`
+with `ridge_start` and `ridge_end`, or `source: "viewpoint"` with `view_point`,
+`view_bearing`, `view_fov`, `view_eye_m`.
 
 - **Shape:** width (the piece's length, 40–400 mm; the printed part of the slice fills it), vertical
   scale (× true proportions at that width, 0.5–100; it starts at the elevation multiplier), base height

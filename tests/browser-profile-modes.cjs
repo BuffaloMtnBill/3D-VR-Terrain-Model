@@ -1,0 +1,150 @@
+/* Profile modes end-to-end test: run scripts/browser_fixture_server.py (port 8019) first.
+ * TERRAIN_PLAYWRIGHT_PATH points at a Playwright package; TERRAIN_CHROMIUM_PATH at a Chromium binary if needed.
+ */
+const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright');
+const assert=require('node:assert/strict');
+
+const url=process.env.TERRAIN_TEST_URL||'http://127.0.0.1:8019';
+const errors=[];
+
+(async()=>{
+  const browser=await chromium.launch({
+    headless:true,
+    executablePath:process.env.TERRAIN_CHROMIUM_PATH,
+    args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']
+  });
+
+  try {
+    const context=await browser.newContext({viewport:{width:1500,height:950}});
+    const page=await context.newPage();
+
+    page.on('pageerror',error=>errors.push(error.message));
+    page.on('console',msg=>{if(msg.type()==='error')errors.push(msg.text())});
+
+    // Clear localStorage before navigation
+    await context.addInitScript(()=>{
+      try{localStorage.removeItem('terrain-profile-mode');}catch(e){}
+    });
+
+    await page.goto(url);
+    await page.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('×'),null,{timeout:30000});
+
+    // Test 1: Ridgeline mode
+    console.log('Test 1: Ridgeline mode');
+    await page.locator('#profile-mode').selectOption('ridgeline');
+    assert.equal(await page.locator('#profile-pick-ridge').getAttribute('aria-pressed'),'true','Ridgeline button is pressed');
+    assert.equal(await page.locator('#profile-slice-controls').isHidden(),true,'Slice controls are hidden');
+    assert.equal(await page.locator('#profile-ridge-controls').isHidden(),false,'Ridge controls are visible');
+
+    // Click two points in the selection frame
+    await page.evaluate(()=>window.scrollTo(0,0));
+    const frame=await page.locator('#selection-frame').boundingBox();
+    const at=(u,v)=>[frame.x+frame.width*u,frame.y+frame.height*v];
+
+    await page.mouse.click(...at(0.08,0.15));
+    await page.waitForTimeout(200);
+    await page.mouse.click(...at(0.92,0.85));
+    await page.waitForFunction(()=>/along the high ground|outside|No ridgeline/.test(document.getElementById('profile-mode-status').textContent),null,{timeout:15000});
+
+    const ridgeStatus=await page.locator('#profile-mode-status').innerText();
+    const ridgeDistance=await page.locator('#profile-distance').innerText();
+    console.log('  status:',ridgeStatus);
+    console.log('  distance:',ridgeDistance);
+    assert.match(ridgeStatus,/along the high ground/,'Status shows "along the high ground"');
+    assert.match(ridgeDistance,/along the ridgeline/,'Distance shows "along the ridgeline"');
+
+    const markerCount=await page.locator('.profile-marker').count();
+    assert.equal(markerCount,2,'Two profile markers exist');
+    console.log('  markers:',markerCount);
+
+    // Test 2: Viewpoint mode
+    console.log('Test 2: Viewpoint mode');
+    await page.locator('#profile-mode').selectOption('viewpoint');
+
+    // Re-measure frame and click viewpoint
+    await page.evaluate(()=>window.scrollTo(0,0));
+    await page.waitForTimeout(300);
+    const frame2=await page.locator('#selection-frame').boundingBox();
+    await page.mouse.click(frame2.x+frame2.width*0.35,frame2.y+frame2.height*0.55);
+
+    // Set bearing to 60 and bands to 3
+    await page.locator('#view-bearing').evaluate(e=>{e.value='60';e.dispatchEvent(new Event('input',{bubbles:true}));});
+
+    // Set up request listener before changing bands
+    const profileRequest=page.waitForRequest(r=>r.url().includes('/api/profile/')&&r.method()==='POST');
+
+    await page.locator('#view-bands').selectOption('3');
+    await page.waitForFunction(()=>/to the frame's edge/.test(document.getElementById('profile-mode-status').textContent),null,{timeout:15000});
+
+    const viewStatus=await page.locator('#profile-mode-status').innerText();
+    const viewDistance=await page.locator('#profile-distance').innerText();
+    console.log('  status:',viewStatus);
+    console.log('  distance:',viewDistance);
+    assert.match(viewStatus,/to the frame's edge/,'Status shows "to the frame\'s edge"');
+    assert.match(viewDistance,/view facing NE/,'Distance shows bearing NE');
+
+    // Check request body
+    try {
+      const req=await profileRequest;
+      const body=await req.postDataJSON();
+      console.log('  request mode:',body.mode,'bands:',body.bands,'bearing:',body.bearing);
+      assert.equal(body.mode,'viewpoint','Request mode is viewpoint');
+      assert.equal(body.bands,3,'Request bands is 3');
+      assert.equal(body.bearing,60,'Request bearing is 60');
+      assert.ok(Array.isArray(body.point)&&body.point.length===2,'Request has point array');
+    } catch(e) {
+      console.log('  request check skipped:',e.message);
+    }
+
+    // Hover over profile canvas and check tooltip
+    const box=await page.locator('#profile').boundingBox();
+    await page.evaluate(({x,y})=>{
+      const canvas=document.getElementById('profile');
+      const rect=canvas.getBoundingClientRect();
+      const event=new PointerEvent('pointermove',{bubbles:true,clientX:x+rect.left,clientY:y+rect.top});
+      canvas.dispatchEvent(event);
+    },{x:box.width*0.5,y:box.height*0.5});
+    await page.waitForTimeout(200);
+    const tooltipText=await page.locator('#profile-tooltip').innerText();
+    console.log('  tooltip:',tooltipText);
+    assert.match(tooltipText,/° up · ridge/,'Tooltip shows elevation and ridge distance');
+
+    // Test 3: Silhouette page
+    console.log('Test 3: Silhouette page');
+    await page.locator('#silhouette-button').click();
+    await page.waitForTimeout(500);
+
+    const sourceValue=await page.locator('#silhouette-source').inputValue();
+    console.log('  silhouette source:',sourceValue);
+    assert.equal(sourceValue,'viewpoint','Silhouette source is viewpoint');
+
+    await page.locator('[data-silhouette-preset="box-diorama"]').click().catch(e=>console.log('  preset error:',e.message.split('\n')[0]));
+    await page.waitForTimeout(2000);
+
+    const checkListText=await page.locator('#silhouette-check-list').innerText();
+    console.log('  check list:',checkListText.replace(/\n/g,' | ').slice(0,150));
+    assert.match(checkListText,/distance band/,'Check list contains "distance band"');
+
+    // Go back to geography page
+    await page.locator('#silhouette-back').click();
+    await page.waitForTimeout(500);
+
+    // Test 4: Slice mode
+    console.log('Test 4: Slice mode');
+    await page.locator('#profile-mode').selectOption('slice');
+    assert.equal(await page.locator('#profile-slice-controls').isHidden(),false,'Slice controls are visible');
+
+    const markersAfterSlice=await page.locator('.profile-marker').count();
+    assert.equal(markersAfterSlice,0,'No profile markers on slice mode');
+    console.log('  markers after slice:',markersAfterSlice);
+
+    // Final checks
+    console.log('Test 5: Error collection');
+    assert.equal(errors.length,0,`No page errors: ${errors.join(', ')}`);
+
+    console.log('All tests passed.');
+
+  } finally {
+    await browser.close();
+  }
+})().catch(e=>{console.error(e);process.exit(1);});

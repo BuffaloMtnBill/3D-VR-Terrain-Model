@@ -29,6 +29,7 @@ from .elevation import SOURCES
 from .features import parts as geometry_parts, to_selection
 from .mesh import ModelOptions, binary_stl, model_elevations, relief_method
 from .printing import model_xml, package_3mf
+from .profiles import band, profile_options, ridgeline, skyline_profile, viewpoint
 from .routes import ROUTE_ID, along
 
 BED_MM = 256  # the common printer bed the size hint is measured against
@@ -61,7 +62,7 @@ class SilhouetteOptions:
     vertical_scale: float = 2.0  # × true proportions at that width
     base_mm: float = 8.0  # solid strip under the lowest point
     smoothing: float = 0.0  # percent
-    source: str = "true"  # true elevations, "shaped" by the model's elevation profile, or the uploaded "route"
+    source: str = "true"  # true elevations, "shaped" by the model's elevation profile, the uploaded "route", a "ridgeline", or a "viewpoint" skyline
     relief: str = "standard"
     relief_strength: float = 50.0
     mirror: bool = False
@@ -104,6 +105,13 @@ class SilhouetteOptions:
     tick_every: float = 1.0  # miles or kilometers, as units
     units: str = "ft"  # the app's switch: ft ticks every mile, m every kilometer
     start_finish: bool = False
+    # Profiles drawn on the geography page (profiles.py); points are (latitude, longitude).
+    ridge_start: tuple = ()
+    ridge_end: tuple = ()
+    view_point: tuple = ()
+    view_bearing: float = 0.0
+    view_fov: float = 120.0
+    view_eye_m: float = 2.0
 
     @classmethod
     def from_dict(cls, value):
@@ -143,7 +151,7 @@ class SilhouetteOptions:
                 raise ValueError(message)
             numbers[name] = float(number)
         choices = {"direction": (("ew", "ns"), "Choose ew (left to right) or ns (top to bottom) as the slice direction."),
-                   "source": (("true", "shaped", "route"), "Choose true, shaped, or route as the profile source."),
+                   "source": (("true", "shaped", "route", "ridgeline", "viewpoint"), "Choose true, shaped, route, ridgeline, or viewpoint as the profile source."),
                    "text_style": (TEXT_STYLES, "Choose engrave, emboss, or stencil as the text style."),
                    "text_align": (("left", "center", "right"), "Choose left, center, or right as the text position."),
                    "mount": (MOUNTS, "Choose none, stand, holes, or keyholes as the mount."),
@@ -205,7 +213,17 @@ class SilhouetteOptions:
         route_id = value.get("route_id", "")
         if picked["source"] == "route" and (not isinstance(route_id, str) or not ROUTE_ID.fullmatch(route_id)):
             raise ValueError("Upload a GPX route on the geography selection page to use its elevation profile.")
-        options = cls(**numbers, **picked, **colors, **flags, trim=(float(trim[0]), float(trim[1])), text="\n".join(lines),
+        drawn = {}
+        if picked["source"] == "ridgeline":
+            ridge = profile_options({"mode": "ridgeline", "start": value.get("ridge_start"), "end": value.get("ridge_end")})
+            drawn = {"ridge_start": ridge["start"], "ridge_end": ridge["end"]}
+        elif picked["source"] == "viewpoint":
+            view = profile_options({"mode": "viewpoint", "point": value.get("view_point"), "bearing": value.get("view_bearing", 0.0),
+                                    "fov": value.get("view_fov", 120.0), "eye_m": value.get("view_eye_m", 2.0)})
+            drawn = {"view_point": view["point"], "view_bearing": view["bearing"], "view_fov": view["fov"], "view_eye_m": view["eye_m"]}
+            if [position for position, _, _ in parsed] != sorted(position for position, _, _ in parsed):
+                raise ValueError("A viewpoint's layers are distance bands: give each layer a farther distance than the one in front.")
+        options = cls(**numbers, **picked, **colors, **flags, **drawn, trim=(float(trim[0]), float(trim[1])), text="\n".join(lines),
                       relief=relief_method(value.get("relief", "standard")), layers=tuple(parsed), peg_count=int(pegs),
                       route_id=route_id if picked["source"] == "route" else "")
         if options.fit == "box":
@@ -215,8 +233,8 @@ class SilhouetteOptions:
             raise ValueError("Engraved text must leave at least 0.4 mm behind it. Make the text shallower or the piece thicker.")
         if count > 1 and options.fit == "none":
             raise ValueError("Several layers need a lamp-base or shadow-box fit to stand in. Choose one, or use a single layer.")
-        if count > 1 and options.source == "route":
-            raise ValueError("A route profile makes a single layer. Use one layer.")
+        if count > 1 and options.source in ("route", "ridgeline"):
+            raise ValueError(f"A {options.source} profile makes a single layer. Use one layer.")
         if options.fit != "none" and options.mount != "none":
             raise ValueError("A lamp base or shadow box holds the piece, so set the mount to none.")
         if options.fit == "lamp":
@@ -390,6 +408,11 @@ def profile_heights(terrain, options, position=None, sources=None):
         if sources.route is None:
             raise ValueError("The uploaded route is no longer available. Upload the GPX file again.")
         distances, values, length = route_profile(terrain, sources.route)
+    elif options.source == "ridgeline":
+        ridge = ridgeline(terrain, options.ridge_start, options.ridge_end)
+        distances, values, length = ridge["distances"], ridge["heights"], ridge["length"]
+    elif options.source == "viewpoint":
+        distances, values, length = view_heights(terrain, options, position)
     else:
         position = options.position if position is None else position
         distances, values, length = slice_heights(terrain, options, position)
@@ -404,6 +427,24 @@ def profile_heights(terrain, options, position=None, sources=None):
         heights = np.convolve(padded, np.ones(2*radius+1)/(2*radius+1), mode="valid")
     scale = options.width_mm/(end-start)
     return (samples-start)*scale, heights, end-start, start, scale
+
+
+def view_heights(terrain, options, position=None):
+    """A viewpoint's skyline as a profile: lengths along a cylinder around the viewer (profiles.skyline_profile).
+
+    One layer is the whole skyline. With several, each layer is a distance band: terrain between the layer in front's
+    distance and its own (percent of the farthest terrain seen), nearest ridges at the front. Directions where a band
+    holds no terrain sit just below the lowest skyline, so the shared datum stays near the view."""
+    view = viewpoint(terrain, options.view_point, options.view_bearing, options.view_fov, options.view_eye_m)
+    specs = layer_specs(options)
+    floor = float(view["angles"].min())-1
+    if len(specs) == 1:
+        angles = view["angles"]
+    else:
+        far = (options.position if position is None else position)
+        near = max((spec for spec, _, _ in specs if spec < far), default=0.0)
+        angles = np.maximum(band(view, near/100, far/100), floor)
+    return skyline_profile(angles, options.view_fov)
 
 
 def ridge_points(x, heights, datum, base, scale, options):
@@ -733,7 +774,7 @@ def outline_json(terrain, options, sources=None):
             "fit": {key: value for key, value in fit.items() if key not in ("parts", "placements")}, "parts": fit["parts"],
             "width_mm": round(shapes["width"], 3), "height_mm": round(shapes["height"], 3), "thickness_mm": options.thickness_mm,
             "min_profile_mm": round(shapes["lowest"], 3), "slice_length_m": round(shapes["span_m"], 2), "ticks": shapes["ticks"],
-            "profile": "route" if options.source == "route" else "slice", "points": len(shapes["points"]),
+            "profile": options.source if options.source in ("route", "ridgeline", "viewpoint") else "slice", "points": len(shapes["points"]),
             "warnings": shapes["warnings"], "notes": shapes["notes"]}
 
 

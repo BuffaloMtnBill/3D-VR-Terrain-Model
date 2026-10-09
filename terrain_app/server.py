@@ -25,6 +25,7 @@ from .addons import BALL_COLOR, catalog as studio_catalog, check_project, platfo
 from .studio import marker_ball_file, marker_platform_file, studio_export, studio_format
 from .hydrography import HydrographyClient, HYDROGRAPHY_URL, water_source
 from .silhouette import PRESET_DATA as SILHOUETTE_PRESETS, SilhouetteOptions, Sources, outline_json, silhouette_export
+from .profiles import profile_json, profile_options
 from .routes import MAX_GPX_BYTES, RouteStore, public_route, route_lines, route_options, with_route
 
 ROOT = Path(__file__).parent
@@ -574,6 +575,14 @@ def create_app(test_config=None):
         content, mimetype, filename = silhouette_export(terrain, options, payload.get("format", "stl"), attribution,
                                                         silhouette_sources(identifier, options))
         return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True, download_name=filename)
+
+    @app.post("/api/profile/<identifier>")
+    def terrain_profile(identifier):
+        """A ridgeline between two points or the skyline from a viewpoint, for the geography page's profile chart."""
+        terrain = find_terrain(identifier)
+        if terrain is None:
+            return jsonify(error="Terrain is unavailable. Generate the area again."), 404
+        return jsonify(profile_json(terrain, profile_options(request.get_json())))
 
     @app.post("/api/routes")
     def upload_route():
