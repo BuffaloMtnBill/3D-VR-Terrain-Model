@@ -1199,7 +1199,10 @@ async function init() {
     $('place').value=config.default_place;
     setupMap(config); setupScene(); wireControls(); wireRoute();
     profileModes=createProfileModes({get map(){return map;},get state(){return state;},api,units,number,
-      redraw:()=>drawProfile(),sliceVisible:()=>updateProfileMapLine(),changed:()=>silhouette?.modelChanged()});
+      redraw:()=>drawProfile(),sliceVisible:()=>updateProfileMapLine(),changed:()=>silhouette?.modelChanged(),
+      // The frame was moved, resized, or switched source since the terrain was generated: picking points generates it first.
+      stale:()=>Boolean(state.selection)&&!state.selectionError&&(!state.data||!sameBounds(state.selection,state.data.bounds)||$('elevation-source').value!==state.data.source_id),
+      get generating(){return state.loading;},generate:()=>generateTerrain()});
     profileModes.attach(map);
     if(config.example_available) {
       state.loadedName=initialPlace.name;

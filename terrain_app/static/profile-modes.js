@@ -75,6 +75,7 @@ export function createProfileModes(ctx) {
   // ---------- picking on the map ----------
   function setPicking(value) {
     picking=value;
+    if(picking&&ctx.stale?.()&&!ctx.generating)ctx.generate();  // points belong to the frame on screen: generate it first
     $('profile-pick-ridge').setAttribute('aria-pressed',String(picking==='ridgeline'));
     $('profile-pick-view').setAttribute('aria-pressed',String(picking==='viewpoint'));
     ctx.map?.getContainer().classList.toggle('aligning-profile',Boolean(picking));
@@ -104,10 +105,15 @@ export function createProfileModes(ctx) {
     drawMap();
     if(mode==='slice')return;
     if(!ready()){result=null;error=null;ctx.redraw();if(!picking)status(mode==='viewridge'?'Pick a viewpoint on the map to see the ridgelines visible from it.':mode==='ridgeline'?'Pick two points on the map to follow the highest ground between them.':'Pick a viewpoint on the map to see its skyline.');return;}
+    // While the frame on screen is being generated, keep the picked points; the new terrain redraws the profile.
+    if(ctx.generating){status('Generating the terrain for this frame; the profile follows.');return;}
     if(!ctx.state.id){status('Generate the terrain to draw this profile.');return;}
     // Points kept from another area (after moving the frame and generating) can't be used here: pick new ones.
     const bounds=ctx.state.data?.bounds,outside=point=>{const {u,v}=locationFraction(bounds,point[0],point[1]);return !(u>=-1e-6&&u<=1+1e-6&&v>=-1e-6&&v<=1+1e-6);};
-    if(bounds&&(mode==='ridgeline'?[points.start,points.end]:[points.point]).some(outside)){repick();return;}
+    if(bounds&&(mode==='ridgeline'?[points.start,points.end]:[points.point]).some(outside)) {
+      if(ctx.stale?.()){ctx.generate();status('Generating the terrain for this frame; the profile follows.');return;}  // clicked in a moved frame
+      repick();return;
+    }
     const token=++request,body=mode==='ridgeline'?{mode,start:points.start,end:points.end}:{mode:'viewpoint',point:points.point,bearing:Number($('view-bearing').value),fov:Number($('view-fov').value),eye_m:Number($('view-eye').value),
       bands:Number($('view-bands').value),min_radius_m:Number($('view-radius').value),ridges:mode==='viewridge'||$('view-ridges').checked};
     // Distance bands go up to 5; detected ridges up to 7.

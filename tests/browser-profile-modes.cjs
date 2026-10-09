@@ -214,6 +214,23 @@ let outlineAfter;
     await page.waitForFunction(()=>/ridges? at/.test(document.getElementById('profile-mode-status').textContent),null,{timeout:15000});
     console.log('  status:',await page.locator('#profile-mode-status').innerText());
 
+    // Test 3d: picking in a frame moved since the last Generate generates it first and keeps the picked point.
+    console.log('Test 3d: Picking in a moved frame');
+    await page.locator('#profile-mode').selectOption('slice');
+    await page.evaluate(()=>window.scrollTo(0,0));
+    const mapBox=await page.locator('#map').boundingBox();
+    await page.mouse.move(mapBox.x+mapBox.width*.5,mapBox.y+mapBox.height*.6);await page.mouse.down();
+    await page.mouse.move(mapBox.x+mapBox.width*.35,mapBox.y+mapBox.height*.6,{steps:8});await page.mouse.up();
+    await page.waitForFunction(()=>/Generate to update/.test(document.getElementById('selection-state').textContent),null,{timeout:10000});
+    await page.locator('#profile-mode').selectOption('viewpoint');
+    await page.locator('#profile-pick-view').click();
+    assert.equal(await page.evaluate(()=>document.getElementById('job-progress').hidden),false,'Picking starts generating the moved frame');
+    const movedFrame=await page.locator('#selection-frame').boundingBox();
+    await page.mouse.click(movedFrame.x+movedFrame.width*.75,movedFrame.y+movedFrame.height*.5);
+    await page.waitForFunction(()=>/to the frame's edge|ridges? at/.test(document.getElementById('profile-mode-status').textContent),null,{timeout:120000});
+    assert.doesNotMatch(await page.locator('#profile-mode-status').innerText(),/outside this area/);
+    console.log('  status:',await page.locator('#profile-mode-status').innerText());
+
     // Test 4: Slice mode
     console.log('Test 4: Slice mode');
     await page.locator('#profile-mode').selectOption('slice');
