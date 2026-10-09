@@ -8,6 +8,9 @@ import json
 import logging
 import os
 import re
+import subprocess
+import sys
+from threading import Timer
 import time
 import uuid
 
@@ -55,6 +58,19 @@ class WorkerPools:
         self.terrain.shutdown(wait=wait)
         self.features.shutdown(wait=wait)
         self.studio.shutdown(wait=wait)
+
+
+def restart_process():
+    """Start this server again with the same command line (python app.py, python -m terrain_app, or the installed
+    command), so code changes take effect. POSIX replaces the process; Windows starts a new one and exits."""
+    command = [sys.executable, *getattr(sys, "orig_argv", [sys.executable, *sys.argv])[1:]]
+    logging.getLogger(__name__).info("Restarting Terrain Studio: %s", " ".join(command))
+    if os.name == "nt":
+        subprocess.Popen(command)
+        os._exit(0)
+    # The listening socket survives exec as an open descriptor, which would keep the port busy for the new server.
+    os.closerange(3, min(os.sysconf("SC_OPEN_MAX"), 65536))
+    os.execv(sys.executable, command)
 
 
 def create_app(test_config=None):
@@ -199,6 +215,12 @@ def create_app(test_config=None):
     @app.get("/")
     def index():
         return render_template("index.html", presets=presets, default_place=default_place, silhouette_presets=SILHOUETTE_PRESETS)
+
+    @app.post("/api/restart")
+    def restart_server():
+        """The header's Restart server button: reply first, then restart once the response has gone out."""
+        Timer(.5, app.config.get("RESTART", restart_process)).start()
+        return jsonify(restarting=True), 202
 
     @app.get("/api/config")
     def config():

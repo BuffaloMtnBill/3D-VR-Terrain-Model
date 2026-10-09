@@ -138,3 +138,21 @@ def test_route_upload_lines_and_3mf_route_part(tmp_path, terrain, cover):
         assert "Upload the GPX file again" in client.post("/api/export/print", json={"format": "3mf", "print_palette": PALETTE, "route": missing}).get_json()["error"]
     finally:
         app.extensions["terrain"]["executor"].shutdown(wait=True)
+
+
+def test_restart_endpoint_replies_then_restarts(tmp_path):
+    restarted = []
+    app = create_app({"TESTING": True, "CACHE_DIR": tmp_path / "tiles", "RESTART": lambda: restarted.append(True)})
+    try:
+        client = app.test_client()
+        assert client.post("/api/restart", data="{}", content_type="text/plain").status_code == 415
+        assert client.post("/api/restart", json={}, headers={"Origin": "https://example.com"}).status_code == 403
+        response = client.post("/api/restart", json={})
+        assert response.status_code == 202 and response.get_json() == {"restarting": True}
+        for _ in range(40):
+            if restarted:
+                break
+            time.sleep(.05)
+        assert restarted == [True]
+    finally:
+        app.extensions["terrain"]["executor"].shutdown(wait=True)

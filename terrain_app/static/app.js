@@ -630,6 +630,23 @@ async function ensureFeatures(force=false) {
   featureRequest=request;featureStatus();return request.promise;
 }
 
+// The header's Restart server button: the server restarts itself, then the page reloads once it answers again.
+async function restartServer() {
+  if(state.loading&&!confirm('Terrain is still being generated. Restart the server anyway?'))return;
+  if(!state.loading&&!confirm('Restart the Terrain Studio server? Unsaved downloads in progress stop, and the page reloads when it is back.'))return;
+  const button=$('restart-server');button.disabled=true;button.firstChild.textContent='Restarting… ';
+  try{await api('/api/restart',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});}
+  catch(error){button.disabled=false;button.firstChild.textContent='Restart server ';return notify(error.message,true);}
+  notify('Restarting the server; this page reloads when it is back.');
+  await new Promise(resolve=>setTimeout(resolve,1200));
+  for(let attempt=0;attempt<60;attempt++) {
+    try{const response=await fetch('/api/config',{cache:'no-store'});if(response.ok){location.reload();return;}}catch{/* Still restarting. */}
+    await new Promise(resolve=>setTimeout(resolve,500));
+  }
+  button.disabled=false;button.firstChild.textContent='Restart server ';
+  notify('The server did not come back. Start it again from its terminal (python app.py).',true);
+}
+
 async function generateTerrain() {
   if(state.loading) return;
   if(state.selectionError)return notify(state.selectionError,true);
@@ -1155,6 +1172,7 @@ function wireControls() {
   featureStatus();
   $('generate').addEventListener('click',generateTerrain);
   $('help-button').addEventListener('click',()=>$('help-dialog').showModal());
+  $('restart-server').addEventListener('click',restartServer);
   studio=createStudio(studioContext);
   $('export-button').addEventListener('click',()=>{if(!state.data)return notify('Generate terrain before exporting.',true);updateExportDimensions();updatePrintPalette();studio.open();});
   // Colors are chosen on the design page; the geography page's hint opens it at the Colors card.

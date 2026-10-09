@@ -12,6 +12,10 @@ Requires Python 3.11 or newer and a modern browser with WebGL support. No API
 keys or accounts are needed. Get the code with `git clone`, or with
 **Code → Download ZIP** on GitHub and unzip it.
 
+**Restart server** in the page header restarts the running server with the same
+command it was started with (so edited code takes effect) and reloads the page
+once it answers again.
+
 ### Windows
 
 1. Install Python 3.11 or newer from [python.org](https://www.python.org/downloads/windows/).
