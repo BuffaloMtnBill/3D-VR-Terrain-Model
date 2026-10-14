@@ -47,7 +47,7 @@ const DEFAULTS={width_mm:180,vertical_scale:2,base_mm:8,thickness_mm:4,smoothing
   layer_count:1,layer_positions:[],layer_step:6,layer_spacing:6,include_buildings:false,building_corridor_m:30,ticks:false,tick_every:1,
   start_finish:false,peg_count:0,peg_diameter:6,peg_length:20,summit_pin:false,pin_diameter:1.8,pin_depth:10,photo_slot:false,photo_gap:1,
   led_channel:false,led_width:5,led_depth:2,min_feature_mm:1,comb_clearance:.3,text_x:null,text_y:null,text_lines:[],line_spacing:1.6,race_kind:'running',finish_time:'',thickness_by_distance:false,thickness_near_mm:3,thickness_far_mm:1.5,
-  color_by_distance:false,distance_colors:['#234e40','#678272','#acb6a4','#f0ead6'],color_zones:false,clouds:false,cloud_color:'#f0ead6'};
+  color_by_distance:false,distance_colors:['#234e40','#678272','#acb6a4','#f0ead6'],color_zones:false,clouds:false,cloud_color:'#f0ead6',ridge_edits:[],ridge_basis:null};
 // What a preset decides: choosing another preset (or Custom) resets these before applying its own. Slice, caption, colors, and the
 // lamp and box measurements are kept.
 const PRESET_OWNED=['fit','layer_count','layer_positions','layer_step','layer_spacing','include_buildings','ticks','tick_every','start_finish',
@@ -57,7 +57,7 @@ const PRESET_OWNED=['fit','layer_count','layer_positions','layer_step','layer_sp
 const TEXT_STYLES={regular:'Regular',bold:'Bold',italic:'Italic','bold-italic':'Bold italic'},MAX_TEXT_LINES=6;
 const cleanLine=line=>line&&typeof line==='object'&&typeof line.text==='string'?{text:line.text.replace(/\s+/g,' ').slice(0,60),
   size:Number.isFinite(line.size)?clamp(line.size,1,40):5,style:TEXT_STYLES[line.style]?line.style:'bold',tracking:Number.isFinite(line.tracking)?clamp(line.tracking,-20,100):0}:null;
-const CLIENT_ONLY=['layer_count','layer_positions','layer_step','race_kind','finish_time'];
+const CLIENT_ONLY=['layer_count','layer_positions','layer_step','race_kind','finish_time','ridge_basis'];
 const MOUNT_HINTS={none:'',stand:'Two feet print beside the piece, each with a slot the thickness plus 0.2 mm wide; the piece stands upright in them.',
   holes:'Two holes through the base, for nails or screws.',keyholes:'Slide the piece down onto two screw heads. Keyholes need about 14 mm of height at each end.'};
 
@@ -89,6 +89,7 @@ const longDate=date=>new Date(`${date}T12:00:00`).toLocaleDateString(undefined,{
 export function createSilhouette(ctx) {
   const dialog=$('silhouette');
   let settings=structuredClone(DEFAULTS),storeKey=null,result=null,resultKey=null,timer=null,request=null,view='front',busy=false,three=null;
+  let ridgeEditing=false,ridgeSelection=new Set(),ridgeUndo=[],ridgeRedo=[],ridgeDragging=false;
   // These read the current settings, or a candidate's (s) when the Start from preview shows a preset before it is applied.
   const preset=(s=settings)=>PRESETS.presets[s.preset]||PRESETS.presets.custom;
   // One piece in color zones: a viewpoint's ridges (or bands) on one base strip, each zone its own color; not in a shadow box.
@@ -103,7 +104,8 @@ export function createSilhouette(ctx) {
   // ---------- settings: per framed area, like the 3D model design page's projects ----------
   function areaKey() {
     const b=ctx.state.data.bounds;
-    return STORE_PREFIX+hash(JSON.stringify({bounds:['north','south','east','west'].map(name=>Number(b[name]).toFixed(6)),rotation:Number(b.rotation_deg||0).toFixed(4)}));
+    return STORE_PREFIX+hash(JSON.stringify({bounds:['north','south','east','west'].map(name=>Number(b[name]).toFixed(6)),rotation:Number(b.rotation_deg||0).toFixed(4),
+      ...(b.shape&&b.shape!=='rectangle'?{shape:b.shape}:{})}));
   }
   const placeName=()=>ctx.state.loadedName||ctx.state.name||'';
   const cleanText=text=>String(text).replace(/\r\n?/g,'\n').split('\n').slice(0,3).map(line=>line.slice(0,60)).join('\n');
@@ -127,6 +129,17 @@ export function createSilhouette(ctx) {
     if(typeof saved.finish_time==='string')clean.finish_time=saved.finish_time.slice(0,20);
     if(Array.isArray(saved.distance_colors)&&saved.distance_colors.length===4&&saved.distance_colors.every(isHex))clean.distance_colors=saved.distance_colors.map(color=>color.toLowerCase());
     clean.color_zones=saved.color_zones===true;
+    if(Array.isArray(saved.ridge_edits)&&saved.ridge_edits.length<=7) {
+      const seen=new Set();
+      clean.ridge_edits=saved.ridge_edits.filter(edit=>{
+        if(!edit||!Number.isInteger(edit.layer)||edit.layer<0||edit.layer>6||seen.has(edit.layer)||typeof edit.deleted!=='boolean'||!Array.isArray(edit.curve))return false;
+        const curve=edit.curve;
+        if(curve.length&&(curve.length<2||curve.length>1025||curve[0]?.[0]!==0||curve.at(-1)?.[0]!==1))return false;
+        if(!curve.every((p,i)=>Array.isArray(p)&&p.length===2&&p.every(Number.isFinite)&&p[0]>=0&&p[0]<=1&&p[1]>=0&&p[1]<=5&&(!i||p[0]>curve[i-1][0])))return false;
+        seen.add(edit.layer);return true;
+      }).map(edit=>({layer:edit.layer,deleted:edit.deleted,curve:edit.curve}));
+    }
+    if(typeof saved.ridge_basis==='string')clean.ridge_basis=saved.ridge_basis;
     for(const name of INTEGERS)clean[name]=Math.round(clean[name]);
     if(clean.layer_count>1&&clean.layer_positions.length!==clean.layer_count)clean.layer_count=Math.max(1,clean.layer_positions.length);
     return clean;
@@ -135,6 +148,7 @@ export function createSilhouette(ctx) {
     const key=areaKey();
     if(key===storeKey)return;
     storeKey=key;
+    ridgeSelection.clear();ridgeUndo=[];ridgeRedo=[];
     let saved=null;
     try{saved=sanitize(JSON.parse(localStorage.getItem(key)||'null'));}catch{saved=null;}
     if(saved)settings=saved;
@@ -306,6 +320,7 @@ export function createSilhouette(ctx) {
   // The settings a preset gives, from these (base) settings: a new object, so the Start from preview can show a preset unapplied.
   function presetSettings(id,base=settings) {
     const chosen=PRESETS.presets[id]||PRESETS.presets.custom,rules=chosen.rules||{},s=structuredClone(base);
+    s.ridge_edits=[];s.ridge_basis=null;
     for(const name of PRESET_OWNED)s[name]=structuredClone(DEFAULTS[name]);
     if(s.source==='route'||(s.source==='shaped'&&s.preset==='glow-skyline'))s.source='true';
     Object.assign(s,structuredClone(chosen.settings||{}),{preset:id});
@@ -323,6 +338,7 @@ export function createSilhouette(ctx) {
   }
   function applyPreset(id) {
     settings=presetSettings(id);followRidges(false);
+    settings.ridge_edits=[];settings.ridge_basis=null;ridgeSelection.clear();ridgeUndo=[];ridgeRedo=[];
     writeForm();save();if(three)three.fitted=false;schedule();
   }
   function buildPresetList() {
@@ -403,6 +419,22 @@ export function createSilhouette(ctx) {
     return {...body,...extra};
   }
 
+  // Curve edits are normalized to width and base, so size, base-step, thickness and color changes preserve them.
+  // A different slice, viewpoint, detection count or source starts from its own terrain curves.
+  function ridgeBasis() {
+    const body=requestBody();
+    return JSON.stringify(['source','direction','position','trim','mirror','smoothing','vertical_scale','relief','relief_strength','route_id',
+      'ridge_start','ridge_end','view_point','view_bearing','view_fov','view_eye_m','view_min_radius_m','view_max_radius_m','view_ridges']
+      .map(key=>body[key]??null).concat([body.layers?.map(layer=>layer.position)||[]]));
+  }
+  function syncRidgeBasis() {
+    const basis=ridgeBasis();
+    if(settings.ridge_basis&&settings.ridge_basis!==basis) {
+      settings.ridge_edits=[];ridgeSelection.clear();ridgeUndo=[];ridgeRedo=[];
+    }
+    settings.ridge_basis=basis;save();
+  }
+
   // ---------- the slice: shared with the geography selection page's elevation profile ----------
   function syncSlice() {
     const direction=$('profile-direction'),own=$('silhouette-direction');
@@ -429,13 +461,16 @@ export function createSilhouette(ctx) {
   function schedule() {renderLayerLine();clearTimeout(timer);timer=setTimeout(refresh,120);}
   async function refresh() {
     if(!dialog.open||!ctx.state.id)return;
+    if(ridgeDragging){schedule();return;}
+    syncRidgeBasis();
     request?.abort();
     const controller=request=new AbortController(),body=requestBody();
     try {
       const response=await postJSON(`/api/silhouette/${ctx.state.id}/outline`,body,controller.signal);
       if(!response.ok)throw new Error(await errorMessage(response));
-      result=await response.json();
+      const data=await response.json();
       if(controller!==request)return;
+      result=data;
       resultKey=JSON.stringify(body);
       remember(body,result);
       // A caption dragged off the piece comes back where the server could fit it: keep that spot.
@@ -554,6 +589,7 @@ export function createSilhouette(ctx) {
 
   // ---------- front view: the design to scale, layers overlapped front to back as assembled ----------
   function draw() {
+    if(ridgeDragging)return;
     const root=$('silhouette-svg'),refocus=document.activeElement?.classList?.contains('sil-caption-select');root.replaceChildren();
     if(!result||!result.outline.outer.length)return;
     const fit=result.fit,layers=result.layers,W=result.width_mm,feet=result.mount.filter(item=>item.kind==='foot');
@@ -575,12 +611,14 @@ export function createSilhouette(ctx) {
     // Back layers first, each lifted to where it stands; the front layer last with its text and markings.
     for(let index=layers.length-1;index>0;index--) {
       const layer=layers[index];
-      svg('path',{class:'sil-body sil-layer','fill-rule':'evenodd',fill:layer.color,transform:`translate(0 ${-layer.y})`,d:polygonPath(layer.outline)},root);
+      svg('path',{class:'sil-body sil-layer','fill-rule':'evenodd',fill:layer.color,transform:`translate(0 ${-layer.y})`,d:polygonPath(layer.outline),
+        ...(layer.kind==='cloud'?{}:{'data-ridge-body':result.ridge_curves?.[index]?.layer})},root);
     }
     const front=svg('g',{transform:`translate(0 ${-layers[0].y})`},root);
     // A color-zone piece draws each zone in its color.
     if(result.zones?.length)for(const zone of result.zones)svg('path',{class:'sil-body sil-zone','fill-rule':'evenodd',fill:zone.color,d:zone.polygons.map(polygonPath).join('')},front);
-    else svg('path',{class:'sil-body','fill-rule':'evenodd',fill:layers.length>1||distanceColored()?layers[0].color:settings.body_color,d:polygonPath(result.outline)},front);
+    else svg('path',{class:'sil-body','fill-rule':'evenodd',fill:layers.length>1||distanceColored()?layers[0].color:settings.body_color,d:polygonPath(result.outline),
+      'data-ridge-body':result.ridge_curves?.[0]?.layer},front);
     let words=null;
     if(result.text.length) {
       const style=result.text_style,fill=style==='stencil'?'#101b14':settings.text_color;
@@ -601,6 +639,131 @@ export function createSilhouette(ctx) {
     svg('line',{x1:x,x2:x,y1:0,y2:-H},dims);svg('line',{x1:x-pad*.2,x2:x+pad*.2,y1:0,y2:0},dims);svg('line',{x1:x-pad*.2,x2:x+pad*.2,y1:-H,y2:-H},dims);
     svg('text',{class:'sil-label',x:W/2,y:y+font*1.3,'font-size':font,'text-anchor':'middle'},root).textContent=`${number(W)} mm`;
     svg('text',{class:'sil-label',x:x+font*.5,y:-H/2,'font-size':font,'dominant-baseline':'middle'},root).textContent=`${number(H)} mm`;
+    ridgeControls();
+    if(ridgeEditing)drawRidgeHandles(root,font);
+  }
+
+  // ---------- direct ridge editing: select/delete panels and pull a smooth neighborhood of their crests ----------
+  function ridgeControls() {
+    const curves=result?.ridge_curves||[],ids=new Set(curves.map(curve=>curve.layer));
+    const updating=Boolean(result)&&resultKey!==JSON.stringify(requestBody());
+    ridgeSelection=new Set([...ridgeSelection].filter(id=>ids.has(id)));
+    $('silhouette-ridge-edit').disabled=view!=='front'||!curves.length;
+    $('silhouette-ridge-edit').setAttribute('aria-pressed',String(ridgeEditing));
+    $('silhouette-ridge-actions').hidden=!ridgeEditing;
+    const list=$('silhouette-ridge-list');list.hidden=!ridgeEditing;list.replaceChildren();
+    if(ridgeEditing)for(const curve of curves) {
+      const label=document.createElement('label'),input=document.createElement('input');input.type='checkbox';input.checked=ridgeSelection.has(curve.layer);
+      input.dataset.ridge=curve.layer;input.addEventListener('change',()=>{
+        if(input.checked)ridgeSelection.add(curve.layer);else ridgeSelection.delete(curve.layer);
+        updateRidgeSelection();
+      });
+      label.append(input,curve.name);list.append(label);
+    }
+    $('silhouette-ridge-delete').disabled=!ridgeSelection.size||ridgeSelection.size>=curves.length||ridgeDragging||updating;
+    $('silhouette-ridge-undo').disabled=!ridgeUndo.length||ridgeDragging;
+    $('silhouette-ridge-redo').disabled=!ridgeRedo.length||ridgeDragging;
+    $('silhouette-ridge-reset').disabled=!settings.ridge_edits.length||ridgeDragging;
+    $('silhouette-ridge-hint').textContent=!ridgeEditing?'Edit ridgelines in the front view. Changes also apply to exported models.'
+      :ridgeSelection.size===curves.length?'Keep at least one ridgeline. Drag a curve to reshape it; Undo restores edits.'
+      :`${ridgeSelection.size} selected · click a curve or its checkbox; Ctrl/Shift-click adds more. Drag the curve to reshape it. Delete removes selected ridges; keep at least one.`;
+  }
+  function updateRidgeSelection() {
+    for(const line of $('silhouette-svg').querySelectorAll('.sil-ridge-line'))line.classList.toggle('selected',ridgeSelection.has(Number(line.dataset.ridge)));
+    ridgeControls();
+  }
+  function commitRidgeEdits(edits) {
+    ridgeUndo.push(structuredClone(settings.ridge_edits));if(ridgeUndo.length>40)ridgeUndo.shift();ridgeRedo=[];
+    settings.ridge_edits=edits;save();ridgeControls();schedule();
+  }
+  function deleteRidges() {
+    const curves=result?.ridge_curves||[];
+    if(!ridgeSelection.size||ridgeSelection.size>=curves.length||ridgeDragging||resultKey!==JSON.stringify(requestBody()))return;
+    const edits=structuredClone(settings.ridge_edits);
+    for(const layer of ridgeSelection) {
+      let edit=edits.find(item=>item.layer===layer);
+      if(!edit){edit={layer,deleted:false,curve:[]};edits.push(edit);}
+      edit.deleted=true;
+    }
+    commitRidgeEdits(edits);ridgeSelection.clear();
+  }
+  function ridgeHistory(undo) {
+    if(ridgeDragging)return;
+    const from=undo?ridgeUndo:ridgeRedo,to=undo?ridgeRedo:ridgeUndo;
+    if(!from.length)return;
+    to.push(structuredClone(settings.ridge_edits));settings.ridge_edits=from.pop();ridgeSelection.clear();save();ridgeControls();schedule();
+  }
+  function drawRidgeHandles(root,font) {
+    const W=result.width_mm,curves=result.ridge_curves||[],zonedPiece=Boolean(result.zones?.length);
+    for(const [order,ridge] of curves.entries()) {
+      const lift=zonedPiece?result.layers[0].y:result.layers[order].y;
+      const group=svg('g',{transform:`translate(0 ${-lift})`},root);
+      const path=points=>points.map(([x,y],i)=>`${i?'L':'M'}${x} ${-y}`).join('');
+      const line=svg('path',{class:`sil-ridge-line${ridgeSelection.has(ridge.layer)?' selected':''}`,stroke:ridge.color,d:path(ridge.curve),'data-ridge':ridge.layer},group);
+      const hit=svg('path',{class:'sil-ridge-hit',d:path(ridge.curve),tabindex:0,role:'button','data-ridge':ridge.layer,
+        'aria-label':`${ridge.name}: drag to reshape; Ctrl or Shift click to select multiple; Delete removes selected ridges`},group);
+      svg('title',{},hit).textContent=`${ridge.name} · drag the curve to reshape it`;
+      const grip=svg('circle',{class:'sil-ridge-grip',r:font*.4,visibility:'hidden'},group);
+      const toMm=event=>{const p=new DOMPoint(event.clientX,event.clientY).matrixTransform(root.getScreenCTM().inverse());return {x:p.x,y:-p.y-lift};};
+      let drag=null;
+      const preview=curve=>{
+        const points=curve.map(([x,y])=>[x*W,ridge.base_mm+y*W]);
+        line.setAttribute('d',path(points));hit.setAttribute('d',path(points));
+        if(!zonedPiece) {
+          const body=root.querySelector(`[data-ridge-body="${ridge.layer}"]`);
+          if(body)body.setAttribute('d',polygonPath({outer:[[0,0],...points,[W,0]],holes:result.layers[order].outline.holes}));
+        }
+      };
+      hit.addEventListener('pointerdown',event=>{
+        if(event.button!==0||ridgeDragging||resultKey!==JSON.stringify(requestBody()))return;
+        event.preventDefault();event.stopPropagation();hit.focus({preventScroll:true});
+        if(event.ctrlKey||event.metaKey||event.shiftKey) {
+          if(ridgeSelection.has(ridge.layer))ridgeSelection.delete(ridge.layer);else ridgeSelection.add(ridge.layer);
+          updateRidgeSelection();return;
+        }
+        if(!ridgeSelection.has(ridge.layer))ridgeSelection=new Set([ridge.layer]);
+        updateRidgeSelection();
+        const raw=ridge.curve.map(([x,y])=>[x/W,Math.max(0,(y-ridge.base_mm)/W)]);
+        const interpolate=x=>{let i=1;while(i<raw.length-1&&raw[i][0]<x)i++;const a=raw[i-1],b=raw[i];return a[1]+(b[1]-a[1])*(x-a[0])/(b[0]-a[0]||1);};
+        let xs=[...new Set([...raw.map(p=>p[0]),...Array.from({length:257},(_,i)=>i/256)])].filter(x=>x>=0&&x<=1).sort((a,b)=>a-b);
+        if(xs.length>1025)xs=Array.from({length:1025},(_,i)=>i/1024);
+        const from=toMm(event);
+        drag={pointer:event.pointerId,from,x:clamp(from.x/W,0,1),radius:Number($('silhouette-ridge-radius').value)/100,
+          original:xs.map(x=>[x,interpolate(x)]),curve:null};
+        ridgeDragging=true;clearTimeout(timer);request?.abort();hit.setPointerCapture(event.pointerId);
+        grip.setAttribute('cx',from.x);grip.setAttribute('cy',-from.y);grip.setAttribute('visibility','visible');
+        ridgeControls();
+      });
+      hit.addEventListener('pointermove',event=>{
+        if(!drag||event.pointerId!==drag.pointer)return;
+        const at=toMm(event),delta=(at.y-drag.from.y)/W,side=clamp((at.x-drag.from.x)/W,-drag.radius*.3,drag.radius*.3);
+        // Compact smooth falloff: both displacement and slope reach zero at the edge of the pull region.
+        drag.curve=drag.original.map(([x,y])=>{
+          const t=Math.min(1,Math.abs(x-drag.x)/drag.radius),weight=(1-t*t)**2;
+          // Taper sideways pulls at the ends and bound their size to keep x strictly increasing.
+          const edge=Math.min(1,x/(drag.radius+.001),(1-x)/(drag.radius+.001));
+          return [x+side*weight*edge,clamp(y+delta*weight,0,5)];
+        });
+        preview(drag.curve);grip.setAttribute('cx',at.x);grip.setAttribute('cy',-at.y);
+      });
+      const finish=cancel=>{
+        if(!drag)return;
+        const current=drag;drag=null;ridgeDragging=false;grip.setAttribute('visibility','hidden');
+        if(hit.hasPointerCapture(current.pointer))hit.releasePointerCapture(current.pointer);
+        if(!cancel&&current.curve&&current.curve.some((p,i)=>Math.hypot(p[0]-current.original[i][0],p[1]-current.original[i][1])*W>.02)) {
+          const edits=structuredClone(settings.ridge_edits),edit={layer:ridge.layer,deleted:false,curve:current.curve.map(([x,y])=>[round(x,10),round(y,10)])};
+          const i=edits.findIndex(item=>item.layer===ridge.layer);if(i<0)edits.push(edit);else edits[i]=edit;
+          commitRidgeEdits(edits);
+        } else {draw();ridgeControls();}
+      };
+      hit.addEventListener('pointerup',()=>finish(false));
+      hit.addEventListener('pointercancel',()=>finish(true));
+      hit.addEventListener('lostpointercapture',()=>finish(true));
+      hit.addEventListener('keydown',event=>{
+        if(event.key===' '||event.key==='Enter') {event.preventDefault();if(ridgeSelection.has(ridge.layer))ridgeSelection.delete(ridge.layer);else ridgeSelection.add(ridge.layer);updateRidgeSelection();}
+        if(event.key==='Escape'&&drag){event.preventDefault();event.stopPropagation();finish(true);}
+      });
+    }
   }
 
   // The caption's selection graphic: a dashed box with a move grip, dragged anywhere on the front piece (or nudged with the
@@ -757,7 +920,10 @@ export function createSilhouette(ctx) {
     }
   }
   function setView(next) {
+    if(ridgeDragging)return;
     view=next;
+    if(view!=='front')ridgeEditing=false;
+    ridgeControls();
     document.querySelectorAll('[data-silhouette-view]').forEach(button=>{const active=button.dataset.silhouetteView===view;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));});
     $('silhouette-svg').style.display=view==='front'?'':'none';$('silhouette-3d').hidden=view!=='3d';
     $('silhouette-view-hint').textContent=view==='front'?'Front view to scale · the grid is 10 mm':'Drag to orbit · scroll to zoom';
@@ -941,10 +1107,40 @@ export function createSilhouette(ctx) {
     finally{busy=false;buttons.forEach(button=>{button.disabled=false;});dialog.removeAttribute('aria-busy');}
   }
 
+  // CylinderLamp: the layers' ridge curves go to the lamp app (started if needed), which opens in a new tab.
+  async function cylinderLamp() {
+    if(busy||!ctx.state.id)return;
+    const status=$('silhouette-status'),button=$('silhouette-cylinder-lamp');
+    const tab=window.open('','_blank');      // opened now, while the click still allows a new tab
+    busy=true;button.disabled=true;status.classList.remove('error');status.textContent='Handing the layers to CylinderLamp…';
+    try {
+      const response=await postJSON(`/api/silhouette/${ctx.state.id}/cylinder-lamp`,{...requestBody(),name:placeName()});
+      if(!response.ok)throw new Error(await errorMessage(response));
+      const result=await response.json();
+      if(!result.running)throw new Error('CylinderLamp is not running and could not be started. Start it (./run.sh in its folder), then try again.');
+      if(tab)tab.location=result.url;else window.open(result.url,'_blank');
+      status.textContent=`${result.layers} layer${result.layers===1?'':'s'} opened in CylinderLamp.`;
+    } catch(error){tab?.close();status.classList.add('error');status.textContent=error.message;ctx.notify(error.message,true);}
+    finally{busy=false;button.disabled=false;}
+  }
+
   // Colors only repaint (the outline is unchanged); the preview's cached outline is shown in the new colors.
   function repaint() {draw();rebuild3d();if(result)remember(requestBody(),result);previewCurrent();}
   function wire() {
     buildPresetList();wireEditor();
+    $('silhouette-ridge-edit').addEventListener('click',()=>{ridgeEditing=!ridgeEditing;ridgeControls();draw();});
+    $('silhouette-ridge-delete').addEventListener('click',deleteRidges);
+    $('silhouette-ridge-undo').addEventListener('click',()=>ridgeHistory(true));
+    $('silhouette-ridge-redo').addEventListener('click',()=>ridgeHistory(false));
+    $('silhouette-ridge-reset').addEventListener('click',()=>{if(settings.ridge_edits.length)commitRidgeEdits([]);});
+    $('silhouette-ridge-radius').addEventListener('input',()=>{$('silhouette-ridge-radius-value').textContent=`${$('silhouette-ridge-radius').value}%`;});
+    dialog.addEventListener('keydown',event=>{
+      if(!ridgeEditing||event.target.closest('textarea,select,[contenteditable="true"],.sil-caption-select')||
+        (event.target.closest('input')&&!event.target.matches('#silhouette-ridge-list input')))return;
+      if(event.key==='Delete'||event.key==='Backspace'){event.preventDefault();deleteRidges();}
+      if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();ridgeHistory(!event.shiftKey);}
+      if(event.key==='Escape'&&!ridgeDragging){event.preventDefault();ridgeSelection.clear();updateRidgeSelection();}
+    });
     $('silhouette-back').addEventListener('click',()=>dialog.close());
     dialog.addEventListener('close',()=>{
       clearTimeout(timer);clearTimeout(previewTimer);request?.abort();previewRequest?.abort();if(three)three.renderer.setAnimationLoop(null);
@@ -979,6 +1175,7 @@ export function createSilhouette(ctx) {
     }));
     document.querySelectorAll('[data-silhouette-view]').forEach(button=>button.addEventListener('click',()=>setView(button.dataset.silhouetteView)));
     document.querySelectorAll('[data-silhouette-export]').forEach(button=>button.addEventListener('click',()=>exportFile(button.dataset.silhouetteExport)));
+    $('silhouette-cylinder-lamp').addEventListener('click',cylinderLamp);
     new ResizeObserver(()=>{if(dialog.open&&view==='front')draw();}).observe($('silhouette-view'));
   }
   wire();

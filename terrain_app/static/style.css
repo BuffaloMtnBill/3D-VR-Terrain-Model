@@ -79,6 +79,18 @@ dialog li strong{color:var(--tan)}
 #export-status,.export-extras .text-button{color:#fce0a5}
 .selection-frame{border-color:#f3d592;box-shadow:0 0 0 1200px #0b180b4d}
 .frame-label{background:#18291fef;color:#fff5c2}
+.map-shape-control{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}
+.map-shape-control select{width:auto;max-width:105px;font-size:10px;padding:4px 6px}
+.frame-resize-left,.frame-resize-top{display:none}
+.selection-frame[data-shape=oval],.selection-frame[data-shape=circle]{border-radius:50%}
+.selection-frame:not([data-shape=rectangle]) .frame-label{left:50%;top:12px;transform:translateX(-50%);white-space:nowrap}
+.selection-frame:not([data-shape=rectangle]) .frame-resize-width{top:calc(50% - 24px);height:48px}
+.selection-frame:not([data-shape=rectangle]) .frame-resize-height{left:calc(50% - 24px);width:48px}
+.selection-frame:not([data-shape=rectangle]) .frame-resize-left{display:block;left:-9px;top:calc(50% - 24px);width:16px;height:48px;cursor:ew-resize}
+.selection-frame:not([data-shape=rectangle]) .frame-resize-top{display:block;left:calc(50% - 24px);top:-9px;width:48px;height:16px;cursor:ns-resize}
+.frame-resize-left:after,.frame-resize-top:after{content:'';position:absolute;border:2px solid #f9fcf4;border-radius:5px;background:var(--green);box-shadow:0 1px 5px #19302040}
+.frame-resize-left:after{width:8px;height:34px;top:50%;left:3px;transform:translateY(-50%)}
+.frame-resize-top:after{width:34px;height:8px;left:50%;top:3px;transform:translateX(-50%)}
 .frame-resize-width:after,.frame-resize-height:after,
 .selection-frame.resizing{border-color:#ffffc8}
 .selection-frame.invalid{border-color:#e8b16c}

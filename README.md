@@ -92,13 +92,20 @@ cut, stand on a desk, light on an LED lamp base, or layer in a shadow box.
    buttons or mouse wheel to change the geographic area inside the frame. Buttons
    move in quarter-level steps; the wheel uses continuous fractional zoom with
    reduced sensitivity for precise framing.
-2. Drag the **right border** or **bottom border** to resize along the frame's
+2. Choose **Rectangle**, **Circle**, or **Oval** with the map's **Shape** control.
+   Circles and ovals have draggable handles on all four borders; circles keep
+   equal axes, while ovals resize each axis independently. Their rotation hook
+   works like the rectangle's. After **Generate terrain**, the explorer, **3D model
+   design**, and STL/OBJ/3MF/GLB exports follow the chosen footprint, including
+   clipped map features and added material. Raw elevation and heightmap exports
+   retain their enclosing grid and record the selection shape in metadata.
+   Drag the rectangle's **right border** or **bottom border** to resize along the frame's
    axes, keeping its opposite corner fixed. Drag the **lower-right corner** to
    rotate around the center without changing the width or height. Hold Shift
    to snap rotation to 15° increments. Focus the corner and use arrow keys for
    1° rotation (Shift: 15°); Home resets the angle. Edge handles also support
    arrow keys. Escape cancels a drag. **Reset frame** restores the default size
-   and zero rotation. The **two-point alignment button** beside Reset frame
+   and zero rotation with a rectangular frame. The **two-point alignment button** beside Reset frame
    enters a mode where you click two map locations. The box moves to their
    midpoint and rotates its horizontal axis through both, retaining its width
    and height. The first point is marked and a dashed guide follows the pointer.
@@ -395,6 +402,21 @@ mm"). A ridgeline makes a single layer. Silhouette requests use `source:
 `thickness_mm` overrides it. Outlines give each layer `thickness_mm` and, for a
 viewpoint, `distance_m`, plus the `ridges` used.
 
+**Edit ridgelines** in the front view lets you change the printable curves directly.
+Click a curve or its checkbox to select it; Ctrl/Shift-click selects several.
+Use **Delete selected** or the Delete key to remove selected ridges, keeping at
+least one. Deleting a ridge keeps the other original ridges and rebuilds the
+comb slots and printable parts; it does not redetect or regroup the terrain.
+Drag anywhere along a curve to pull that region smoothly. **Pull width** sets
+how much neighboring curve moves; sideways pulls preserve the left-to-right
+order, and downward pulls keep the solid base intact. **Undo**, **Redo** and
+**Reset ridgelines** restore changes; Escape cancels a drag. The edits apply to
+the 3D view and STL/3MF/SVG exports, are saved per framed area, and are included
+in the settings JSON. Width and base-height changes preserve edits; changing
+the source, slice, viewpoint, detection count, smoothing or vertical scale starts
+with fresh curves. Cloud panels remain decorative; deleting down to a single
+terrain ridge leaves out the cloud background until more ridges are restored.
+
 **Colors** (in the Export card) fit a four-filament printer. **Color by distance** gives the layers
 up to four colors, **Nearest**, 2, 3, and **Farthest**: the layers, nearest first (front to back for
 slices), fall into contiguous groups as even as possible (seven layers: 2, 2, 2, 1), and fewer
@@ -419,6 +441,15 @@ draw the zones in color (and the steps), and the parts list names each zone ("Zo
 ridge 0.6 mi · 4.0 mm · color #234e40"). Requests use `color_by_distance`, `distance_colors` (one to
 four hex colors, nearest first), and `color_zones`; outlines add `zones` (each with `name`, `color`,
 `thickness_mm`, `distance_m`, and `polygons`) and the filament `colors`.
+
+**Cylinder lamp** (in the Export card) wraps the silhouette around a round lithophane shade in CylinderLamp, the lamp-making
+app beside this one: the layers' ridge curves (with any ridgeline edits) go to it, nearest first, and it opens in a new
+tab, starting itself from `$CYLINDERLAMP_DIR` (default `../CylinderLamp`) if it isn't running at `$CYLINDERLAMP_URL`
+(default http://127.0.0.1:5057). There each layer becomes a band of wall thickness - the sky thinnest, the nearest ridge
+thickest - so the range glows in steps. The handoff file goes in `$TERRAIN_LAMP_HANDOFF` (default
+`~/.local/share/terrain-studio/lamp-silhouettes`; the newest 50 are kept). `POST /api/silhouette/<id>/cylinder-lamp`
+takes the silhouette request plus `name` and answers `id`, `url`, `running` and `layers`; with `?download=1` it returns
+the handoff file, which CylinderLamp can also open.
 
 - **Shape:** width (the piece's length, 40–400 mm; the printed part of the slice fills it), vertical
   scale (× true proportions at that width, 0.5–100; it starts at the elevation multiplier), base height
@@ -604,7 +635,8 @@ The source of each model is shown below the profile and saved in export metadata
   selections use a rectangular grid in the map's Mercator plane, sampled inside
   the rotated box. Both use bilinear interpolation and pixel-center coordinates,
   including across tile seams. Metadata records the rotation, geographic corner
-  coordinates, and enclosing geographic bounds.
+  coordinates, and enclosing geographic bounds. Round model footprints use a
+  128-sided ellipse while retaining the enclosing elevation grid for sampling.
 - Horizontal dimensions use a local equirectangular approximation at the area
   center. This is practical for regional visualization; it is not a cadastral
   or survey projection. Heights retain the source's vertical reference.
@@ -793,6 +825,8 @@ Run `node tests/browser-water.cjs` against the same server to verify USGS/OSM
 switching, cached sources, saved preferences, and late-response handling.
 `node tests/browser-studio.cjs` covers the 3D model design page and `node tests/browser-silhouette.cjs`
 the silhouette design page (the shared slice, text and mount settings, STL and SVG downloads, saved settings).
+`node tests/browser-ridge-edit.cjs` checks curve dragging, cancellation, multi-ridge deletion, Undo/Redo, exports, and saved edits.
+`node tests/browser-selection-shapes.cjs` checks circle/oval border dragging, rotation, generation, the 3D design handoff, and clipped GLB exports. The fixture server uses synthetic elevations for round selections.
 Set `TERRAIN_CHROMIUM_PATH` when using an existing Chromium executable.
 The test intercepts map, ZIP, and feature requests with fixtures, exercises ZIP
 navigation and errors, two-point alignment with mouse/touch, cancellation,

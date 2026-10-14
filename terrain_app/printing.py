@@ -8,6 +8,7 @@ import numpy as np
 
 from .landcover import COVER_NAMES, COVER_LABELS
 from .mesh import build_mesh, export_metadata
+from .footprint import clip_color_parts
 from .print_features import feature_color_parts
 from .addons import (PLATFORM_INFO, Model, active_addons, apply_addons, ball_count, ball_positions, changes_model, marker_mesh, marker_style,
                      marker_tops, plan_project, platform_top, print_color_set, project_metadata, top_mesh)
@@ -15,12 +16,44 @@ from .addons import (PLATFORM_INFO, Model, active_addons, apply_addons, ball_cou
 CORE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 
 
+def terrain_color_mesh(triangles, all_vertices, count, split=False):
+    """Close terrain regions independently when they touch only at a point.
+
+    Otherwise the vertical edge at that point has four incident faces, and a
+    mesh boolean may drop material while clipping it to the round footprint.
+    """
+    groups = [triangles]
+    if split and len(triangles) > 1:
+        from scipy.sparse import coo_matrix
+        from scipy.sparse.csgraph import connected_components
+        edges = np.concatenate((triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]]))
+        _, inverse, counts = np.unique(np.sort(edges, axis=1), axis=0, return_inverse=True, return_counts=True)
+        owners = np.tile(np.arange(len(triangles)), 3)
+        shared = np.argsort(inverse)[np.repeat(counts == 2, counts)].reshape(-1, 2)
+        adjacent = owners[shared]
+        graph = coo_matrix((np.ones(len(adjacent)), (adjacent[:, 0], adjacent[:, 1])), shape=(len(triangles), len(triangles)))
+        number, labels = connected_components(graph, directed=False)
+        if number > 1:
+            order = np.argsort(labels, kind="stable")
+            groups = [triangles[indices] for indices in np.split(order, np.flatnonzero(np.diff(labels[order]))+1)]
+    vertices, faces, offset = [], [], 0
+    for group in groups:
+        edges = np.concatenate((group[:, [0, 1]], group[:, [1, 2]], group[:, [2, 0]]))
+        _, inverse, counts = np.unique(np.sort(edges, axis=1), axis=0, return_inverse=True, return_counts=True)
+        a, b = edges[counts[inverse] == 1].T
+        walls = np.concatenate((np.column_stack((a, a+count, b)), np.column_stack((b, a+count, b+count))))
+        part_faces = np.concatenate((group, group[:, ::-1]+count, walls))
+        used, indices = np.unique(part_faces, return_inverse=True)
+        vertices.append(all_vertices[used]);faces.append(indices.reshape(-1, 3)+offset);offset += len(used)
+    return np.concatenate(vertices), np.concatenate(faces)
+
+
 def color_parts(terrain, options, palette, classes):
     if not options.solid:
         raise ValueError("Enable Solid base to export separate closed color parts.")
     if len(set(palette.values())) > 4:
         raise ValueError("Share colors between surface types to use at most four colors in 3MF.")
-    vertices, faces = build_mesh(terrain, options)
+    vertices, faces = build_mesh(terrain, options, clip=False)
     count = terrain.elevations.size
     # Python's mesh stores the first triangle of every cell before the second.
     top_faces = faces[:len(classes)]
@@ -35,16 +68,11 @@ def color_parts(terrain, options, palette, classes):
         triangles = top_faces[colors == color]
         if not len(triangles):
             continue
-        edges = np.concatenate((triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]]))
-        _, inverse, counts = np.unique(np.sort(edges, axis=1), axis=0, return_inverse=True, return_counts=True)
-        border = edges[counts[inverse] == 1]
-        a, b = border.T
-        walls = np.concatenate((np.column_stack((a, a+count, b)), np.column_stack((b, a+count, b+count))))
-        part_faces = np.concatenate((triangles, triangles[:, ::-1]+count, walls))
-        used, indices = np.unique(part_faces, return_inverse=True)
+        part_vertices, part_faces = terrain_color_mesh(triangles, all_vertices, count, split=terrain.bounds.shape != "rectangle")
         names = [COVER_LABELS[index] for index, name in enumerate(COVER_NAMES) if palette[name] == color]
-        parts.append({"color": color, "name": " / ".join(names), "vertices": all_vertices[used], "faces": indices.reshape(-1, 3)})
-    return parts
+        parts.append({"color": color, "name": " / ".join(names), "vertices": part_vertices, "faces": part_faces})
+    factor = options.size_mm/max(terrain.width, terrain.height)
+    return clip_color_parts(parts, terrain.bounds, terrain.width*factor, terrain.height*factor)
 
 
 def mesh_xml(vertices, faces):

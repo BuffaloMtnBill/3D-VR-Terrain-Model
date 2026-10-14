@@ -11,6 +11,7 @@ from shapely.ops import substring, unary_union
 
 from .features import LAYER_NAMES, parts
 from .mesh import build_mesh
+from .footprint import footprint_polygon, footprint_prism
 
 LABELS = dict(zip(LAYER_NAMES, ("Roads", "Train tracks", "Borders", "Water", "City boundaries", "Park boundaries", "Buildings", "AT", "Other trails")))
 LABELS["route"] = "Route"  # an uploaded GPX track (routes.py), printed like a trail at its chosen width
@@ -203,13 +204,14 @@ def feature_color_parts(terrain, options, palette, base_parts, styles, data):
     shell = checked(terrain_solid-terrain_solid.translate((0, 0, -INLAY_DEPTH)))
     width, height = np.ptp(vertices[:, :2], axis=0)
     transform = [width, 0, 0, -height, -width/2, height/2]
-    frame = box(-width/2, -height/2, width/2, height/2)
+    frame = footprint_polygon(terrain.bounds, width, height)
     maximum = vertices[:, 2].max()
     solids = {part["color"]: from_mesh(part["vertices"], part["faces"]) for part in base_parts}
     labels = {part["color"]: part["name"].split(" / ") for part in base_parts}
     counts = {}
     rows, columns = terrain.elevations.shape
-    top = vertices[:rows*columns].reshape(rows, columns, 3)
+    grid_vertices, _ = build_mesh(terrain, options, clip=False)
+    top = grid_vertices[:rows*columns].reshape(rows, columns, 3)
     def surface_height(points):
         return surface_heights(top, width, height, points)
     def polygon_ground(polygon):
@@ -249,6 +251,8 @@ def feature_color_parts(terrain, options, palette, base_parts, styles, data):
             if not buildings:
                 continue
             feature_solid = union(buildings)
+            if terrain.bounds.shape != "rectangle":
+                feature_solid = checked(feature_solid ^ footprint_prism(terrain.bounds, width, height, -1, feature_solid.bounding_box()[5]+1))
         else:
             geometry = line_footprint(features, name, transform, options.size_mm, styles[name].get("width_mm"))
             if name == "water":

@@ -27,6 +27,7 @@ from .printing import export_3mf
 from .addons import BALL_COLOR, catalog as studio_catalog, check_project, platform_top, project_options, text_outline
 from .studio import marker_ball_file, marker_platform_file, studio_export, studio_format
 from .hydrography import HydrographyClient, HYDROGRAPHY_URL, water_source
+from . import lamp_handoff
 from .silhouette import PRESET_DATA as SILHOUETTE_PRESETS, SilhouetteOptions, Sources, outline_json, silhouette_export, text_block_json
 from .profiles import profile_json, profile_options
 from .routes import MAX_GPX_BYTES, RouteStore, public_route, route_lines, route_options, with_route
@@ -602,6 +603,26 @@ def create_app(test_config=None):
         content, mimetype, filename = silhouette_export(terrain, options, payload.get("format", "stl"), attribution,
                                                         silhouette_sources(identifier, options))
         return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True, download_name=filename)
+
+    @app.post("/api/silhouette/<identifier>/cylinder-lamp")
+    def silhouette_cylinder_lamp(identifier):
+        """Hand the silhouette's layers to CylinderLamp (started if needed) and answer the page to open there; with
+        ?download=1, the handoff file itself."""
+        terrain = find_terrain(identifier)
+        if terrain is None:
+            return jsonify(error="Terrain is unavailable. Generate the area again."), 404
+        payload = request.get_json()
+        options = SilhouetteOptions.from_dict({key: value for key, value in payload.items() if key != "name"})
+        attribution = (ROOT / "data" / "ATTRIBUTION.txt").read_text(encoding="utf-8")
+        data = lamp_handoff.lamp_silhouette(terrain, options, silhouette_sources(identifier, options),
+                                            str(payload.get("name") or "")[:80], attribution)
+        if request.args.get("download"):
+            return send_file(BytesIO(json.dumps(data, indent=1).encode()), mimetype="application/json", as_attachment=True,
+                             download_name="lamp-silhouette.json")
+        handoff = lamp_handoff.save_handoff(data)
+        running = lamp_handoff.start_lamp()
+        return jsonify(id=handoff, url=f"{lamp_handoff.lamp_url()}/?silhouette={handoff}", running=running,
+                       layers=len(data["layers"]))
 
     @app.post("/api/profile/<identifier>")
     def terrain_profile(identifier):

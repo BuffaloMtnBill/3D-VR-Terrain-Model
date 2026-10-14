@@ -136,6 +136,7 @@ class SilhouetteOptions:
     color_zones: bool = False  # a viewpoint's layers become color zones of one flat piece instead of separate layers
     clouds: bool = False  # a decorative, separate panel behind the terrain layers
     cloud_color: str = "#f0ead6"
+    ridge_edits: tuple = ()  # (original layer index, deleted, normalized curve ((x/width, (y-base)/width), ...))
 
     @classmethod
     def from_dict(cls, value):
@@ -276,7 +277,8 @@ class SilhouetteOptions:
             # Detected ridges set their own distances; distance bands go by the layers' positions.
             if not view["ridges"] and [layer[0] for layer in parsed] != sorted(layer[0] for layer in parsed):
                 raise ValueError("A viewpoint's layers are distance bands: give each layer a farther distance than the one in front.")
-        options = cls(**numbers, **picked, **colors, **flags, **drawn, **place, text_lines=block, line_spacing=float(spacing), trim=(float(trim[0]), float(trim[1])), text="\n".join(lines),
+        edits = parse_ridge_edits(value.get("ridge_edits", []), len(parsed) or 1)
+        options = cls(**numbers, **picked, **colors, **flags, **drawn, **place, ridge_edits=edits, text_lines=block, line_spacing=float(spacing), trim=(float(trim[0]), float(trim[1])), text="\n".join(lines),
                       relief=relief_method(value.get("relief", "standard")), layers=tuple(parsed), peg_count=int(pegs),
                       distance_colors=tuple(color.lower() for color in palette),
                       route_id=route_id if picked["source"] == "route" else "")
@@ -299,8 +301,47 @@ class SilhouetteOptions:
             if tab_thickness(options) < .8 or options.slot_length-2*options.slot_clearance < 10:
                 raise ValueError("The lamp slot is too small for a tab. Check its width, length, and clearance.")
         if not by_distance(options) or all(layer[3] is not None for layer in options.layers):
-            check_thickness(options, layer_thicknesses(options))  # otherwise the layout checks, once the layers' distances are known
+            active = active_ridge_options(options)
+            check_thickness(active, layer_thicknesses(active))  # otherwise layout checks once distances are known
         return options
+
+
+def parse_ridge_edits(value, count):
+    """Curves remain graphs across the whole width, so edits cannot fold a panel over itself."""
+    if not isinstance(value, (list, tuple)) or len(value) > count:
+        raise ValueError("Supply ridgeline edits as a list, with at most one edit per ridge.")
+    edits, seen = [], set()
+    for edit in value:
+        if not isinstance(edit, dict):
+            raise ValueError("Each ridgeline edit needs a layer index, deleted flag, and optional curve.")
+        index, deleted, curve = edit.get("layer"), edit.get("deleted", False), edit.get("curve", [])
+        if not finite(index) or int(index) != index or not 0 <= index < count or index in seen:
+            raise ValueError("Each ridgeline edit must name a different existing layer index.")
+        if not isinstance(deleted, bool):
+            raise ValueError("A ridgeline's deleted flag must be true or false.")
+        if not isinstance(curve, (list, tuple)) or (curve and not 2 <= len(curve) <= 1025):
+            raise ValueError("An edited ridge curve needs 2 to 1025 points across its width.")
+        points = []
+        for point in curve:
+            if (not isinstance(point, (list, tuple)) or len(point) != 2 or not all(finite(v) for v in point)
+                    or not 0 <= point[0] <= 1 or not 0 <= point[1] <= 5
+                    or (points and point[0] <= points[-1][0])):
+                raise ValueError("Ridge curve points must increase left to right from 0 to 1, with heights from 0 to 5 widths above the base.")
+            points.append(tuple(map(float, point)))
+        if points and (points[0][0] != 0 or points[-1][0] != 1):
+            raise ValueError("An edited ridge curve must cover the full width, from 0 to 1.")
+        seen.add(index)
+        edits.append((int(index), deleted, tuple(points)))
+    if sum(deleted for _, deleted, _ in edits) >= count:
+        raise ValueError("Keep at least one ridgeline in the silhouette.")
+    return tuple(edits)
+
+
+def active_ridge_options(options):
+    deleted = {index for index, removed, _ in options.ridge_edits if removed}
+    specs = tuple(spec for index, spec in enumerate(layer_specs(options)) if index not in deleted)
+    # A single remaining panel uses the single-panel fit; a cloud background needs layered terrain.
+    return replace(options, layers=specs, clouds=options.clouds and len(specs) > 1)
 
 
 def layer_specs(options):
@@ -828,10 +869,22 @@ def layout(terrain, options, sources=None):
     specs = layer_specs(options)
     views = view_layers(terrain, options) if options.source == "viewpoint" else None  # once: ridges are found for the whole design
     curves = [profile_heights(terrain, options, spec[0], sources, None if views is None else views["angles"][index]) for index, spec in enumerate(specs)]
+    # Keep the original detection and shared datum. Deleting a ridge must not regroup the others or move their curves.
+    datum = min(float(heights.min()) for _, heights, _, _, _ in curves)
+    edits = {index: (deleted, curve) for index, deleted, curve in options.ridge_edits}
+    indices = [index for index in range(len(specs)) if not edits.get(index, (False, ()))[0]]
+    specs = [specs[index] for index in indices]
+    curves = [curves[index] for index in indices]
+    if views:
+        views = dict(views, angles=[views["angles"][i] for i in indices], distances=[views["distances"][i] for i in indices],
+                     ranges=[views["ranges"][i] for i in indices],
+                     ridges=None if views["ridges"] is None else [views["ridges"][i] for i in indices])
+    if options.clouds and len(indices) == 1:
+        notes.append("The cloud background is left out while only one terrain ridgeline remains.")
+    options = active_ridge_options(options)
     thicknesses = layer_thicknesses(options, views["distances"] if views else None)
     check_thickness(options, thicknesses)
     # Layers share one datum, so heights compare truly between them; a single layer sits its lowest point on the base.
-    datum = min(float(heights.min()) for _, heights, _, _, _ in curves)
     width = options.width_mm
     limit = options.box_height-COMB_FLOOR-.5 if options.fit == "box" else None
     multi = len(specs) > 1 and not options.color_zones
@@ -839,6 +892,10 @@ def layout(terrain, options, sources=None):
     for index, ((position, base, color, _), (x, heights, span, start, scale)) in enumerate(zip(specs, curves)):
         base = options.base_mm if options.color_zones else base  # one piece: every ridge on the same base strip
         points = ridge_points(x, heights, datum, base, scale, options)
+        custom = edits.get(indices[index], (False, ()))[1]
+        if custom:
+            points = np.asarray(custom, dtype=np.float64)*width
+            points[:, 1] += base
         outline = orient(make_valid(Polygon([(0, 0), *points.tolist(), (width, 0)])).buffer(0))
         if options.fit in ("lamp", "box"):
             outline, removed = printable(outline, options.min_feature_mm)
@@ -850,13 +907,16 @@ def layout(terrain, options, sources=None):
             warnings.append(f"{name if multi else 'The piece'} is {height:.0f} mm tall, more than the box's inner height allows "
                             f"({limit:.0f} mm above the combs), so its top is cut flat. Lower the vertical scale or the base heights.")
             height = limit
-        layers.append({"name": name, "position": position, "base": base, "color": color, "outline": outline, "body": outline, "thickness": thicknesses[index],
+        layers.append({"name": name, "ridge_index": indices[index], "position": position, "base": base, "color": color, "outline": outline, "body": outline, "thickness": thicknesses[index],
                        "distance_m": None if views is None else float(views["distances"][index]),
                        "distance_range_m": None if views is None else views["ranges"][index], "kind": "terrain",
                        "points": points, "height": height, "lowest": float(points[:, 1].min()), "span_m": span, "start_m": start, "scale": scale})
     palette = distance_palette(options, len(layers)) if by_color(options) else None
     for layer, color in zip(layers, palette or []):
         layer["color"] = color
+    ridge_curves = [{"layer": layer["ridge_index"], "name": layer["name"], "base_mm": layer["base"], "color": layer["color"],
+                     "curve": np.column_stack((layer["points"][:, 0], np.minimum(layer["points"][:, 1], limit) if limit is not None else layer["points"][:, 1])).round(5).tolist()}
+                    for layer in layers]
     if options.clouds:
         rear = layers[-1]
         step = rear["base"]-layers[-2]["base"]
@@ -1038,7 +1098,7 @@ def layout(terrain, options, sources=None):
             "warnings": warnings, "notes": notes, "width": width, "height": max(layer["height"] for layer in layers),
             "lowest": front["lowest"], "span_m": front["span_m"], "ridges": views["ridges"] if views else None,
             "view_farthest_m": None if views is None else views["farthest_m"], "text_box": text_box,
-            "zones": zones, "colors": colors, "fit_color": fit_color}
+            "zones": zones, "colors": colors, "fit_color": fit_color, "ridge_curves": ridge_curves}
 
 
 def zone_layout(layers):
@@ -1140,6 +1200,7 @@ def outline_json(terrain, options, sources=None):
               for layer, placement in zip(shapes["layers"], fit["placements"])]
     return {"outline": largest(shapes["outline"]), "text": rings(shapes["text"]), "markings": rings(shapes["markings"]), "text_box": shapes["text_box"],
             "text_style": options.text_style, "mount": shapes["mounts"], "layers": layers,
+            "ridge_curves": shapes["ridge_curves"],
             "fit": {key: value for key, value in fit.items() if key not in ("parts", "placements")}, "parts": fit["parts"],
             "width_mm": round(shapes["width"], 3), "height_mm": round(shapes["height"], 3), "thickness_mm": thickest(shapes),
             "zones": [{"number": zone["number"], "name": zone["name"], "color": zone["color"], "thickness_mm": zone["thickness"], "polygons": rings(zone["body"]),
@@ -1308,7 +1369,8 @@ def mesh(solid):
 def metadata(terrain, options, shapes):
     settings = asdict(options) | {"trim": list(options.trim), "layers": [{"position": p, "base_mm": b, "color": c, **({} if t is None else {"thickness_mm": t})}
                                                                           for p, b, c, t in options.layers],
-                                       "text_lines": [{"text": w, "size": s, "style": f, "tracking": k} for w, s, f, k in options.text_lines]}
+                                       "text_lines": [{"text": w, "size": s, "style": f, "tracking": k} for w, s, f, k in options.text_lines],
+                                       "ridge_edits": [{"layer": i, "deleted": d, "curve": c} for i, d, c in options.ridge_edits]}
     return {"kind": "silhouette", "preset": options.preset, "settings": settings,
             "size_mm": {"width": round(shapes["width"], 3), "height": round(shapes["height"], 3), "thickness": thickest(shapes)},
             "zones": [{"name": zone["name"], "color": zone["color"], "thickness_mm": zone["thickness"],

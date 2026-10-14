@@ -20,6 +20,7 @@ from shapely.ops import unary_union
 
 from .features import parts as geometry_parts
 from .mesh import build_mesh
+from .footprint import footprint_polygon
 from .print_features import clean_collinear_faces, extrude, footprint as feature_footprint, from_mesh, grid_window, surface_heights
 
 DATA = Path(__file__).parent / "data"
@@ -468,12 +469,12 @@ class Model:
     """The terrain solid's top surface in model millimeters, for placing and sizing add-ons."""
 
     def __init__(self, terrain, options, vertices=None):
-        if vertices is None:
-            vertices, _ = build_mesh(terrain, options)
+        if vertices is None or terrain.bounds.shape != "rectangle":
+            vertices, _ = build_mesh(terrain, options, clip=False)
         self.rows, self.columns = terrain.elevations.shape
         self.top = vertices[:self.rows*self.columns].reshape(self.rows, self.columns, 3)
         self.width, self.height = float(np.ptp(self.top[:, :, 0])), float(np.ptp(self.top[:, :, 1]))
-        self.frame = box(-self.width/2, -self.height/2, self.width/2, self.height/2)
+        self.frame = footprint_polygon(terrain.bounds, self.width, self.height)
         self.max_z = float(self.top[:, :, 2].max())
         self.ceiling = self.max_z+60  # above anything an add-on adds (raise ≤ 30, text ≤ 10)
         self.spacing = min(self.width/(self.columns-1), self.height/(self.rows-1))
@@ -725,7 +726,7 @@ def apply_addons(parts, plans, model, progress=None):
         if progress:
             progress(index/max(len(plans), 1), f"Shaping {plan['label'].lower()}…")
         operations.extend((phase, solid, color, plan["label"]) for phase, solid, color in plan["build"]())
-    frame = mf.Manifold.cube((model.width, model.height, model.ceiling+2)).translate((-model.width/2, -model.height/2, -1))
+    frame = prism(model.frame, -1, model.ceiling+1)
     shaping = union([solid for phase, solid, _, _ in operations if phase == SHAPE])
     if not shaping.is_empty():
         solids = {color: closed(solid-shaping) for color, solid in solids.items()}

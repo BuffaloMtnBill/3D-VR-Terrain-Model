@@ -811,6 +811,77 @@ def test_distance_bands_honor_the_minimum_distance():
     assert len(single["angles"]) == 1 and single["angles"][0].max() == pytest.approx(cleared["angles"][1].max())
 
 
+def test_deleted_ridges_do_not_regroup_or_move_the_surviving_curves():
+    terrain = ridge_terrain()
+    original = outline_json(terrain, options(**ridge_glow()))
+    payload = ridge_glow(ridge_edits=[{"layer": 1, "deleted": True}])
+    edited = outline_json(terrain, options(**payload))
+    assert [curve["layer"] for curve in edited["ridge_curves"]] == [0, 2]
+    assert [layer["distance_m"] for layer in edited["layers"]] == [original["layers"][i]["distance_m"] for i in [0, 2]]
+    assert [curve["curve"] for curve in edited["ridge_curves"]] == [original["ridge_curves"][i]["curve"] for i in [0, 2]]
+    assert len(edited["fit"]["comb_base"]["slots"]) == 2
+    assert len(edited["ridges"]) == 2
+    for _, _, solid in solids(terrain, options(**payload)):
+        assert solid.status().name == "NoError"
+        assert_closed(*mesh(solid))
+
+
+def test_multiple_ridge_deletion_to_one_panel_updates_fit_and_clouds():
+    terrain = ridge_terrain()
+    payload = ridge_glow(clouds=True, ridge_edits=[{"layer": i, "deleted": True} for i in [0, 1]])
+    edited = outline_json(terrain, options(**payload))
+    assert len(edited["layers"]) == 1 and edited["ridge_curves"][0]["layer"] == 2
+    assert edited["fit"]["comb_base"] is None and edited["fit"]["tab"] is not None
+    assert "cloud background" in " ".join(edited["notes"])
+    assert len(solids(terrain, options(**payload))) == 1
+
+
+def test_custom_ridge_curve_changes_geometry_and_roundtrips_in_export_settings(terrain):
+    curve = [[0, .02], [.25, .04], [.5, .15], [.75, .04], [1, .02]]
+    choice = options(width_mm=200, base_mm=8, ridge_edits=[{"layer": 0, "deleted": False, "curve": curve}])
+    result = outline_json(terrain, choice)
+    assert np.allclose(result["ridge_curves"][0]["curve"], [[x*200, 8+y*200] for x, y in curve])
+    assert result["height_mm"] == pytest.approx(38)
+    solid = solids(terrain, choice)[0][2]
+    assert solid.bounding_box()[4] == pytest.approx(38)
+    assert_closed(*mesh(solid))
+    saved = json.loads(silhouette_export(terrain, choice, "json", "credits")[0])["settings"]
+    assert saved["ridge_edits"][0]["curve"] == curve
+    assert options(**saved).ridge_edits == choice.ridge_edits
+    scaled = outline_json(terrain, options(**(saved | {"width_mm": 100, "base_mm": 12})))
+    assert scaled["height_mm"] == pytest.approx(27)
+
+
+def test_curve_edits_and_deletions_apply_to_viewpoint_color_zones():
+    terrain = ridge_terrain()
+    payload = ridge_glow(color_zones=True, ridge_edits=[{"layer": 1, "deleted": True},
+                         {"layer": 2, "curve": [[0, .1], [.5, .4], [1, .1]]}])
+    edited = outline_json(terrain, options(**payload))
+    assert [curve["layer"] for curve in edited["ridge_curves"]] == [0, 2]
+    assert len(edited["layers"]) == 1 and len(edited["zones"]) == 2
+    for _, _, solid in solids(terrain, options(**payload)):
+        assert solid.status().name == "NoError"
+        assert_closed(*mesh(solid))
+
+
+@pytest.mark.parametrize("edits, message", [
+    ("bad", "as a list"),
+    ([{"layer": True}], "existing layer"),
+    ([{"layer": 3}], "existing layer"),
+    ([{"layer": 0, "deleted": "yes"}], "true or false"),
+    ([{"layer": 0}, {"layer": 0}], "different existing layer"),
+    ([{"layer": i, "deleted": True} for i in range(3)], "at least one"),
+    ([{"layer": 0, "curve": [[0, 0]]}], "2 to 1025"),
+    ([{"layer": 0, "curve": [[.1, 0], [1, .2]]}], "full width"),
+    ([{"layer": 0, "curve": [[0, 0], [0, .1], [1, .2]]}], "increase left to right"),
+    ([{"layer": 0, "curve": [[0, -.1], [1, .2]]}], "heights"),
+    ([{"layer": 0, "curve": [[0, 0], [1, float('nan')]]}], "heights"),
+])
+def test_ridge_edit_validation(edits, message):
+    with pytest.raises(ValueError, match=message):
+        options(**ridge_glow(ridge_edits=edits))
+
+
 # --- Colors by distance and color zones ----------------------------------------------------------------------
 
 def bases_and_objects(content):

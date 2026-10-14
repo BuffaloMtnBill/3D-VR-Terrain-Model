@@ -1,5 +1,5 @@
 """Smooth heights and build consistently wound, closed terrain meshes."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from io import BytesIO, StringIO
 import json
 import math
@@ -11,6 +11,7 @@ from PIL.PngImagePlugin import PngInfo
 from scipy.ndimage import gaussian_filter
 
 from .elevation import Terrain, SOURCES
+from .footprint import clip_footprint
 
 
 @dataclass(frozen=True)
@@ -88,7 +89,21 @@ def model_elevations(terrain: Terrain, options: ModelOptions):
     return shape_elevations(smooth_elevations(terrain, options.smoothing), options.relief, options.relief_strength)
 
 
-def build_mesh(terrain: Terrain, options: ModelOptions):
+def build_mesh(terrain: Terrain, options: ModelOptions, clip=True):
+    if clip and terrain.bounds.shape != "rectangle":
+        closed_options = replace(options, solid=True)
+        vertices, faces = build_mesh(terrain, closed_options, clip=False)
+        longest = max(terrain.width, terrain.height)
+        factor = options.size_mm/longest
+        vertices, faces = clip_footprint(vertices, faces, terrain.bounds, terrain.width*factor, terrain.height*factor)
+        if not options.solid:
+            triangles = vertices[faces]
+            normals = np.cross(triangles[:, 1]-triangles[:, 0], triangles[:, 2]-triangles[:, 0])
+            faces = faces[normals[:, 2] > 1e-10]
+            used, inverse = np.unique(faces, return_inverse=True)
+            vertices, faces = vertices[used].copy(), inverse.reshape(-1, 3).astype(np.uint32)
+            vertices[:, 2] -= options.size_mm*options.base_percent/100
+        return vertices, faces
     elevations = model_elevations(terrain, options)
     rows, columns = elevations.shape
     longest = max(terrain.width, terrain.height)

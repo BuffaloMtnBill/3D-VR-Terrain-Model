@@ -7,11 +7,12 @@ export class SelectionFrame {
     this.element=document.getElementById('selection-frame');
     this.rotateHandle=document.querySelector('[data-rotate]');
     this.size=map.getSize();
-    this.frame={left:54,top:24,width:0,height:0,angle:0};
+    this.frame={left:54,top:24,width:0,height:0,angle:0,shape:'rectangle'};
     this.fitting=false;this.pending=null;this.drag=null;this.alignment=null;
     this.alignButton=document.getElementById('align-selection');
     this.alignStatus=document.getElementById('alignment-status');
     this.reset(false);
+    document.getElementById('selection-shape').addEventListener('change',event=>this.setShape(event.target.value));
     map.on('move zoom moveend zoomend',()=>this.scheduleChange());
     const handles=[...this.element.querySelectorAll('[data-resize]'),this.rotateHandle];
     for(const handle of handles) {
@@ -42,7 +43,10 @@ export class SelectionFrame {
   }
 
   render() {
-    const {left,top,width,height,angle}=this.frame;
+    const {left,top,width,height,angle,shape}=this.frame;
+    this.element.dataset.shape=shape;
+    this.element.setAttribute('aria-label',`${shape} terrain selection frame`);
+    document.getElementById('selection-shape').value=shape;
     Object.assign(this.element.style,{left:left+'px',top:top+'px',width:width+'px',height:height+'px',transform:'rotate('+angle+'deg)'});
     this.element.querySelector('[data-resize="width"]').setAttribute('aria-label','Resize area width, '+Math.round(width)+' pixels. Use left and right arrows.');
     this.element.querySelector('[data-resize="height"]').setAttribute('aria-label','Resize area height, '+Math.round(height)+' pixels. Use up and down arrows.');
@@ -61,7 +65,8 @@ export class SelectionFrame {
     Object.assign(this.rotateHandle.style,{left:controlX+'px',top:controlY+'px'});
     this.rotateHandle.setAttribute('aria-label','Rotate selected area, '+angle.toFixed(1)+' degrees. Arrow keys rotate; Home resets rotation.');
     this.rotateHandle.title='Drag to rotate ('+angle.toFixed(1)+'°). Shift snaps to 15°. Home resets rotation.';
-    this.element.querySelector('.frame-label').textContent=angle?'SELECTED AREA · '+angle.toFixed(1)+'°':'SELECTED AREA';
+    const label=shape==='rectangle'?'SELECTED AREA':shape.toUpperCase();
+    this.element.querySelector('.frame-label').textContent=angle?label+' · '+angle.toFixed(1)+'°':label;
     document.getElementById('selection-rotation').textContent=angle?angle.toFixed(1)+'°':'';
     for(const button of document.querySelectorAll('[data-aspect]')) {
       const [w,h]=button.dataset.aspect.split(':').map(Number),flipped=w!==h&&Math.abs(width/height-h/w)<1e-6;
@@ -74,11 +79,12 @@ export class SelectionFrame {
   }
 
   bounds() {
-    const {left,top,width,height,angle}=this.frame;
+    const {left,top,width,height,angle,shape}=this.frame;
     const northwest=this.map.containerPointToLatLng([left,top]),southeast=this.map.containerPointToLatLng([left+width,top+height]);
     const west=((northwest.lng+180)%360+360)%360-180;
     const bounds={north:northwest.lat,south:southeast.lat,west,east:west+southeast.lng-northwest.lng};
     if(angle)bounds.rotation_deg=angle;
+    if(shape!=='rectangle')bounds.shape=shape;
     return bounds;
   }
 
@@ -91,7 +97,7 @@ export class SelectionFrame {
 
   reset(emit=true) {
     this.cancelAlignment();
-    Object.assign(this.frame,{left:54,top:24,angle:0});
+    Object.assign(this.frame,{left:54,top:24,angle:0,shape:'rectangle'});
     Object.assign(this.frame,this.limits());
     this.render();if(emit)this.emitChange();
   }
@@ -99,6 +105,7 @@ export class SelectionFrame {
   snapAspectRatio(ratio) {
     if(!Number.isFinite(ratio)||ratio<=0)return;
     this.cancelAlignment();this.cancelDrag();
+    if(this.frame.shape==='circle'&&ratio!==1)this.frame.shape='oval';
     const frame=this.frame,size=this.map.getSize(),cx=frame.left+frame.width/2,cy=frame.top+frame.height/2;
     let width=Math.sqrt(frame.width*frame.height*ratio),height=width/ratio;
     const radians=frame.angle*Math.PI/180,cosine=Math.abs(Math.cos(radians)),sine=Math.abs(Math.sin(radians));
@@ -108,6 +115,14 @@ export class SelectionFrame {
     width*=scale;height*=scale;
     this.frame={...frame,left:cx-width/2,top:cy-height/2,width,height};
     this.render();this.emitChange();
+  }
+
+  setShape(shape) {
+    if(!['rectangle','circle','oval'].includes(shape))return;
+    this.cancelAlignment();this.cancelDrag();
+    this.frame.shape=shape;
+    if(shape==='circle')this.snapAspectRatio(1);
+    else {this.render();this.emitChange();}
   }
 
   centerOn(position,zoom=12) {
@@ -134,7 +149,7 @@ export class SelectionFrame {
     const zoom=Number.isFinite(preferredZoom)?Math.max(this.map.getMinZoom(),Math.min(fitted,preferredZoom)):fitted;
     const scale=2**zoom,width=span.x*scale,height=span.y*scale;
     const frameCenter={x:54+rotatedWidth*scale/2,y:24+rotatedHeight*scale/2};
-    this.frame={left:frameCenter.x-width/2,top:frameCenter.y-height/2,width,height,angle};
+    this.frame={left:frameCenter.x-width/2,top:frameCenter.y-height/2,width,height,angle,shape:bounds.shape||'rectangle'};
     this.render();
     const regionCenter=northwest.add(southeast).divideBy(2).multiplyBy(scale);
     const center=this.map.unproject([regionCenter.x-frameCenter.x+size.x/2,regionCenter.y-frameCenter.y+size.y/2],zoom);
@@ -194,11 +209,13 @@ export class SelectionFrame {
     handle.setPointerCapture(event.pointerId);this.element.classList.add('resizing');
   }
 
-  resizeFrom(frame,width,height) {
-    const angle=frame.angle*Math.PI/180,dx=(width-frame.width)/2,dy=(height-frame.height)/2;
+  resizeFrom(frame,width,height,action='both') {
+    const angle=frame.angle*Math.PI/180,halfW=(width-frame.width)/2,halfH=(height-frame.height)/2;
+    const dx=action==='left'?-halfW:frame.shape==='circle'&&['height','top'].includes(action)?0:halfW;
+    const dy=action==='top'?-halfH:frame.shape==='circle'&&['width','left'].includes(action)?0:halfH;
     // Keep the opposite corner fixed while changing a rotated edge's length.
-    this.frame={...frame,width,height,left:frame.left+dx*Math.cos(angle)-dy*Math.sin(angle)-dx,
-      top:frame.top+dx*Math.sin(angle)+dy*Math.cos(angle)-dy};
+    this.frame={...frame,width,height,left:frame.left+dx*Math.cos(angle)-dy*Math.sin(angle)-halfW,
+      top:frame.top+dx*Math.sin(angle)+dy*Math.cos(angle)-halfH};
   }
 
   moveDrag(event) {
@@ -213,9 +230,11 @@ export class SelectionFrame {
     } else {
       const radians=drag.frame.angle*Math.PI/180,dx=event.clientX-drag.x,dy=event.clientY-drag.y,limits=this.limits();
       const localX=dx*Math.cos(radians)+dy*Math.sin(radians),localY=-dx*Math.sin(radians)+dy*Math.cos(radians);
-      const width=drag.action==='width'?Math.max(80,Math.min(limits.width,drag.frame.width+localX)):drag.frame.width;
-      const height=drag.action==='height'?Math.max(80,Math.min(limits.height,drag.frame.height+localY)):drag.frame.height;
-      this.resizeFrom(drag.frame,width,height);
+      const horizontal=['width','left'].includes(drag.action),sign=['left','top'].includes(drag.action)?-1:1;
+      let width=horizontal?Math.max(80,Math.min(limits.width,drag.frame.width+sign*localX)):drag.frame.width;
+      let height=!horizontal?Math.max(80,Math.min(limits.height,drag.frame.height+sign*localY)):drag.frame.height;
+      if(drag.frame.shape==='circle')width=height=Math.min(horizontal?width:height,limits.width,limits.height);
+      this.resizeFrom(drag.frame,width,height,drag.action);
     }
     this.render();this.emitChange();
   }
@@ -244,9 +263,11 @@ export class SelectionFrame {
     } else {
       const direction=directions[event.key];if(!direction)return;
       event.preventDefault();const limits=this.limits(),step=event.shiftKey?20:2,frame=this.frame;
-      const width=handle.dataset.resize==='width'?Math.max(80,Math.min(limits.width,frame.width+direction[0]*step)):frame.width;
-      const height=handle.dataset.resize==='height'?Math.max(80,Math.min(limits.height,frame.height+direction[1]*step)):frame.height;
-      this.resizeFrom(frame,width,height);
+      const action=handle.dataset.resize,horizontal=['width','left'].includes(action),sign=['left','top'].includes(action)?-1:1;
+      let width=horizontal?Math.max(80,Math.min(limits.width,frame.width+sign*direction[0]*step)):frame.width;
+      let height=!horizontal?Math.max(80,Math.min(limits.height,frame.height+sign*direction[1]*step)):frame.height;
+      if(frame.shape==='circle')width=height=Math.min(horizontal?width:height,limits.width,limits.height);
+      this.resizeFrom(frame,width,height,action);
     }
     this.render();this.emitChange();
   }
@@ -259,6 +280,7 @@ export class SelectionFrame {
     if(preserveBounds){this.fitBounds(preserveBounds);return;}
     const cx=this.frame.left+this.frame.width/2,cy=this.frame.top+this.frame.height/2;
     const limits=this.limits();this.frame.width=Math.min(this.frame.width,limits.width);this.frame.height=Math.min(this.frame.height,limits.height);
+    if(this.frame.shape==='circle')this.frame.width=this.frame.height=Math.min(this.frame.width,this.frame.height);
     this.frame.left=cx-this.frame.width/2;this.frame.top=cy-this.frame.height/2;
     this.render();this.emitChange();
   }

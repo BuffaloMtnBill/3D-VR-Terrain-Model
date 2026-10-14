@@ -81,7 +81,7 @@
       <div class="workspace-heading"><div><span class="eyebrow">THE EXPLORER</span><h2 id="landscape-title">{{ presets[default_place].name }}</h2></div><span id="terrain-badge" class="data-badge"><i></i> REAL ELEVATION DATA</span></div>
       <div class="view-panes">
         <section class="map-panel panel" aria-label="Area selection">
-          <div class="panel-heading"><div><h3>Find your frame</h3></div><button id="edit-bounds" class="text-button" title="Edit bounding coordinates">Coordinates ↗</button></div>
+          <div class="panel-heading"><div><h3>Find your frame</h3></div><label class="map-shape-control" for="selection-shape">Shape <select id="selection-shape"><option value="rectangle">Rectangle</option><option value="circle">Circle</option><option value="oval">Oval</option></select></label><button id="edit-bounds" class="text-button" title="Edit bounding coordinates">Coordinates ↗</button></div>
           <div class="map-wrapper">
             <div id="map" role="region" aria-label="OpenStreetMap area selector"></div>
             <div class="map-style-control"><label class="sr-only" for="map-style">Map style</label><select id="map-style"><option value="terrain" selected>Terrain & contours</option><option value="streets">Street map</option></select></div>
@@ -90,6 +90,8 @@
                 <span class="frame-label">SELECTED AREA</span>
                 <button type="button" class="frame-resize frame-resize-width" data-resize="width" aria-label="Resize area width" title="Drag horizontally to resize width"></button>
                 <button type="button" class="frame-resize frame-resize-height" data-resize="height" aria-label="Resize area height" title="Drag vertically to resize height"></button>
+                <button type="button" class="frame-resize frame-resize-left" data-resize="left" aria-label="Resize left border" title="Drag the left border to resize"></button>
+                <button type="button" class="frame-resize frame-resize-top" data-resize="top" aria-label="Resize top border" title="Drag the top border to resize"></button>
               </div>
             </div>
             <button type="button" class="frame-rotate" data-rotate aria-label="Rotate selected area" title="Drag to rotate the selected area">⟳</button>
@@ -416,6 +418,18 @@
           <div class="view-tabs studio-views" role="group" aria-label="Silhouette view"><button type="button" data-silhouette-view="front" aria-pressed="true" class="active">Front</button><button type="button" data-silhouette-view="3d" aria-pressed="false">3D</button></div>
           <span id="silhouette-slice-label" class="silhouette-slice-label"></span>
         </div>
+        <div class="silhouette-ridge-tools" aria-label="Ridgeline editing tools">
+          <button id="silhouette-ridge-edit" type="button" class="button secondary" aria-pressed="false">Edit ridgelines</button>
+          <div id="silhouette-ridge-actions" hidden>
+            <button id="silhouette-ridge-delete" type="button" class="button secondary" disabled>Delete selected</button>
+            <button id="silhouette-ridge-undo" type="button" class="button secondary" disabled>Undo</button>
+            <button id="silhouette-ridge-redo" type="button" class="button secondary" disabled>Redo</button>
+            <button id="silhouette-ridge-reset" type="button" class="button secondary" disabled>Reset ridgelines</button>
+            <label for="silhouette-ridge-radius">Pull width <input id="silhouette-ridge-radius" type="range" min="2" max="35" value="12"><output id="silhouette-ridge-radius-value">12%</output></label>
+          </div>
+          <div id="silhouette-ridge-list" role="group" aria-label="Select ridgelines" hidden></div>
+          <span id="silhouette-ridge-hint" class="small-hint" role="status">Edit ridgelines in the front view. Changes also apply to exported models.</span>
+        </div>
         <div id="silhouette-view" class="studio-view silhouette-view">
           <svg id="silhouette-svg" role="img" aria-label="The silhouette piece, front view, to scale"></svg>
           <div id="silhouette-3d" class="silhouette-3d" hidden></div>
@@ -461,6 +475,7 @@
             <button type="button" data-silhouette-export="3mf"><strong>3MF <span>↓</span></strong><span>Every part in color, laid flat</span></button>
             <button type="button" data-silhouette-export="svg"><strong>SVG <span>↓</span></strong><span>Outlines in mm for laser or vinyl</span></button>
             <button type="button" data-silhouette-export="json"><strong>Settings <span>↓</span></strong><span>These choices as JSON</span></button>
+            <button type="button" id="silhouette-cylinder-lamp" title="Open the layers in CylinderLamp, wrapped around a round lithophane shade: the sky thinnest, the nearest ridge thickest"><strong>Cylinder lamp <span>↗</span></strong><span>Layers wrapped around a round shade</span></button>
           </div>
           <div id="silhouette-status" class="silhouette-status" role="status"></div>
           <a class="text-button silhouette-credits" href="/api/attribution?download=1" download="terrain-credits.txt">Source credits (TXT) ↓</a>

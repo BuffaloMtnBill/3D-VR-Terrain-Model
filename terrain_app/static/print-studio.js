@@ -173,7 +173,8 @@ export function createStudio(ctx) {
   const markerInfo=()=>platformStyle()&&catalog?.marker_platform?catalog.marker_platform:catalog?.marker_ball;
   function areaKey() {
     const b=ctx.state.data.bounds;
-    const key=JSON.stringify({bounds:['north','south','east','west'].map(name=>Number(b[name]).toFixed(6)),rotation:Number(b.rotation_deg||0).toFixed(4)});
+    const key=JSON.stringify({bounds:['north','south','east','west'].map(name=>Number(b[name]).toFixed(6)),rotation:Number(b.rotation_deg||0).toFixed(4),
+      ...(b.shape&&b.shape!=='rectangle'?{shape:b.shape}:{})});
     return STORE_PREFIX+hash(key);
   }
   function sanitize(input,keepId=false) {

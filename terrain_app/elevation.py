@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import hashlib
 from io import BytesIO
 import math
@@ -52,6 +52,7 @@ class Bounds:
     north: float
     east: float
     rotation_deg: float = 0.0  # clockwise in the map's Mercator plane
+    shape: str = "rectangle"
 
     @classmethod
     def from_dict(cls, value: dict) -> "Bounds":
@@ -59,21 +60,28 @@ class Bounds:
             raise ValueError("Supply south, west, north, and east coordinates.")
         try:
             bounds = cls(**{key: float(value[key]) for key in ("south", "west", "north", "east")},
-                         rotation_deg=float(value.get("rotation_deg", 0)))
+                         rotation_deg=float(value.get("rotation_deg", 0)), shape=value.get("shape", "rectangle"))
         except (KeyError, TypeError, ValueError):
             raise ValueError("Supply four numeric bounding coordinates.") from None
         bounds.validate()
         return bounds
 
     def validate(self):
-        if not all(math.isfinite(v) for v in asdict(self).values()):
+        if not all(math.isfinite(getattr(self, key)) for key in ("south", "west", "north", "east", "rotation_deg")):
             raise ValueError("Coordinates must be finite numbers.")
+        if self.shape not in ("rectangle", "circle", "oval"):
+            raise ValueError("Choose rectangle, circle, or oval as the selection shape.")
         if not -180 <= self.rotation_deg <= 180:
             raise ValueError("Rotation must be between −180° and 180°.")
         if not -MERCATOR_LIMIT <= self.south < self.north <= MERCATOR_LIMIT:
             raise ValueError("Select an area between 85° south and 85° north.")
         if not -180 <= self.west < self.east <= 180:
             raise ValueError("Select an area within −180° to 180° longitude without crossing the date line.")
+        if self.shape == "circle":
+            x0, y0 = pixel_coordinates(self.west, self.north, 0)
+            x1, y1 = pixel_coordinates(self.east, self.south, 0)
+            if not math.isclose(float(x1-x0), float(y1-y0), rel_tol=.01):
+                raise ValueError("A circle needs equal width and height on the map. Use oval for unequal axes.")
         width, height = self.dimensions
         if min(width, height) < 50:
             raise ValueError("Select an area at least 50 meters wide and tall.")
@@ -87,6 +95,8 @@ class Bounds:
         value = {key: getattr(self, key) for key in ("south", "west", "north", "east")}
         if self.rotation_deg:
             value["rotation_deg"] = self.rotation_deg
+        if self.shape != "rectangle":
+            value["shape"] = self.shape
         return value
 
     @property
@@ -104,7 +114,14 @@ class Bounds:
         latitude = math.radians((self.south + self.north) / 2)
         width = EARTH_RADIUS * math.cos(latitude) * math.radians(self.east - self.west)
         height = EARTH_RADIUS * math.radians(self.north - self.south)
-        return width, height
+        return (width, width) if self.shape == "circle" else (width, height)
+
+    @property
+    def boundary(self):
+        if self.shape == "rectangle":
+            return self.corners
+        angles = np.linspace(0, 2*np.pi, 128, endpoint=False)
+        return selection_coordinates(self, .5+.5*np.cos(angles), .5+.5*np.sin(angles))
 
 
 @dataclass
@@ -137,7 +154,7 @@ class Terrain:
             "bounds": self.bounds.to_dict(), "rows": rows, "columns": columns,
             "rotation_deg": self.bounds.rotation_deg,
             "geographic_bounds": self.bounds.geographic_extent.to_dict(),
-            "footprint": [{"latitude": float(lat), "longitude": float(lng)} for lng, lat in zip(*self.bounds.corners)],
+            "footprint": [{"latitude": float(lat), "longitude": float(lng)} for lng, lat in zip(*self.bounds.boundary)],
             "width_m": self.width, "height_m": self.height,
             "min_m": float(self.elevations.min()), "max_m": float(self.elevations.max()),
             "mean_m": float(self.elevations.mean()), "grid_spacing_m": spacing,

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { GLTFExporter } from './vendor/GLTFExporter.js';
 import { SelectionFrame } from './map-frame.js';
+import {clipFootprint,clipGroup,footprintRim} from './footprint.js';
 import {rotationAngle,selectionCorners,sampleLocation,geographicExtent,mercatorPixel} from './selection-geometry.js';
 import {createProfileModes} from './profile-modes.js';
 import {buildFeatures,buildRoute,disposeFeatures,featureLabels,filterFeatures} from './feature-layers.js';
@@ -35,7 +36,7 @@ const METERS_PER_MILE = 1609.344;
 const units=()=>state.units==='m'?{height:1,label:'m',name:'meters',distance:1000,distanceLabel:'km'}:{height:FEET_PER_METER,label:'ft',name:'feet',distance:METERS_PER_MILE,distanceLabel:'mi'};
 const number = (value, decimals=0) => Number(value).toLocaleString(undefined,{maximumFractionDigits:decimals});
 const boundsArray = bounds => [[bounds.south,bounds.west],[bounds.north,bounds.east]];
-const sameBounds = (first,second) => ['north','south','east','west'].every(key=>Math.abs(first[key]-second[key])<1e-9)&&Math.abs(rotationAngle(first)-rotationAngle(second))<1e-9;
+const sameBounds = (first,second) => ['north','south','east','west'].every(key=>Math.abs(first[key]-second[key])<1e-9)&&Math.abs(rotationAngle(first)-rotationAngle(second))<1e-9&&(first.shape||'rectangle')===(second.shape||'rectangle');
 const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
 
 function notify(message, error=false) {
@@ -58,15 +59,20 @@ async function api(path, options={}) {
 
 function dimensions(bounds) {
   const radians = Math.PI / 180;
-  return {width:6371008.8*Math.cos((bounds.north+bounds.south)/2*radians)*(bounds.east-bounds.west)*radians,
-          height:6371008.8*(bounds.north-bounds.south)*radians};
+  const width=6371008.8*Math.cos((bounds.north+bounds.south)/2*radians)*(bounds.east-bounds.west)*radians;
+  return {width,height:bounds.shape==='circle'?width:6371008.8*(bounds.north-bounds.south)*radians};
 }
 
 function validateBounds(bounds) {
-  if (!Object.values(bounds).every(Number.isFinite)) throw new Error('Enter four numeric coordinates.');
+  if (!['south','west','north','east'].every(key=>Number.isFinite(bounds[key]))||!Number.isFinite(rotationAngle(bounds))) throw new Error('Enter four numeric coordinates.');
+  if(!['rectangle','circle','oval'].includes(bounds.shape||'rectangle'))throw new Error('Choose rectangle, circle, or oval.');
   if (!(bounds.south>=-85.05112878 && bounds.north<=85.05112878 && bounds.south<bounds.north)) throw new Error('North must be above south, within ±85° latitude.');
   if (!(bounds.west>=-180 && bounds.east<=180 && bounds.west<bounds.east)) throw new Error('East must be right of west, within ±180° longitude. Date-line crossings are not supported.');
   if(Math.abs(rotationAngle(bounds))>180)throw new Error('Rotation must be between −180° and 180°.');
+  if(bounds.shape==='circle') {
+    const a=mercatorPixel(bounds.west,bounds.north),b=mercatorPixel(bounds.east,bounds.south);
+    if(Math.abs((b.x-a.x)/(b.y-a.y)-1)>.01)throw new Error('A circle needs equal map axes. Use Oval for unequal axes.');
+  }
   if(selectionCorners(bounds).some(p=>Math.abs(p.lat)>85.05112878||Math.abs(p.lng)>180))throw new Error('The rotated area must stay within ±85° latitude and cannot cross the date line.');
   const {width,height} = dimensions(bounds);
   if (Math.min(width,height)<50) throw new Error('Select an area at least 50 meters wide and tall.');
@@ -195,6 +201,7 @@ function setupMap(config) {
     try {
       const bounds=Object.fromEntries(['north','south','east','west'].map(key=>[key,Number($(`bound-${key}`).value)]));
       const rotation=Number($('bound-rotation').value);if(rotation)bounds.rotation_deg=rotation;
+      if(state.selection.shape)bounds.shape=state.selection.shape;
       updateSelection(bounds,true); $('bounds-dialog').close();
     } catch(error) { notify(error.message,true); }
   });
@@ -337,6 +344,7 @@ function buildScene(reset=false) {
   geometry.setAttribute('elevation',new THREE.Float32BufferAttribute(truth,1));
   geometry.setIndex(new THREE.BufferAttribute(indices,1)); geometry.computeVertexNormals();
   if(palette==='print')geometry=paintSurface(geometry,surfaceColors,coverData);
+  geometry=clipFootprint(geometry,data.bounds,width,height);
   const material=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.93,metalness:0,wireframe:state.view==='wireframe'});
   material.onBeforeCompile=shader=>{
     shader.uniforms.showContours={value:$('contours').checked&&palette!=='print'?1:0};
@@ -361,9 +369,10 @@ function buildScene(reset=false) {
     for(let row=rows-2;row>=0;row--) rim.push(row*columns+columns-1);
     for(let column=columns-2;column>0;column--) rim.push(column);
     const wallPositions=[],bottomPositions=[];
-    for(let index=0;index<rim.length;index++) {
-      const a=rim[index]*3,b=rim[(index+1)%rim.length]*3;
-      const upperA=Array.from(positions.slice(a,a+3)),upperB=Array.from(positions.slice(b,b+3));
+    const curvedRim=footprintRim(data,positions,width,height);
+    const boundary=curvedRim||rim.map(i=>Array.from(positions.slice(i*3,i*3+3)));
+    for(let index=0;index<boundary.length;index++) {
+      const upperA=boundary[index],upperB=boundary[(index+1)%boundary.length];
       const lowerA=[upperA[0],0,upperA[2]],lowerB=[upperB[0],0,upperB[2]];
       wallPositions.push(...upperA,...lowerA,...upperB,...upperB,...lowerA,...lowerB);
       bottomPositions.push(0,0,0,...lowerB,...lowerA);
@@ -380,7 +389,7 @@ function buildScene(reset=false) {
   grid.visible=state.view!=='elevation';
   updateProfileMapLine();
   if(reset) resetCamera();
-  $('scene-detail').textContent=`${columns} × ${rows} points · ${number((rows-1)*(columns-1)*2)} surface faces${rotationAngle(data.bounds)?` · ${number(rotationAngle(data.bounds),1)}° selection`:''}`;
+  $('scene-detail').textContent=`${columns} × ${rows} points · ${number((rows-1)*(columns-1)*2)} surface faces${rotationAngle(data.bounds)?` · ${number(rotationAngle(data.bounds),1)}° selection`:''}${data.bounds.shape?` · ${data.bounds.shape} footprint`:''}`;
   studio?.modelChanged();silhouette?.modelChanged();
 }
 
@@ -560,7 +569,10 @@ function rebuildFeatures() {
   requestRender();
   disposeFeatures(featureGroup);featureGroup=null;
   if(sceneReady&&topMesh&&featureData&&featuresEnabled()) {
-    try {featureGroup=buildFeatures(featureData,state.data,options(),featureStyles(),topMesh.geometry,SCALE);model.add(featureGroup);syncFeatureVisibility();}
+    try {featureGroup=buildFeatures(featureData,state.data,options(),featureStyles(),topMesh.geometry,SCALE);
+      const unit=SCALE/Math.max(state.data.width_m,state.data.height_m);
+      clipGroup(featureGroup,state.data.bounds,state.data.width_m*unit,state.data.height_m*unit);
+      model.add(featureGroup);syncFeatureVisibility();}
     catch(error) {featureError=error.message;}
   }
   featureStatus();
@@ -819,13 +831,14 @@ async function exportGLB() {
   const group=new THREE.Group(),data=state.data,opts=options();
   group.name='Terrain Studio';
   group.userData={...data,elevations:undefined,true_elevations:undefined,model_options:opts,print_palette:state.palette==='print'?printColors():undefined,surface_source:state.palette==='print'?coverData.source:undefined,feature_layers:featureStyles(),water_source:$('water-source').value,mesh_units:'meters',axes:'X selection right, Y up, Z selection bottom',map_texture:'omitted; interactive viewing only',attribution:await fetch('/api/attribution').then(response=>response.text())};
-  let geometry=topMesh.geometry.clone();geometry.deleteAttribute('elevation');
-  if(state.palette==='print')geometry=paintSurface(geometry,printColors(),coverData);
+  let geometry=topMesh.geometry.clone();
+  if(state.palette==='print')geometry=paintSurface(geometry,printColors(),coverData,data.bounds.shape&&data.bounds.shape!=='rectangle'?data:null);
   else {
-    const colors=geometry.getAttribute('color'),color=new THREE.Color();
-    for(let index=0;index<data.elevations.length;index++) colorAt(((data.true_elevations||data.elevations)[index]-data.min_m)/Math.max(data.max_m-data.min_m,1e-9),state.palette,color).toArray(colors.array,index*3);
+    const colors=geometry.getAttribute('color'),heights=geometry.getAttribute('elevation'),color=new THREE.Color();
+    for(let index=0;index<colors.count;index++) colorAt((heights.getX(index)-data.min_m)/Math.max(data.max_m-data.min_m,1e-9),state.palette,color).toArray(colors.array,index*3);
     colors.needsUpdate=true;
   }
+  geometry.deleteAttribute('elevation');
   const ownedMeshes=[new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({vertexColors:true,roughness:.93}))];
   ownedMeshes[0].name='Terrain surface';
   if(baseMesh&&opts.solid) {
@@ -878,7 +891,7 @@ function rebuildRoute() {
   if(routeMesh){disposeFeatures(routeMesh);routeMesh=null;}
   if(sceneReady&&topMesh&&state.data&&routeShown()&&routeLines?.length&&routeLinesKey===`${route.id}:${state.id}`) {
     routeMesh=buildRoute(routeLines,state.data,options(),$('route-color').value,Number($('route-width').value),SCALE);
-    if(routeMesh)model.add(routeMesh);
+    if(routeMesh){const unit=SCALE/Math.max(state.data.width_m,state.data.height_m);clipGroup(routeMesh,state.data.bounds,state.data.width_m*unit,state.data.height_m*unit);model.add(routeMesh);}
   }
   studio?.modelChanged();silhouette?.modelChanged();
 }
