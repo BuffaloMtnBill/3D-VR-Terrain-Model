@@ -223,39 +223,57 @@ hides the cracks between tiles of different detail. The box gets low glowing wal
 drag glides at the height where it took the map. **Flat map** on the watch switches the relief off (**3D relief**
 switches it back).
 
-| Hands | Controllers | Map Selection |
-| --- | --- | --- |
-| Point at the map and pinch, then sweep | Point and pull the trigger, then sweep | Drag the map under the box |
-| Pinch with both hands, apart / together | Both triggers, apart / together | Zoom in / out: the box covers less / more ground |
-| Pinch with both hands, turn them | Both triggers, turn them | Turn the map, which turns the selection |
-| Pinch in open air and move | Trigger in open air and move | Drag the map with your hand |
+There are no lasers: you grip the map, and tap the menus and buttons with a fingertip. A grip is a pinch or a fist
+(with the index finger curled too, so a finger held out to tap is never a grip); with controllers it is the grip
+button or the trigger, and each controller taps with the small dot just in front of it.
+
+| Grip | Map Selection |
+| --- | --- |
+| One hand, and move it | Move the map under the box |
+| Both hands, apart / together | Zoom in / out: the box covers less / more ground (its proportions stay) |
+| Both hands, turn them | Turn the map, which turns the selection |
 
 Every drag, zoom, and turn sets the page's selection when you let go (and the computer's page follows it while you
 move). When the selection changes another way (a search, a shape or aspect change) the map moves to match.
 
-**The watch on your left wrist** (on top of the left controller) opens a radial menu: touch it with your right index
-finger, or point at it and pinch. The menu floats in front of you; each segment is one of the page's own controls:
+**The watch on your left wrist** (on top of the left controller): tap its dial with your right index finger and a
+large radial menu (42 cm across) opens in front of you, within reach. Tap a segment to choose it (it lights as your
+fingertip comes near); each one is the page's own control:
 
 | Segment | Choices |
 | --- | --- |
-| Search | A keyboard: type an address, place, US ZIP code, or "latitude longitude" and press Search; the map goes there |
+| Search | A keyboard: type (or say) an address, place, US ZIP code, or "latitude longitude" and press Search; the map goes there |
 | Source | Elevation source |
 | Detail | Terrain detail |
 | Profile | Elevation profile (standard, local, lowland, …) |
 | Multiplier | Elevation multiplier: − and + one step, −− and ++ ten steps |
 | Base | Base thickness, the same way |
-| Shape | Rectangle, circle, or oval |
-| Aspect | 1:1, 3:4, 16:9 (the same one again turns it) |
+| Shape | The shape editor (below): shape, proportions, and turn in one window |
 | Features | The map features shown on the model, each a switch |
 | Exit VR | Back to the page |
 | Flat map / 3D relief | Switch the map's relief off or on |
 
-The middle of the menu goes back (or closes it); touching the watch again closes it too.
+The middle of the menu goes back (or closes it); tapping the watch again closes it too. The keyboard's keys are tapped
+the same way. While any menu is up the map stays put: grips do not move it.
 
-**The button on your right wrist** (on top of the right controller), touched with the left index finger or pointed at
-and pinched, reads **Generate** in Map Selection: the box's area is generated (the button shows the progress), and
-VR switches to the **model view**, the new model as a 1 m tabletop model to grab, zoom, and turn (one pinch drags
-it, two pinches zoom and turn it, controller sticks fly over it). There the button reads **◀ Map** and goes back.
+**The shape editor** floats upright in front of you: tap Rectangle, Circle, or Oval and a proportion (1:1, 4:3, 3:4,
+16:9, 9:16), or grip the shape's handles (pinch, or the controller's grip or trigger with its dot on the handle) and
+drag them: the side handle sets the width, the top one the height, and the ring above turns the shape (it snaps back to
+north-up within 3°). The window shows the proportions and the turn as you go; each change is applied to the page's
+selection when you let go, keeping its middle and its area, and the map under the box follows. **OK** returns to the
+menu.
+
+**Voice search.** The keyboard's **🎤 Speak** key records from the headset's microphone (allow it when the headset
+asks); **■ Stop** (or eight seconds) ends it, and the words heard replace the text in the box, to check before tapping
+Search. A ZIP code read digit by digit is joined up. The headset sends plain 16 kHz samples to the computer, which
+transcribes them with Whisper (faster-whisper, on the CPU); nothing is sent anywhere else and nothing is saved. The
+first voice search downloads the speech model once (`small.en`, about 480 MB; `TERRAIN_WHISPER_MODEL=base.en` picks a
+smaller, less accurate one, about 140 MB); after that a search takes well under a second.
+
+**The button on your right wrist** (on top of the right controller): tap it with your left index finger. It reads
+**Generate** in Map Selection: the box's area is generated (the button shows the progress), and
+VR switches to the **model view**, the new model as a 1 m tabletop model to grab, zoom, and turn (grip it with one hand
+to move it, with both to zoom and turn it; controller sticks fly over it). There the button reads **◀ Map** and goes back.
 
 **From the headset to the computer.** While you work in VR, the headset hands its workspace to the server a few
 times a second: the cut (even mid-drag), its name, the elevation source and detail, every model and map-layer
@@ -893,6 +911,7 @@ Optional environment variables:
 | `TERRAIN_MAP_TILE_URL` | Alternative map provider URL with `{z}`, `{x}`, `{y}` placeholders |
 | `TERRAIN_MAP_ATTRIBUTION` | Attribution HTML for that provider |
 | `TERRAIN_MAP_MAX_NATIVE_ZOOM` | Highest native zoom of the terrain provider; defaults to 17 |
+| `TERRAIN_WHISPER_MODEL` | Speech model for VR voice search (faster-whisper name); defaults to `small.en` |
 | `TERRAIN_PAIRING_PIN` | Fixed 6-digit pairing PIN; a new random one each run by default |
 | `TERRAIN_TRUSTED_HOSTS` | Comma-separated allowed hosts; defaults to localhost, 127.0.0.1, and [::1] |
 

@@ -33,6 +33,7 @@ from .hydrography import HydrographyClient, HYDROGRAPHY_URL, water_source
 from . import lamp_handoff
 from .live import Hub
 from .relief import ReliefTiles
+from .speech import MAX_SECONDS as MAX_SPEECH_SECONDS, Transcriber, decode_samples
 from .pairing import COOKIE as PAIR_COOKIE, is_local
 from .silhouette import PRESET_DATA as SILHOUETTE_PRESETS, SilhouetteOptions, Sources, outline_json, silhouette_export, text_block_json
 from .profiles import profile_json, profile_options
@@ -123,6 +124,7 @@ def create_app(test_config=None):
                                  "landcover": cover_client, "cover_jobs": cover_jobs, "hydrography": hydro_client, "water_jobs": water_jobs, "studio_jobs": studio_jobs,
                                  "routes": route_store}
     relief = ReliefTiles(client)
+    transcriber = app.config.get("TRANSCRIBER") or Transcriber()
     hub = Hub()
     app.extensions["terrain"]["live"] = hub
     sock = Sock(app)
@@ -145,6 +147,8 @@ def create_app(test_config=None):
         if request.method == "POST":
             if not request.is_json:
                 return jsonify(error="Send an application/json request."), 415
+            if request.path == "/api/transcribe":
+                request.max_content_length = MAX_SPEECH_SECONDS * 16000 * 3 + 4096   # base64 samples, still JSON
         # Browsers let any page open a WebSocket to any server, so the live channel checks its origin too.
         if request.method == "POST" or request.path == "/api/live":
             origin = request.headers.get("Origin")
@@ -434,6 +438,19 @@ def create_app(test_config=None):
                 return jsonify(error="Terrain job expired. Generate the area again."), 404
             record["accessed"] = time.monotonic()
             return jsonify({key: record[key] for key in ("state", "progress", "message")})
+
+    @app.post("/api/transcribe")
+    def transcribe():
+        """Voice search: the headset's recording (16 kHz samples) to text, on this computer; nothing is kept."""
+        if not transcriber.available():
+            return jsonify(error="Voice search needs faster-whisper on the computer: pip install faster-whisper"), 503
+        samples = decode_samples(request.get_json(silent=True))
+        try:
+            text = transcriber.transcribe(samples)
+        except Exception:
+            LOGGER.exception("Transcription failed")
+            return jsonify(error="The voice search could not be understood. Try again, or type it."), 500
+        return jsonify(text=text[:200])
 
     @app.get("/api/relief/<int:zoom>/<int:x>/<int:y>")
     def relief_tile(zoom, x, y):

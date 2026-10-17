@@ -1,5 +1,5 @@
 // Map Selection mode: the page's map and selection frame in 3D. A box stays fixed on the table in front of you and
-// the map moves beneath it (drag it with a pointing ray, pinch with both hands to zoom and turn), exactly as the
+// the map moves beneath it (grip it with one hand to move it, with both to zoom and turn it), exactly as the
 // page's map moves beneath its fixed frame. The map is the topographic style (hill shading and contour lines),
 // tiled so that tiles near your eyes are sharper: lean in or zoom in and finer tiles load. Each tile is draped over
 // a low-resolution relief (17 × 17 heights from the server's elevation cache), raised by the page's elevation
@@ -20,6 +20,18 @@ const fromMercator=(x,y)=>({lng:x/256*360-180,lat:Math.atan(Math.sinh(Math.PI*(1
 export const metersPerPixel=lat=>EARTH_M*Math.cos(lat*Math.PI/180)/256;
 const normalizeAngle=angle=>((angle+180)%360+360)%360-180;
 const tileUrl=(template,z,x,y)=>template.replace('{s}','a').replace('{z}',z).replace('{x}',x).replace('{y}',y).replace('{r}','');
+
+// A selection with a new shape, proportions (width / height on the map), and turn, keeping its center and area.
+export function reshapeBounds(bounds,{shape,ratio,angle}) {
+  const nw=mercatorPixel(bounds.west,bounds.north),se=mercatorPixel(bounds.east,bounds.south);
+  const cx=(nw.x+se.x)/2,cy=(nw.y+se.y)/2,area=(se.x-nw.x)*(se.y-nw.y);
+  const width=Math.sqrt(area*ratio),height=width/ratio;
+  const north=fromMercator(cx-width/2,cy-height/2),south=fromMercator(cx+width/2,cy+height/2);
+  const result={north:north.lat,south:south.lat,west:north.lng,east:south.lng};
+  if(angle)result.rotation_deg=angle;
+  if(shape&&shape!=='rectangle')result.shape=shape;
+  return result;
+}
 
 export function createMapMode(ctx,{table}) {
   const world=new THREE.Group();world.name='VR map';world.visible=false;
@@ -322,19 +334,7 @@ export function createMapMode(ctx,{table}) {
   }
   function leave() {active=false;world.visible=false;room.visible=false;}
 
-  // Where a pointing ray meets the map, in world coordinates: the relief (tested with the ray in the room, where the
-  // meshes are drawn), or the table-level plane where there is none.
-  const plane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
-  function hit(worldRay,roomRay,toWorld) {
-    const meshes=[];for(const tile of cache.values())if(tile.mesh.visible&&!tile.base)meshes.push(tile.mesh);
-    world.updateMatrixWorld(true);
-    const found=roomRay.intersectObjects(meshes,false)[0];
-    return found?toWorld(found.point):worldRay.ray.intersectPlane(plane,new THREE.Vector3());
-  }
-  // A drag keeps to the height it started at, so it glides over hills instead of catching on them.
-  const hitAt=(worldRay,height)=>worldRay.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),-height),new THREE.Vector3());
-
-  return {world,room,enter,leave,update,commit,hit,hitAt,fitView,boundsFrom,
+  return {world,room,enter,leave,update,commit,fitView,boundsFrom,
     get relief(){return reliefOn;},
     set relief(on){reliefOn=Boolean(on);for(const tile of cache.values())tile.placed=null;},
     get active(){return active;},

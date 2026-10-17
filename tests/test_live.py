@@ -261,3 +261,67 @@ def test_relief_endpoint(app, monkeypatch):
     assert client.get("/api/relief/18/8/8").headers["X-Relief-Missing"] == "1"
     assert client.get("/api/relief/3/0/9").status_code == 400
     assert client.get("/api/config").headers["Cache-Control"] == "no-store"
+
+
+class FakeTranscriber:
+    def __init__(self, text="Roan Mountain, Tennessee.", works=True):
+        self.text, self.works, self.heard = text, works, None
+
+    def available(self):
+        return self.works
+
+    def transcribe(self, samples):
+        self.heard = samples
+        from terrain_app.speech import tidy
+        return tidy(self.text)
+
+
+def speech(seconds=1.0, rate=16000):
+    import base64
+    tone = (np.sin(np.arange(int(16000 * seconds)) / 16000 * 2 * np.pi * 440) * 12000).astype("<i2")
+    return {"rate": rate, "samples": base64.b64encode(tone.tobytes()).decode()}
+
+
+def test_voice_search_transcribes_on_this_computer(tmp_path):
+    fake = FakeTranscriber()
+    app = create_app({"TESTING": True, "CACHE_DIR": tmp_path / "tiles", "TRANSCRIBER": fake})
+    try:
+        response = app.test_client().post("/api/transcribe", json=speech())
+        assert response.status_code == 200 and response.get_json() == {"text": "Roan Mountain, Tennessee"}
+        assert fake.heard.dtype == np.float32 and len(fake.heard) == 16000 and abs(fake.heard).max() <= 1
+    finally:
+        app.extensions["terrain"]["executor"].shutdown(wait=True)
+
+
+@pytest.mark.parametrize("payload,error", [
+    (speech(rate=44100), "16000 samples per second"),
+    ({"rate": 16000, "samples": "not base64!"}, "base64"),
+    ({"rate": 16000, "samples": "AA=="}, "damaged"),   # one byte: half a sample
+    (speech(seconds=21), "20 seconds"),
+])
+def test_voice_search_rejects_bad_recordings(tmp_path, payload, error):
+    app = create_app({"TESTING": True, "CACHE_DIR": tmp_path / "tiles", "TRANSCRIBER": FakeTranscriber()})
+    try:
+        response = app.test_client().post("/api/transcribe", json=payload)
+        assert response.status_code in (400, 413)
+        if response.status_code == 400:
+            assert error in response.get_json()["error"]
+    finally:
+        app.extensions["terrain"]["executor"].shutdown(wait=True)
+
+
+def test_voice_search_without_the_engine(tmp_path):
+    app = create_app({"TESTING": True, "CACHE_DIR": tmp_path / "tiles", "TRANSCRIBER": FakeTranscriber(works=False)})
+    try:
+        response = app.test_client().post("/api/transcribe", json=speech())
+        assert response.status_code == 503 and "faster-whisper" in response.get_json()["error"]
+    finally:
+        app.extensions["terrain"]["executor"].shutdown(wait=True)
+
+
+def test_spoken_zip_codes_are_joined():
+    from terrain_app.speech import tidy
+    assert tidy("2-8-6-0-4.") == "28604"
+    assert tidy("2 8 6 0 4 1 2 3 4") == "28604-1234"
+    assert tidy("Mount Rainier, Washington.") == "Mount Rainier, Washington"
+    assert tidy("Route 66.") == "Route 66"

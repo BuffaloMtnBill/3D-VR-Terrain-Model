@@ -89,22 +89,15 @@ async function openPage(browser,headset) {
   await pinch('right',0);await frames();
   assert.equal((await vrState()).hands[1].mode,null,'Opening the fingers lets go');
 
-  // Map Selection with hands: point at the map, pinch, and sweep the ray to drag the map under the box.
+  // Map Selection with hands: pinch to grip the map and move your hand; the map moves with it under the box.
   assert.equal((await vrState()).mode,'map','VR starts in Map Selection');
-  const aimHand=(hand,from,target)=>page.evaluate(async([hand,from,target])=>{
-    const THREE=await import('three'),direction=new THREE.Vector3(...target).sub(new THREE.Vector3(...from)).normalize();
-    const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,-1),direction);
-    const h=window.xrDevice.hands[hand];h.position.set(...from);h.quaternion.set(q.x,q.y,q.z,q.w);
-  },[hand,from,target]);
   const startSelection=(await vrState()).pageSelection;
-  const C=(await vrState()).map.center;
-  await aimHand('right',[.25,C[1]+.4,-.3],[C[0],C[1],C[2]]);await frames();
+  await place('right',[.25,1.3,-.35]);await frames();
   await pinch('right',1);await frames();
-  assert.equal((await vrState()).hands[1].mode,'pan','A pinch while pointing at the map takes it');
-  for(const x of [.03,.06,.1]){await aimHand('right',[.25,C[1]+.4,-.3],[C[0]+x,C[1],C[2]]);await frames();}
+  for(const x of [.28,.31,.35]){await place('right',[x,1.3,-.35]);await frames();}
   await pinch('right',0);await frames(6);
   const panned=(await vrState()).pageSelection;
-  assert.ok((panned.west+panned.east)/2<(startSelection.west+startSelection.east)/2,'Sweeping the ray east drags the map east, so the selection moves west');
+  assert.ok((panned.west+panned.east)/2<(startSelection.west+startSelection.east)/2,'Moving the gripped map east moves the selection west');
   await place('right',[.25,1.3,-.35]);await frames();
 
   // The watch on the back of the left wrist: touch it with the right index finger to open the radial menu.
@@ -120,24 +113,35 @@ async function openPage(browser,headset) {
   };
   await touch(state.watch.face);
   assert.equal((await vrState()).watch.menu,'root','Touching the watch opens the radial menu');
-  // Point at a segment and pinch: Multiplier, then +. A pinch on the menu never drags the map.
+  // Tap a segment with the fingertip: Multiplier, then +. Tapping the menu never moves the map.
   const beforeMenu=(await vrState()).pageSelection,multiplier=Number(await page.inputValue('#exaggeration'));
   const choose=async id=>{
     const point=await page.evaluate(async id=>(await import('/static/vr.js')).currentVR().watchPoint(id),id);
     assert.ok(point,`${id} is on show`);
-    await aimHand('right',[.1,1.45,.05],point);await frames();
-    await pinch('right',1);await frames();await pinch('right',0);await frames(6);
+    await touch(point);
   };
-  await choose('radial:root:4');assert.equal((await vrState()).watch.menu,'multiplier');
+  await choose('radial:root:multiplier');assert.equal((await vrState()).watch.menu,'multiplier');
   await choose('radial:multiplier:2');
-  near(Number(await page.inputValue('#exaggeration')),multiplier+.1,1e-9,'Pointing and pinching on + raises the multiplier');
-  assert.deepEqual((await vrState()).pageSelection,beforeMenu,'Pinching on the menu leaves the map alone');
+  near(Number(await page.inputValue('#exaggeration')),multiplier+.1,1e-9,'Tapping + raises the multiplier');
+  assert.deepEqual((await vrState()).pageSelection,beforeMenu,'Tapping the menu leaves the map alone');
   // The keyboard takes fingertip presses too.
-  await choose('radial:center');await choose('radial:root:0');
+  await choose('radial:center');await choose('radial:root:search');
   assert.equal((await vrState()).watch.keyboard,true);
   await touch(await page.evaluate(async()=>(await import('/static/vr.js')).currentVR().watchPoint('key:7')));
   assert.equal((await vrState()).watch.text.endsWith('7'),true,'Touching a key types it');
   await choose('key:cancel');assert.equal((await vrState()).watch.keyboard,false,'Cancel puts the keyboard away');
+  // The shape editor: pinch a handle and drag it (here the side handle, outward: wider).
+  await touch((await vrState()).watch.face);await choose('radial:root:shape');
+  assert.ok((await vrState()).watch.editor,'Shape opens the editor');
+  const ratioFrom=(await vrState()).watch.editor.ratio;
+  const handle=await page.evaluate(async()=>(await import('/static/vr.js')).currentVR().watchPoint('editor:handle:width'));
+  await pinchAt('right',[handle[0],handle[1],handle[2]]);await pinch('right',1);await frames(3);
+  assert.equal((await vrState()).watch.editor.dragging,'width','A pinch on a handle takes it');
+  for(const x of [.02,.04,.05])await pinchAt('right',[handle[0]+x,handle[1],handle[2]]);
+  await pinch('right',0);await frames(6);
+  assert.ok((await vrState()).watch.editor.ratio>ratioFrom*1.15,'Dragging it out makes the shape wider');
+  await choose('editor:ok');assert.equal((await vrState()).watch.menu,'root','OK returns to the menu');
+  await touch((await vrState()).watch.face);assert.equal((await vrState()).watch.menu,null);
   await place('left',[-.25,1.2,-.4]);await place('right',[.25,1.2,-.4]);await frames(4);
 
   // The computer's page follows the box as you move the map.

@@ -10,3 +10,4 @@ manifold3d>=3.5,<4
 fontTools>=4.50,<5
 cryptography>=42
 flask-sock>=0.7,<1
+faster-whisper>=1.1,<2

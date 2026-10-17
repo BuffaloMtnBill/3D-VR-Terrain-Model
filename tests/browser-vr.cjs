@@ -13,8 +13,9 @@ const output=path.join(__dirname,'..','test-results');
 const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected)<=tolerance,`${label}: ${actual} is not within ${tolerance} of ${expected}`);
 
 (async()=>{
-  const browser=await chromium.launch({executablePath:process.env.TERRAIN_CHROMIUM_PATH||undefined,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader']});
-  const page=await browser.newPage({viewport:{width:1400,height:950}});
+  const browser=await chromium.launch({executablePath:process.env.TERRAIN_CHROMIUM_PATH||undefined,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader',
+    '--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream']});   // a fake microphone, for voice search
+  const page=await browser.newPage({viewport:{width:1400,height:950},permissions:['microphone']});
   const errors=[];
   page.on('pageerror',error=>errors.push(error.message));
   // Every map tile is the same small fixture image, so tiles load (and are counted) without the internet.
@@ -34,12 +35,6 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   },[hand,position,quaternion]);
   const button=(hand,name,value)=>page.evaluate(([hand,name,value])=>window.xrDevice.controllers[hand].updateButtonValue(name,value),[hand,name,value]);
   const stick=(hand,x,y)=>page.evaluate(([hand,x,y])=>window.xrDevice.controllers[hand].updateAxes('thumbstick',x,y),[hand,x,y]);
-  // Point a controller from where it is at a point in the room.
-  const aimAt=(hand,from,target)=>page.evaluate(async([hand,from,target])=>{
-    const THREE=await import('three'),direction=new THREE.Vector3(...target).sub(new THREE.Vector3(...from)).normalize();
-    const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,-1),direction);
-    const controller=window.xrDevice.controllers[hand];controller.position.set(...from);controller.quaternion.set(q.x,q.y,q.z,q.w);
-  },[hand,from,target]);
   const center=s=>({x:(s.west+s.east)/2,y:(s.north+s.south)/2});
   const widthOf=s=>s.east-s.west;
   // Pixel variety in the headset's view, to tell a drawn scene from an empty sky.
@@ -63,6 +58,7 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await page.waitForFunction(()=>window.testVR().state.map.tiles.shown>20,null,{timeout:30000});
   let state=await vrState();
   assert.equal(state.mode,'map','VR starts in Map Selection');
+  assert.equal(await page.evaluate(()=>{let lines=0;window.testVR().camera.parent.traverse(o=>{if(o.isLine)lines++;});return lines;}),0,'There are no laser lines');
   const C=state.map.center;
   near(C[1],1.55-.55,.03,'The box sits 55 cm below your eyes');
   near(C[2],.05-.55,.03,'and 55 cm ahead: 45° below your line of sight');
@@ -88,27 +84,32 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   assert.ok(state.map.tiles.triangles<400000,`and stays light enough for the headset (${state.map.tiles.triangles} triangles)`);
 
   // The watch's menu (more of it below) switches the relief off for a flat map: the precise drag checks run flat.
-  async function press(id) {
+  // There are no lasers: options are tapped. A controller taps with the dot 6 cm in front of it.
+  async function tapWith(hand,id) {
     const point=await page.evaluate(id=>window.testVR().watchPoint(id),id);
     assert.ok(point,`${id} is on show`);
-    await aimAt('right',[.12,1.42,.05],point);await frames();
-    await button('right','trigger',1);await frames();await button('right','trigger',0);await frames(6);
+    const rest=hand==='right'?[.3,1.1,-.1]:[-.3,1.1,-.1];
+    await pose(hand,[point[0],point[1],point[2]+.12]);await frames(3);    // coming in
+    await pose(hand,[point[0],point[1],point[2]+.06]);await frames(3);    // the dot touches it
+    await pose(hand,rest);await frames(6);                                // and away
   }
+  const press=id=>tapWith('right',id);
   await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);
-  await press('watch:face');await press('radial:root:10');await press('radial:center');
+  await press('watch:face');await press('radial:root:relief');await press('radial:center');
   state=await vrState();
   assert.equal(state.map.relief,false,'Flat map from the watch');
   await page.waitForFunction(()=>window.testVR().state.map.tiles.reliefSpan===0);
   await pose('left',[-.4,1,.1]);await pose('right',[.4,1,.1]);await frames(4);
 
-  // Dragging the map with the ray: the map moves under the box, so the selection moves the other way.
+  // Gripping the map with one hand (here the controller's grip button) moves it with the hand, so the selection
+  // moves the other way under the box.
   const metersPerDegree=111320*Math.cos(center(start).y*Math.PI/180);
   state=await vrState();
-  await aimAt('right',[.25,1.2,-.3],onTable(0));await frames();
-  await button('right','trigger',1);await frames();
-  assert.equal((await vrState()).hands[1].mode,'pan','Pointing at the map and pulling the trigger takes the map');
-  for(const x of [.03,.06,.1]){await aimAt('right',[.25,1.2,-.3],onTable(x));await frames();}
-  await button('right','trigger',0);await frames(6);
+  await pose('right',[.2,1.1,-.4]);await frames();
+  await button('right','squeeze',1);await frames();
+  assert.equal((await vrState()).hands[1].mode,'grab','The grip button takes the map');
+  for(const x of [.23,.26,.3]){await pose('right',[x,1.1,-.4]);await frames();}
+  await button('right','squeeze',0);await frames(6);
   const moved=(await vrState()).pageSelection;
   near((center(moved).x-center(start).x)*metersPerDegree,-.1*state.scale,.1*state.scale*.05,'Dragging the map 10 cm east moves the selection 10 cm of ground west');
   near(center(moved).y,center(start).y,1e-6,'and not north or south');
@@ -129,23 +130,22 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   near(Math.abs(zoomedIn.rotation_deg),90,1,'A quarter turn of the hands turns the selection a quarter turn');
   assert.match(await page.locator('#selection-rotation').innerText(),/90/,'The page\'s own selection is turned too');
 
-  // Relief back on; dragging over it glides at the height it started from.
+  // Relief back on; gripping moves it just the same (the trigger grips too).
   await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);
-  await press('watch:face');await press('radial:root:10');await press('radial:center');
+  await press('watch:face');await press('radial:root:relief');await press('radial:center');
   await page.waitForFunction(()=>window.testVR().state.map.relief&&window.testVR().state.map.tiles.reliefSpan>0,null,{timeout:60000});
   const reliefFrom=(await vrState()).pageSelection;
-  await aimAt('right',[.15,C[1]+.5,C[2]+.35],onTable(0));await frames();
+  await pose('right',[.2,1.1,-.4]);await frames();
   await button('right','trigger',1);await frames();
-  for(const x of [.03,.06,.1]){await aimAt('right',[.15,C[1]+.5,C[2]+.35],onTable(x));await frames();}
+  for(const x of [.23,.26,.3]){await pose('right',[x,1.1,-.4]);await frames();}
   await button('right','trigger',0);await frames(6);
   const reliefTo=(await vrState()).pageSelection,scaleNow=(await vrState()).scale;
-  // The map is turned by now, so check the distance. A drag holds the height where it took the map, so over a hill
-  // the same sweep of the ray moves the map less than at table level: some way short of the 10 cm swept.
+  // The map is turned by now, so check the distance: the 10 cm the hand moved.
   const movedMeters=Math.hypot((center(reliefTo).x-center(reliefFrom).x)*metersPerDegree,(center(reliefTo).y-center(reliefFrom).y)*111320);
-  assert.ok(movedMeters>.02*scaleNow&&movedMeters<.12*scaleNow,`Dragging over the relief moves the map too (${Math.round(movedMeters)} m at ${Math.round(scaleNow)} m per room meter)`);
+  near(movedMeters,.1*scaleNow,.1*scaleNow*.05,'Gripping moves the map over the relief too');
 
-  // The watch on the left controller (the left wrist with hands): pointing at it and pulling the trigger opens a
-  // radial menu of the map generator's options, each one the page's own control.
+  // The watch on the left controller (the left wrist with hands): tapping its dial opens a large radial menu of the
+  // map generator's options in front of you, each one the page's own control, tapped the same way.
   await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);
   assert.ok((await vrState()).watch.face,'The watch is on the left controller');
   await press('watch:face');
@@ -163,34 +163,79 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   };
   // Elevation multiplier: + adds one step.
   const multiplier=Number(await page.inputValue('#exaggeration'));
-  await press('radial:root:4');assert.equal((await vrState()).watch.menu,'multiplier');
+  await press('radial:root:multiplier');assert.equal((await vrState()).watch.menu,'multiplier');
   await press(await item('multiplier','+'));
   near(Number(await page.inputValue('#exaggeration')),multiplier+.1,1e-9,'Multiplier + adds a step to the page\'s multiplier');
   await page.waitForFunction(m=>Math.abs(window.testVR().state.map.tiles.lift-m)<1e-9,multiplier+.1);   // the relief rises with it
   await press('radial:center');assert.equal((await vrState()).watch.menu,'root','The middle goes back');
-  // Shape: a circle, then a rectangle again; the box on the table changes with it.
-  await press('radial:root:6');await press(await item('shape','circle'));
+  // While a menu is up the map stays put: a grip and a sweep leave the selection alone.
+  const lockedFrom=(await vrState()).pageSelection;
+  await pose('right',[.35,1,-.3]);await frames();await button('right','trigger',1);await frames();
+  await pose('right',[.45,1,-.3]);await frames();await button('right','trigger',0);await frames(4);
+  assert.deepEqual((await vrState()).pageSelection,lockedFrom,'The map cannot be dragged while the menu is up');
+  await pose('right',[.3,1.1,-.1]);await frames();
+
+  // Shape: one editing window floating upright in front of you, for the shape, its proportions, and its turn.
+  await press('radial:root:shape');
+  state=await vrState();
+  assert.ok(state.watch.editor,'Shape opens the editor');assert.equal(state.watch.menu,null);
+  await press('editor:shape:circle');
   await page.waitForFunction(()=>window.testVR().state.map.box.shape==='circle');
   assert.equal(await page.inputValue('#selection-shape'),'circle','The page\'s selection is a circle');
-  await press(await item('shape','rectangle'));await page.waitForFunction(()=>window.testVR().state.map.box.shape==='rectangle');
-  await press('radial:center');
-  // Aspect ratio 16:9: the box takes the page's new proportions.
-  await press('radial:root:7');await press(await item('aspect','16:9'));
+  assert.equal((await vrState()).watch.regions.editor.includes('editor:handle:width'),false,'A circle has no width or height handles');
+  await press('editor:shape:rectangle');await page.waitForFunction(()=>window.testVR().state.map.box.shape==='rectangle');
+  // Aspect presets: 16:9, and the box takes the page's new proportions.
+  await press('editor:aspect:16:9');
   await page.waitForFunction(()=>{const b=window.testVR().state.map.box;return Math.abs(b.w/b.h-16/9)<.02;},null,{timeout:5000});
-  await press('radial:center');
+  // Handles: grip one (the controller's dot on it, then the trigger) and drag it in the window: outward from the
+  // shape's middle, or for the ring, around it (the shape may already be turned, so directions come from the handle).
+  async function dragHandle(name,distance,around=false) {
+    const point=await page.evaluate(id=>window.testVR().watchPoint(id),`editor:handle:${name}`);
+    assert.ok(point,`The ${name} handle is on show`);
+    const middle=await page.evaluate(()=>{const e=window.testVR().state.watch.surfaces['shape editor'];
+      // The preview's middle sits a little below the window's center (canvas 690 of 1219, on a 0.5 m tall window).
+      const m=e.matrix,up=[m[4],m[5],m[6]];return [m[12]-up[0]*(690/1219-.5)*.5,m[13]-up[1]*(690/1219-.5)*.5,m[14]-up[2]*(690/1219-.5)*.5];});
+    let out=[point[0]-middle[0],point[1]-middle[1]];const length=Math.hypot(...out);out=out.map(v=>v/length);
+    if(around)out=[out[1],-out[0]];
+    const [dx,dy]=out.map(v=>v*distance);
+    const at=[point[0],point[1],point[2]+.06];
+    await pose('right',at);await frames(3);
+    await button('right','trigger',1);await frames();
+    assert.equal((await vrState()).watch.editor.dragging,name,`Gripping the ${name} handle takes it`);
+    for(const t of [.33,.66,1]){await pose('right',[at[0]+dx*t,at[1]+dy*t,at[2]]);await frames();}
+    await button('right','trigger',0);await frames(6);
+    await pose('right',[.3,1.1,-.1]);await frames(4);
+  }
+  const ratioOf=b=>(b.east-b.west)/(b.north-b.south);
+  const wideFrom=ratioOf((await vrState()).pageSelection);
+  await dragHandle('width',.05);
+  assert.ok(ratioOf((await vrState()).pageSelection)>wideFrom*1.2,'Dragging the side handle out makes the selection wider');
+  const before16=(await vrState()).watch.editor.ratio;
+  await dragHandle('height',.04);
+  assert.ok((await vrState()).watch.editor.ratio<before16*.9,'Dragging the top handle up makes it taller');
+  const angleFrom=(await vrState()).watch.editor.angle;
+  await dragHandle('rotate',.06,true);
+  state=await vrState();
+  assert.ok(Math.abs(state.watch.editor.angle-angleFrom)>=10,`The ring turns the shape (${angleFrom}° to ${state.watch.editor.angle}°)`);
+  near(state.pageSelection.rotation_deg,state.watch.editor.angle,.11,'and the page\'s selection with it');
+  await page.waitForFunction(a=>Math.abs(window.testVR().state.map.selection.rotation_deg-a)<.11,state.watch.editor.angle);   // and the map under the box
+  // OK returns to the menu.
+  await press('editor:ok');
+  state=await vrState();
+  assert.equal(state.watch.editor,null);assert.equal(state.watch.menu,'root','OK returns to the menu');
   // Map features: the first switch is the page's own checkbox.
-  await press('radial:root:8');
+  await press('radial:root:features');
   const firstFeature=await page.evaluate(()=>[...document.querySelectorAll('#style-editor input[type=checkbox][id^="feature-"]')].filter(el=>!el.closest('[hidden]'))[0].id);
   const wasOn=await page.isChecked(`#${firstFeature}`);
   await press('radial:features:0');
   assert.equal(await page.isChecked(`#${firstFeature}`),!wasOn,'A feature switch toggles the page\'s checkbox');
   await press('radial:center');
   // Elevation source.
-  await press('radial:root:1');await press(await item('source','usgs3dep'));
+  await press('radial:root:source');await press(await item('source','usgs3dep'));
   assert.equal(await page.inputValue('#elevation-source'),'usgs3dep','Source chosen from the watch');
   await press(await item('source','mapzen'));await press('radial:center');
   // Search: a keyboard; coordinates (or an address or ZIP) move the map there.
-  await press('radial:root:0');
+  await press('radial:root:search');
   assert.equal((await vrState()).watch.keyboard,true,'Search opens the keyboard');
   for(const key of [...'36.2','space','-',...'81.9'])await press(`key:${key===' '?'space':key}`);
   assert.equal((await vrState()).watch.text.endsWith('36.2 -81.9'),true,'The keys type');
@@ -201,23 +246,33 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   near((found.north+found.south)/2,36.2,.05,'The map moved to the search: the box is over it');
   state=await vrState();
   assert.equal(state.watch.keyboard,false,'Searching puts the keyboard away');
+  // Voice search: Speak records from the microphone, Stop sends 16 kHz samples to the computer, and the words heard
+  // fill the box (the computer's speech recognition is stood in for here; tests/test_live.py covers the server).
+  let heard=null;
+  await page.route('**/api/transcribe',route=>{heard=route.request().postDataJSON();route.fulfill({json:{text:'Roan Mountain, Tennessee'}});});
+  await press('watch:face');await press('radial:root:search');
+  await press('key:voice');
+  await page.waitForFunction(()=>window.testVR().state.watch.voice==='listening',null,{timeout:10000});
+  await page.waitForTimeout(800);
+  await press('key:voice');
+  await page.waitForFunction(()=>window.testVR().state.watch.text==='Roan Mountain, Tennessee',null,{timeout:10000});
+  assert.equal(heard.rate,16000,'The recording is sent as 16 kHz samples');
+  assert.ok(Buffer.from(heard.samples,'base64').length>16000*2*.3,`of what was said (${Buffer.from(heard.samples,'base64').length/32000} s)`);
+  assert.equal((await vrState()).watch.voice,'idle');
+  await press('key:cancel');await page.unroute('**/api/transcribe');
   await press('watch:face');assert.equal((await vrState()).watch.menu,'root','The watch opens the menu again');
   await press('watch:face');assert.equal((await vrState()).watch.menu,null,'and tapping it again closes it');
 
   // The right wrist (here the right controller) has Generate: the box's area is generated, then shown as the model.
-  async function pressWrist() {
-    const point=await page.evaluate(()=>window.testVR().watchPoint('wrist:button'));
-    assert.ok(point,'The wrist button is on show');
-    await aimAt('left',[-.12,1.42,.05],point);await frames();
-    await button('left','trigger',1);await frames();await button('left','trigger',0);await frames(6);
-  }
+  const pressWrist=()=>tapWith('left','wrist:button');   // tapped with the other hand
   await pose('right',[.15,1.2,-.3]);await pose('left',[-.3,1.1,-.1]);await frames(6);
   assert.equal((await vrState()).watch.buttonLabel,'Generate');
   const generatedFrom=await page.locator('#scene-detail').innerText();
   await pressWrist();
   await page.waitForFunction(()=>window.testVR().state.mode==='model',null,{timeout:120000});
   assert.notEqual(await page.locator('#scene-detail').innerText(),generatedFrom,'The box\'s area was generated');
-  assert.match(await page.locator('#scene-detail').innerText(),/90° selection/,'with the turned selection');
+  const turnedTo=Math.round(Math.abs((await vrState()).pageSelection.rotation_deg||0));
+  assert.match(await page.locator('#scene-detail').innerText(),new RegExp(`${turnedTo}° selection`),'with the turned selection');
   await frames(10);
   state=await vrState();
   assert.equal(state.mode,'model');
@@ -291,7 +346,7 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   // Leaving VR returns to the page.
   await page.screenshot({path:path.join(output,'vr-page.png')});
   await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);
-  await press('watch:face');await press('radial:root:9');   // Exit VR, on the watch
+  await press('watch:face');await press('radial:root:exit');   // Exit VR, on the watch
   await page.waitForFunction(()=>!window.testVR().presenting,null,{timeout:5000});
   const left=await vrState();
   assert.equal(left.tiles,0,'The VR tiles are gone after leaving VR');

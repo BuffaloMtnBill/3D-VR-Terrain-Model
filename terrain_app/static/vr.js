@@ -3,7 +3,7 @@
 // generated model on the table, to grab, zoom, and turn (and fly over with the sticks).
 import * as THREE from 'three';
 import {createHandSkin} from './vr-hands.js';
-import {createMapMode} from './vr-mapmode.js';
+import {createMapMode,reshapeBounds} from './vr-mapmode.js';
 import {createWatch} from './vr-watch.js';
 
 const $=id=>document.getElementById(id);
@@ -72,21 +72,20 @@ export function createVR(ctx) {
   // The rig maps the room onto the world: world = position + scale · rotateY(yaw) · room.
   const view={position:new THREE.Vector3(),yaw:0,scale:1,size:6.4,minScale:.001,maxScale:100};
   let flownSeconds=0,session=null,background=null,lastId=null,mode='map';
-  const raycaster=new THREE.Raycaster(),roomRaycaster=new THREE.Raycaster();
   const mapMode=createMapMode(ctx,{table:TABLE});rig.add(mapMode.room);
 
   // ---------- controllers ----------
-  const laserMaterial=new THREE.LineBasicMaterial({color:0xfff6d6,transparent:true,opacity:.65});
+  // No lasers: a controller taps with a small fingertip dot just in front of it.
+  const TIP=new THREE.Vector3(0,0,-.06);
   const hands=[0,1].map(index=>{
     const controller=renderer.xr.getController(index),grip=renderer.xr.getControllerGrip(index);
-    const laser=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3(0,0,-1)]),laserMaterial.clone());
-    const dot=new THREE.Mesh(new THREE.SphereGeometry(.006,12,8),new THREE.MeshBasicMaterial({color:0xe9c890,depthTest:false}));
-    dot.renderOrder=1001;dot.visible=false;controller.add(laser,dot);
+    const dot=new THREE.Mesh(new THREE.SphereGeometry(.007,12,8),new THREE.MeshBasicMaterial({color:0xe9c890,depthTest:false}));
+    dot.renderOrder=1001;dot.position.copy(TIP);controller.add(dot);
     const body=new THREE.Mesh(new THREE.CylinderGeometry(.017,.022,.11,16),new THREE.MeshStandardMaterial({color:0x223329,roughness:.6}));
     body.rotation.x=Math.PI/2.6;body.position.set(0,-.01,.03);grip.add(body);
     // Tracked hands: three.js keeps one object per joint up to date; the hand model follows them (dots until it loads).
     const xrHand=renderer.xr.getHand(index);
-    const hand={controller,grip,xrHand,skin:createHandSkin(xrHand),laser,dot,source:null,trigger:false,mode:null,anchor:null,
+    const hand={controller,grip,xrHand,skin:createHandSkin(xrHand),dot,source:null,trigger:false,mode:null,anchor:null,fist:false,
       point:new THREE.Vector3(),tracked:false};
     controller.addEventListener('connected',event=>{hand.source=event.data;});
     controller.addEventListener('disconnected',()=>{hand.source=null;hand.mode=null;hand.trigger=false;});
@@ -118,6 +117,20 @@ export function createVR(ctx) {
     if(!thumb||!index)return false;
     return thumb.position.distanceTo(index.position)<(hand.trigger?PINCH.release:PINCH.press);
   }
+  // A fist: index, middle, and ring fingertips curled in to the wrist (an index finger held out to tap is no fist).
+  function fist(hand) {
+    const wrist=joint(hand,'wrist');if(!wrist)return false;
+    const reach=name=>joint(hand,`${name}-finger-tip`)?.position.distanceTo(wrist.position)??1;
+    const limit=hand.fist?.13:.11;
+    hand.fist=['index','middle','ring'].every(name=>reach(name)<limit);
+    return hand.fist;
+  }
+  // Gripping the map: a pinch or a fist with hands; the grip (squeeze) button or the trigger with controllers.
+  function gripping(hand) {
+    if(hand.tracked)return pinching(hand)||fist(hand);
+    const buttons=hand.source?.gamepad?.buttons||[];
+    return Boolean(buttons[0]?.pressed||buttons[1]?.pressed);
+  }
   // Where a hand acts in the room: between thumb and index tips, or the controller itself.
   function handPoint(hand) {
     const thumb=joint(hand,'thumb-tip'),index=joint(hand,'index-finger-tip');
@@ -128,7 +141,8 @@ export function createVR(ctx) {
   let generating=null;   // the terrain showing when Generate was pressed
   watch=createWatch(ctx,{rig,camera,joint,hands,exit:()=>session?.end(),mode:()=>mode,
     generate:()=>{const button=document.getElementById('generate');if(button.disabled)return;generating={from:ctx.state.id};button.click();},
-    showMap:()=>setMode('map'),relief:{get on(){return mapMode.relief;},toggle(){mapMode.relief=!mapMode.relief;}}});
+    showMap:()=>setMode('map'),relief:{get on(){return mapMode.relief;},toggle(){mapMode.relief=!mapMode.relief;}},
+    applyShape:shape=>{try{ctx.setSelection(reshapeBounds(ctx.state.selection,shape));}catch(error){ctx.notify(error.message,true);}}});
 
   // ---------- tiled surface (VR only; the page keeps its single mesh) ----------
   let tiles=null,tiledFrom=null;
@@ -227,58 +241,44 @@ export function createVR(ctx) {
   }
 
   // ---------- per frame ----------
-  // A hand's pointing ray, in world coordinates.
-  function rayFor(hand) {
-    const origin=hand.controller.getWorldPosition(new THREE.Vector3());
-    const direction=new THREE.Vector3(0,0,-1).transformDirection(hand.controller.matrixWorld).applyAxisAngle(Y,view.yaw);
-    raycaster.set(toWorld(origin),direction);
-    return raycaster;
+  const busy=hand=>hand.mode==='grab';
+  // The point a hand taps with: the index fingertip, or the dot in front of a controller.
+  function fingertipOf(hand) {
+    if(hand.tracked)return joint(hand,'index-finger-tip')?.position||null;
+    hand.controller.updateMatrixWorld();
+    return hand.controller.localToWorld(TIP.clone());
   }
-  // The same ray in the room, where the map's meshes are drawn.
-  function roomRayFor(hand) {
-    roomRaycaster.set(hand.controller.getWorldPosition(new THREE.Vector3()),new THREE.Vector3(0,0,-1).transformDirection(hand.controller.matrixWorld));
-    return roomRaycaster;
-  }
-  const busy=hand=>hand.mode==='grab'||hand.mode==='pan';
   function updateHand(hand) {
     hand.tracked=Boolean(hand.source?.hand);
-    hand.grip.visible=!hand.tracked;   // the controller model only for controllers
+    hand.grip.visible=!hand.tracked;   // the controller model (and its fingertip dot) only for controllers
+    hand.dot.visible=!hand.tracked&&Boolean(hand.source);
     handPoint(hand);
     const other=hands.find(h=>h!==hand);
-    let onMap=null,ui={onUI:false,distance:null};
     if(hand.source) {
-      // A pinch with tracked hands, the trigger with controllers.
-      const trigger=hand.tracked?pinching(hand):Boolean(hand.source.gamepad?.buttons[0]?.pressed);
-      // The watch and its menus come first: pointing at them (or touching them) never moves the map.
-      const origin=hand.controller.getWorldPosition(new THREE.Vector3());
-      ui=watch.pointer(hand,{origin,direction:new THREE.Vector3(0,0,-1).transformDirection(hand.controller.matrixWorld),pinching:trigger,
-        fingertip:hand.tracked?joint(hand,'index-finger-tip')?.position:null});
-      // In Map Selection the ray finds the map; a pinch (or trigger) there drags it.
-      if(mode==='map'&&!ui.onUI)onMap=hand.mode==='pan'?mapMode.hitAt(rayFor(hand),hand.anchor.y):mapMode.hit(rayFor(hand),roomRayFor(hand),toWorld);
-      if(hand.mode==='ui'||(trigger&&!hand.trigger&&ui.onUI)) {
-        hand.mode=trigger?'ui':null;
-      } else if(trigger&&!hand.trigger) {
-        if(busy(other)){hand.mode='grab';other.mode='grab';regrab();}   // both hands: zoom and turn
-        else if(onMap){hand.mode='pan';hand.anchor=onMap;}
-        else{hand.mode='grab';regrab();}
-      } else if(trigger&&hand.mode==='pan'&&onMap) {
-        // Keep the map point you took under the ray: moving the rig moves the ray's hit by the same amount.
-        view.position.x+=hand.anchor.x-onMap.x;view.position.z+=hand.anchor.z-onMap.z;
-      } else if(!trigger&&hand.trigger) {
-        hand.mode=null;
+      const grip=gripping(hand);
+      // Tapping the watch, its menus, and the wrist button: fingertips only. A hand on them never grips the map.
+      const ui=watch.pointer(hand,{fingertip:fingertipOf(hand)});
+      if(grip&&!hand.trigger&&watch.busy) {
+        // While a menu is up the map stays put; a grip can only take one of the shape editor's handles.
+        if(watch.dragStart(hand,hand.tracked?hand.point:fingertipOf(hand)))hand.mode='handle';
+      } else if(grip&&!hand.trigger&&!ui.onUI) {
+        // One hand moves the map; with the other already gripping, the two zoom and turn it.
+        hand.mode='grab';if(busy(other))other.mode='grab';
+        regrab();
+      } else if(grip&&hand.mode==='handle') {
+        watch.dragMove(hand,hand.tracked?hand.point:fingertipOf(hand));
+      } else if(!grip&&hand.trigger) {
+        const was=hand.mode;hand.mode=null;
+        if(was==='handle')watch.dragEnd(hand);
         // Still holding with the other hand: it carries on alone, from where it is now.
         if(other.mode==='grab')regrab();
-        if(mode==='map'&&!busy(other))mapMode.commit(view);
+        if(was==='grab'&&mode==='map'&&!busy(other))mapMode.commit(view);
       }
-      hand.trigger=trigger;
+      hand.trigger=grip;
     }
     // The outlined hand model once loaded; joint dots meanwhile (or if the model could not load).
     if(hand.tracked)dressJoints(hand,!hand.skin.update(hand.trigger));
-    // The ray: to the menu or the map (hands show it only there); a short one for controllers otherwise.
-    const reach=ui.distance??(onMap?rayFor(hand).ray.origin.distanceTo(onMap)/view.scale:1.2);
-    hand.laser.visible=hand.tracked?(ui.distance!==null||Boolean(onMap))&&hand.mode!=='grab':true;
-    hand.laser.scale.z=hand.mode==='grab'?.12:reach;
-    hand.laser.material.color.set(hand.mode==='pan'||hand.uiHover?0xe9c890:0xfff6d6);
+    hand.dot.material.color.set(hand.uiHover?0xffffff:hand.mode==='grab'?0x8fae78:0xe9c890);
   }
   function update(delta) {
     // A new terrain from Generate: show it. If generating failed (the same terrain is still showing), stay on the map.
@@ -288,6 +288,8 @@ export function createVR(ctx) {
       if(ctx.state.id!==lastId){lastId=ctx.state.id;frameModel();}
     }
     hands.forEach(updateHand);
+    // A menu opened while the map was held: let go of it there (the selection is set as on any release).
+    if(watch.busy&&hands.some(busy)){hands.forEach(hand=>{if(busy(hand))hand.mode=null;});if(mode==='map')mapMode.commit(view);}
     watch.update();
     if(!updateGrab())fly(delta);
     if(mode==='map')mapMode.update(view,toWorld(camera.position),{interacting:hands.some(busy),camera});

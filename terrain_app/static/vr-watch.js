@@ -1,14 +1,16 @@
-// The left-wrist watch: tap it (fingertip, or point and pinch) and a radial menu opens in front of you with the
-// map generator's options. Every choice drives the page's own control, so the page (and the computer following
+// The left-wrist watch: tap its dial with a fingertip and a large radial menu opens in front of you, within reach,
+// with the map generator's options; tap the options the same way (there are no lasers). Every choice drives the page's own control, so the page (and the computer following
 // it) stays in step. Search opens a keyboard that types into the page's address / ZIP search.
 // The right-wrist button: Generate in Map Selection (then the model view), Map in the model view.
 import * as THREE from 'three';
+import {mercatorPixel,rotationAngle} from './selection-geometry.js';
+import {createVoice} from './vr-voice.js';
 
 const $=id=>document.getElementById(id);
 const fire=(el,type)=>el.dispatchEvent(new Event(type,{bubbles:true}));
 const UI={ink:'#fff6d6',muted:'#a9ae99',accent:'#e9c890',fill:'#101b14eb',raised:'#223329',hover:'#35503a',active:'#4b6d46',line:'#5c6448',
   sans:'Inter,"Segoe UI",Arial,sans-serif'};
-const POKE={touch:.012,release:.025};   // fingertip distance (m) from a surface that presses it, and that lets it go
+const POKE={touch:.012,release:.025,hover:.07};   // fingertip distance (m) from a surface that presses it, lets it go, lights it
 const short=text=>text.replace(/\s*·.*$/,'').replace(/\s*\(.*\)\s*$/,'').trim();
 const shown=el=>Boolean(el)&&!el.closest('[hidden]');
 function labelOf(el) {
@@ -28,14 +30,15 @@ function surface(name,width,height,pixels) {
     regionAt(x,y){return this.regions.find(region=>!region.disabled&&region.contains(x,y))||null;}};
 }
 
-export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showMap,relief}) {
-  const raycaster=new THREE.Raycaster();
-  const face=surface('watch',.045,.045,256),radial=surface('radial menu',.3,.3,1024),keyboard=surface('keyboard',.56,.24,1600);
-  const wrist=surface('wrist button',.075,.04,512);
-  for(const s of [face,radial,keyboard,wrist])rig.add(s.mesh);
+export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showMap,relief,applyShape}) {
+  const face=surface('watch',.045,.045,256),radial=surface('radial menu',.42,.42,1024),keyboard=surface('keyboard',.62,.27,1600);
+  const wrist=surface('wrist button',.075,.04,512),editor=surface('shape editor',.42,.5,1024);
+  for(const s of [face,radial,keyboard,wrist,editor])rig.add(s.mesh);
   face.mesh.renderOrder=1050;
-  let menu=null,text='',hovered=new Set(),lastStatus='';
-  const surfaces=[face,radial,keyboard,wrist];
+  let menu=null,text='',hovered=new Set(),lastStatus='',voiceNote='';
+  // Voice search: the words heard replace the text in the box, to check (or fix) before tapping Search.
+  const voice=createVoice({api:ctx.api,onText:heard=>{text=heard;voiceNote='';keyboard.signature='';},onError:message=>{voiceNote=message;keyboard.signature='';}});
+  const surfaces=[face,radial,keyboard,wrist,editor];
 
   // ---------- menu contents, read live from the page ----------
   const selectItems=el=>[...el.options].filter(option=>!option.disabled&&!option.hidden&&option.value!=='custom').map(option=>({
@@ -50,32 +53,29 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     label:short(labelOf(el)),active:el.checked,press:()=>el.click()}));
   const MENUS={
     root:{title:'Map options',items:()=>[
-      {label:'Search',press:()=>openKeyboard()},
-      {label:'Source',press:()=>open('source')},{label:'Detail',press:()=>open('detail')},{label:'Profile',press:()=>open('profile')},
-      {label:'Multiplier',press:()=>open('multiplier')},{label:'Base',press:()=>open('base')},
-      {label:'Shape',press:()=>open('shape')},{label:'Aspect',press:()=>open('aspect')},{label:'Features',press:()=>open('features')},
-      {label:'Exit VR',press:()=>exit()},
-      {label:relief.on?'Flat map':'3D relief',press:()=>relief.toggle()}]},
+      {key:'search',label:'Search',press:()=>openKeyboard()},
+      {key:'source',label:'Source',press:()=>open('source')},{key:'detail',label:'Detail',press:()=>open('detail')},{key:'profile',label:'Profile',press:()=>open('profile')},
+      {key:'multiplier',label:'Multiplier',press:()=>open('multiplier')},{key:'base',label:'Base',press:()=>open('base')},
+      {key:'shape',label:'Shape',press:()=>openEditor()},{key:'features',label:'Features',press:()=>open('features')},
+      {key:'exit',label:'Exit VR',press:()=>exit()},
+      {key:'relief',label:relief.on?'Flat map':'3D relief',press:()=>relief.toggle()}]},
     source:{title:'Elevation source',items:()=>selectItems($('elevation-source'))},
     detail:{title:'Terrain detail',items:()=>selectItems($('resolution'))},
     profile:{title:'Elevation profile',items:()=>selectItems($('relief-method'))},
     multiplier:{title:'Elevation multiplier',value:()=>$('exaggeration-value')?.textContent||$('exaggeration').value,items:()=>rangeItems($('exaggeration'))},
     base:{title:'Base thickness',value:()=>$('base-value')?.textContent||$('base').value,items:()=>rangeItems($('base'))},
-    shape:{title:'Shape',items:()=>selectItems($('selection-shape'))},
-    aspect:{title:'Aspect ratio',value:()=>'Again to turn it',items:()=>[...document.querySelectorAll('[data-aspect]')].map(button=>({
-      label:button.textContent.trim(),active:button.getAttribute('aria-pressed')==='true',press:()=>button.click()}))},
     features:{title:'Map features',items:features},
   };
   function open(key){menu=key;radial.signature='';}
   function openMenu() {
-    keyboard.mesh.visible=false;
+    keyboard.mesh.visible=false;editor.mesh.visible=false;
     // Fixed in the room in front of you (not on the moving wrist), a little below eye level.
-    place(radial.mesh,.42,-.12);radial.mesh.visible=true;open('root');
+    place(radial.mesh,.38,-.16);radial.mesh.visible=true;open('root');   // a comfortable reach in front of you
   }
   function closeMenu(){radial.mesh.visible=false;menu=null;}
   function openKeyboard() {
-    closeMenu();text=$('place-search')?.value||'';
-    place(keyboard.mesh,.5,-.22);keyboard.mesh.visible=true;keyboard.signature='';
+    closeMenu();editor.mesh.visible=false;text=$('place-search')?.value||'';
+    place(keyboard.mesh,.4,-.24);keyboard.mesh.visible=true;keyboard.signature='';
   }
   function place(mesh,distance,drop) {
     const forward=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);forward.y=0;
@@ -84,6 +84,97 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     mesh.position.copy(camera.position).addScaledVector(forward,distance).add(new THREE.Vector3(0,drop,0));
     mesh.lookAt(camera.position);
   }
+  // ---------- the shape editor: one window for the shape, its proportions, and its turn ----------
+  // A vertical window in front of you: shape and aspect buttons, the shape itself with handles to grip and drag (the
+  // side handle sets the width, the top one the height, the ring above turns it), and OK back to the menu. A change
+  // is applied to the page's selection when you let go (the map under the box follows).
+  const SHAPES=[['rectangle','Rectangle'],['circle','Circle'],['oval','Oval']],RATIOS=[['1:1',1],['4:3',4/3],['3:4',3/4],['16:9',16/9],['9:16',9/16]];
+  const PREVIEW={x:512,y:690,half:280,ring:90};
+  let draft=null,dragging=null;
+  function draftFromPage() {
+    const b=ctx.state.selection;if(!b)return {shape:'rectangle',ratio:1,angle:0};
+    const nw=mercatorPixel(b.west,b.north),se=mercatorPixel(b.east,b.south);
+    return {shape:b.shape||'rectangle',ratio:(se.x-nw.x)/Math.max(se.y-nw.y,1e-12),angle:rotationAngle(b)};
+  }
+  function openEditor() {
+    closeMenu();keyboard.mesh.visible=false;draft=draftFromPage();
+    place(editor.mesh,.4,-.1);editor.mesh.visible=true;editor.signature='';
+  }
+  function applyDraft() {applyShape({...draft});}
+  const halves=d=>d.ratio>=1?{w:PREVIEW.half,h:PREVIEW.half/d.ratio}:{w:PREVIEW.half*d.ratio,h:PREVIEW.half};
+  const turn=(x,y,a)=>({x:x*Math.cos(a)-y*Math.sin(a),y:x*Math.sin(a)+y*Math.cos(a)});   // canvas y runs down: clockwise
+  function handles(d) {
+    const {w,h}=halves(d),a=d.angle*Math.PI/180,at=(x,y)=>{const p=turn(x,y,a);return {x:PREVIEW.x+p.x,y:PREVIEW.y+p.y};};
+    const list={rotate:at(0,-h-PREVIEW.ring)};
+    if(d.shape!=='circle'){list.width=at(w,0);list.height=at(0,-h);}
+    return list;
+  }
+  function drawEditor() {
+    if(!editor.mesh.visible)return;
+    const signature=JSON.stringify([draft,[...hovered],dragging?.name]);if(signature===editor.signature)return;editor.signature=signature;
+    const c=editor.context,W=editor.canvas.width,H=editor.canvas.height;
+    c.clearRect(0,0,W,H);c.fillStyle=UI.fill;c.beginPath();c.roundRect(0,0,W,H,40);c.fill();
+    editor.regions=[];
+    const button=(id,x,y,w,h,label,active,press,primary=false)=>{
+      c.fillStyle=primary?UI.active:active?UI.active:hovered.has(id)?UI.hover:UI.raised;c.beginPath();c.roundRect(x+6,y+6,w-12,h-12,18);c.fill();
+      if(active){c.lineWidth=5;c.strokeStyle=UI.accent;c.stroke();}
+      c.fillStyle=UI.ink;c.font=`600 ${label.length>6?38:44}px ${UI.sans}`;c.textAlign='center';c.textBaseline='middle';c.fillText(label,x+w/2,y+h/2);
+      editor.regions.push({id,press,contains:(px,py)=>px>=x&&px<=x+w&&py>=y&&py<=y+h});
+    };
+    c.fillStyle=UI.accent;c.font=`650 34px ${UI.sans}`;c.textAlign='left';c.textBaseline='middle';c.fillText('SHAPE',40,60);
+    SHAPES.forEach(([key,label],i)=>button(`editor:shape:${key}`,30+i*321,100,321,110,label,draft.shape===key,()=>{
+      draft.shape=key;if(key==='circle')draft.ratio=1;applyDraft();}));
+    RATIOS.forEach(([label,ratio],i)=>button(`editor:aspect:${label}`,30+i*193,220,193,100,label,Math.abs(draft.ratio-ratio)<.01,()=>{
+      draft.ratio=ratio;if(draft.shape==='circle'&&ratio!==1)draft.shape='oval';applyDraft();}));
+    // The shape, turned, with its handles.
+    const {w,h}=halves(draft),a=draft.angle*Math.PI/180;
+    c.save();c.translate(PREVIEW.x,PREVIEW.y);c.rotate(a);
+    c.beginPath();if(draft.shape==='rectangle')c.rect(-w,-h,2*w,2*h);else c.ellipse(0,0,w,h,0,0,Math.PI*2);
+    c.fillStyle='#e9c89033';c.fill();c.lineWidth=8;c.strokeStyle='#ffe2a8';c.stroke();
+    c.beginPath();c.moveTo(0,-h);c.lineTo(0,-h-PREVIEW.ring+26);c.lineWidth=4;c.strokeStyle=UI.muted;c.stroke();
+    c.fillStyle=UI.muted;c.font=`600 30px ${UI.sans}`;c.textAlign='center';c.fillText('N',0,-h+40);
+    c.restore();
+    for(const [name,p] of Object.entries(handles(draft))) {
+      const hot=dragging?.name===name||hovered.has(`editor:handle:${name}`);
+      c.beginPath();c.arc(p.x,p.y,name==='rotate'?30:26,0,Math.PI*2);c.fillStyle=hot?'#ffffff':name==='rotate'?'#8fae78':UI.accent;c.fill();
+      if(name==='rotate'){c.beginPath();c.arc(p.x,p.y,14,0,Math.PI*2);c.fillStyle=UI.fill;c.fill();}
+      editor.regions.push({id:`editor:handle:${name}`,handle:name,contains:(px,py)=>Math.hypot(px-p.x,py-p.y)<70});
+    }
+    const ratioText=draft.ratio>=1?`${draft.ratio.toFixed(2)} : 1`:`1 : ${(1/draft.ratio).toFixed(2)}`;
+    c.fillStyle=UI.ink;c.font=`500 36px ${UI.sans}`;c.textAlign='center';
+    c.fillText(`${draft.shape==='circle'?'Circle':`Width : height ${ratioText}`} · turned ${Math.round(draft.angle)}°`,W/2,H-170);
+    button('editor:ok',W/2-180,H-130,360,110,'OK',false,()=>{editor.mesh.visible=false;openMenu();},true);
+    editor.texture.needsUpdate=true;
+  }
+  // Grips on the editor's handles (the map is never gripped while a menu is up).
+  function canvasAt(point) {
+    const local=editor.mesh.worldToLocal(point.clone());
+    return {depth:Math.abs(local.z),...editor.toCanvas(local)};
+  }
+  function dragStart(hand,point) {
+    if(!editor.mesh.visible||!point)return false;
+    const p=canvasAt(point);if(p.depth>.06)return false;
+    const region=editor.regions.find(r=>r.handle&&r.contains(p.x,p.y));if(!region)return false;
+    dragging={hand,name:region.handle,start:{...draft,...halves(draft)}};editor.signature='';
+    return true;
+  }
+  function dragMove(hand,point) {
+    if(dragging?.hand!==hand||!point)return;
+    const p=canvasAt(point),s=dragging.start,a=s.angle*Math.PI/180;
+    const v=turn(p.x-PREVIEW.x,p.y-PREVIEW.y,-a);   // in the shape's own frame
+    if(dragging.name==='width')draft.ratio=Math.min(5,Math.max(.2,Math.abs(v.x)/s.h));
+    else if(dragging.name==='height')draft.ratio=Math.min(5,Math.max(.2,s.w/Math.max(Math.abs(v.y),1)));
+    else {
+      let angle=Math.atan2(p.x-PREVIEW.x,PREVIEW.y-p.y)*180/Math.PI;
+      if(Math.abs(angle)<3)angle=0;   // a gentle snap back to north-up
+      draft.angle=Math.round(angle);
+    }
+  }
+  function dragEnd(hand) {
+    if(dragging?.hand!==hand)return;
+    dragging=null;editor.signature='';applyDraft();
+  }
+
   function search() {
     keyboard.mesh.visible=false;
     const input=$('place-search'),form=$('place-form');
@@ -106,14 +197,14 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     return lines.slice(0,maxLines);
   }
   function drawFace() {
-    const c=face.context,s=face.canvas.width,open=radial.mesh.visible||keyboard.mesh.visible,hot=hovered.has('watch:face');
+    const c=face.context,s=face.canvas.width,open=radial.mesh.visible||keyboard.mesh.visible||editor.mesh.visible,hot=hovered.has('watch:face');
     const signature=`${open}:${hot}`;if(signature===face.signature)return;face.signature=signature;
     c.clearRect(0,0,s,s);
     c.beginPath();c.arc(s/2,s/2,s/2-8,0,Math.PI*2);c.fillStyle=hot?UI.hover:'#101b14';c.fill();c.lineWidth=10;c.strokeStyle=open?UI.ink:UI.accent;c.stroke();
     // A small radial menu as the dial.
     for(let i=0;i<8;i++){const a=i/8*Math.PI*2;c.beginPath();c.arc(s/2+Math.cos(a)*62,s/2+Math.sin(a)*62,13,0,Math.PI*2);c.fillStyle=UI.accent;c.fill();}
     c.beginPath();c.arc(s/2,s/2,26,0,Math.PI*2);c.fillStyle=UI.ink;c.fill();
-    face.regions=[{id:'watch:face',contains:()=>true,press:()=>(radial.mesh.visible||keyboard.mesh.visible)?(closeMenu(),keyboard.mesh.visible=false):openMenu()}];
+    face.regions=[{id:'watch:face',contains:()=>true,press:()=>(radial.mesh.visible||keyboard.mesh.visible||editor.mesh.visible)?close():openMenu()}];
     face.texture.needsUpdate=true;
   }
   function drawRadial() {
@@ -124,7 +215,7 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     const c=radial.context,S=radial.canvas.width,C=S/2,outer=500,inner=175,n=Math.max(items.length,1),slice=Math.PI*2/n;
     c.clearRect(0,0,S,S);radial.regions=[];
     items.forEach((item,i)=>{
-      const start=-Math.PI/2+i*slice-slice/2,end=start+slice,id=`radial:${menu}:${i}`;
+      const start=-Math.PI/2+i*slice-slice/2,end=start+slice,id=`radial:${menu}:${item.key??i}`;
       c.beginPath();c.arc(C,C,outer,start,end);c.arc(C,C,inner,end,start,true);c.closePath();
       c.fillStyle=item.active?UI.active:hovered.has(id)?UI.hover:UI.fill;c.fill();c.lineWidth=4;c.strokeStyle=UI.line;c.stroke();
       const mid=(start+end)/2,r=(outer+inner)/2;
@@ -150,7 +241,7 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
   const ROWS=['1234567890','qwertyuiop','asdfghjkl,','zxcvbnm-.'];
   function drawKeyboard() {
     if(!keyboard.mesh.visible)return;
-    const signature=JSON.stringify([text,[...hovered]]);if(signature===keyboard.signature)return;keyboard.signature=signature;
+    const signature=JSON.stringify([text,[...hovered],voice.state,voiceNote]);if(signature===keyboard.signature)return;keyboard.signature=signature;
     const c=keyboard.context,W=keyboard.canvas.width,H=keyboard.canvas.height,pad=24,key=(W-2*pad)/10;
     c.clearRect(0,0,W,H);c.fillStyle=UI.fill;c.beginPath();c.roundRect(0,0,W,H,36);c.fill();
     keyboard.regions=[];
@@ -161,13 +252,16 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     };
     // The text being typed, with a caret.
     c.fillStyle='#0b140e';c.beginPath();c.roundRect(pad,pad,W-2*pad,96,18);c.fill();
-    c.fillStyle=text?UI.ink:UI.muted;c.font=`500 52px ${UI.sans}`;c.textAlign='left';c.textBaseline='middle';
-    c.fillText(text?`${text}|`:'Address, place, or US ZIP code',pad+24,pad+50);
+    const listening=voice.state==='listening'||voice.state==='starting',working=voice.state==='working';
+    const shownText=listening?'Listening… say the place, then tap Stop':working?'Working out what you said…':voiceNote||(text?`${text}|`:'Address, place, or US ZIP code');
+    c.fillStyle=text&&!listening&&!working&&!voiceNote?UI.ink:listening?UI.accent:UI.muted;c.font=`500 ${shownText.length>40?40:52}px ${UI.sans}`;
+    c.textAlign='left';c.textBaseline='middle';c.fillText(shownText,pad+24,pad+50);
     const top=pad+110,row=(H-top-pad)/5;
     ROWS.forEach((keys,r)=>[...keys].forEach((k,i)=>button(`key:${k}`,pad+i*key+(r===2?key*.25:r===3?key*.5:0),top+r*row,key,row,k.toUpperCase(),()=>{text+=k;})));
     const y=top+4*row;
-    button('key:cancel',pad,y,key*2,row,'Cancel',()=>{keyboard.mesh.visible=false;});
-    button('key:space',pad+key*2,y,key*4,row,'Space',()=>{text+=' ';});
+    button('key:cancel',pad,y,key*2,row,'Cancel',()=>{voice.cancel();keyboard.mesh.visible=false;});
+    button('key:voice',pad+key*2,y,key*2,row,voice.state==='listening'?'■ Stop':voice.state==='working'?'…':'🎤 Speak',()=>{voiceNote='';voice.toggle();},voice.state==='listening');
+    button('key:space',pad+key*4,y,key*2,row,'Space',()=>{text+=' ';});
     button('key:back',pad+key*6,y,key*2,row,'⌫',()=>{text=text.slice(0,-1);});
     button('key:search',pad+key*8,y,key*2,row,'Search',search,true);
     keyboard.texture.needsUpdate=true;
@@ -208,16 +302,8 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     }
   }
 
-  // ---------- pointing and poking ----------
+  // ---------- tapping with a fingertip ----------
   const visible=()=>surfaces.filter(s=>s.mesh.visible);
-  function hitBy(ray) {
-    let best=null;
-    for(const s of visible()) {
-      const hit=ray.intersectObject(s.mesh,false)[0];
-      if(hit&&(!best||hit.distance<best.distance)){const p=s.toCanvas(s.mesh.worldToLocal(hit.point.clone()));best={surface:s,distance:hit.distance,...p};}
-    }
-    return best;
-  }
   function pokeBy(point,hand) {
     for(const s of visible()) {
       if(s===face&&hand===left()||s===wrist&&hand===handOf('right'))continue;   // not pressed by their own wrist
@@ -227,37 +313,34 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     }
     return null;
   }
-  // Called for each hand every frame: presses on pinch (pointing) or touch (fingertip); true while the hand is on the UI.
-  function pointer(hand,{origin,direction,pinching,fingertip}) {
-    raycaster.set(origin,direction);
-    const hit=hitBy(raycaster),touch=fingertip?pokeBy(fingertip,hand):null;
-    hand.uiHover=null;
-    let region=null;
-    if(touch&&touch.depth<POKE.release)region=touch.surface.regionAt(touch.x,touch.y);
-    else if(hit)region=hit.surface.regionAt(hit.x,hit.y);
+  // Called for each hand every frame with its fingertip: a region lights as the fingertip comes near and is pressed
+  // when it touches; it presses again only after the fingertip lifts off. True while the hand is at the menus.
+  function pointer(hand,{fingertip}) {
+    const touch=fingertip?pokeBy(fingertip,hand):null,near=touch&&touch.depth<POKE.hover;
+    const region=near?touch.surface.regionAt(touch.x,touch.y):null;
     hand.uiHover=region?.id||null;
-    // Fingertip: press on contact, again only after lifting off.
-    if(touch&&touch.depth<POKE.touch){if(!hand.poking){hand.poking=true;region?.press();}}
+    if(touch&&touch.depth<POKE.touch){if(!hand.poking){hand.poking=true;region?.press?.();}}
     else if(!touch||touch.depth>POKE.release)hand.poking=false;
-    // Pinch while pointing: press once per pinch.
-    if(pinching&&!hand.uiPinch&&hit&&!touch){hand.uiPinch=true;hand.uiCaptured=true;region?.press();}
-    if(!pinching){hand.uiPinch=false;hand.uiCaptured=false;}
-    return {onUI:Boolean(hit||touch&&touch.depth<POKE.release)||hand.uiCaptured,distance:hit?.distance??null};
+    return {onUI:Boolean(near)};
   }
 
   function update() {
     wear(face,left(),'left');wear(wrist,handOf('right'),'right');
     hovered=new Set(hands.map(hand=>hand.uiHover).filter(Boolean));
-    drawFace();drawRadial();drawKeyboard();drawWrist();
+    // Between drags the editor shows the page's selection as it is (after a change is applied, or from the computer).
+    if(editor.mesh.visible&&!dragging)draft=draftFromPage();
+    drawFace();drawRadial();drawKeyboard();drawWrist();drawEditor();
     const now=status();if(now!==lastStatus){lastStatus=now;radial.signature='';}
   }
-  function close(){closeMenu();keyboard.mesh.visible=false;}
+  function close(){closeMenu();voice.cancel();keyboard.mesh.visible=false;editor.mesh.visible=false;dragging=null;}
 
-  return {update,pointer,close,
+  return {update,pointer,close,dragStart,dragMove,dragEnd,
+    // Any menu up: the map is not gripped meanwhile.
+    get busy(){return radial.mesh.visible||keyboard.mesh.visible||editor.mesh.visible;},
     get state(){
       const regions=s=>s.mesh.visible?s.regions.map(({id})=>id):[];
-      return {face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,keyboard:keyboard.mesh.visible,text,
-        regions:{watch:regions(face),radial:regions(radial),keyboard:regions(keyboard),wrist:regions(wrist)},
+      return {voice:voice.state,voiceNote,editor:editor.mesh.visible?{...draft,dragging:dragging?.name||null}:null,face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,keyboard:keyboard.mesh.visible,text,
+        regions:{watch:regions(face),radial:regions(radial),keyboard:regions(keyboard),wrist:regions(wrist),editor:regions(editor)},
         surfaces:Object.fromEntries(surfaces.map(s=>[s.name,{visible:s.mesh.visible,matrix:s.mesh.matrixWorld.toArray(),width:s.width,height:s.height,canvas:[s.canvas.width,s.canvas.height]}]))};
     },
     // Where a region's middle is in the room, for the browser test to point or poke at it.
