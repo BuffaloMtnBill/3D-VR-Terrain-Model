@@ -37,26 +37,26 @@ anyway**; the file is a short, readable script.
 To do the same by hand in PowerShell:
 
 ```powershell
-cd 3D-Map-Extractor
+cd 3D-VR-Terrain
 py -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python app.py --open
+.venv\Scripts\python app.py
 ```
 
 ### macOS and Linux
 
 ```bash
-cd 3D-Map-Extractor
+cd 3D-VR-Terrain
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 python app.py
 ```
 
-It serves HTTPS to your network so a VR headset can connect (see [VR explorer](#vr-explorer)). On this computer
-open **https://localhost:8000** and accept the self-signed certificate once. Stop the server with Ctrl+C.
-Use `python app.py --port 8080` to change the port, `--open` to launch your browser, or `--local` for plain
-HTTP on this computer only (no headset).
+It serves HTTPS to your network so a VR headset can connect (see [VR explorer](#vr-explorer)), and opens
+**https://localhost:8000** in this computer's browser once the server is up; accept the self-signed certificate
+the first time. Stop the server with Ctrl+C. Use `python app.py --port 8080` to change the port, `--no-browser`
+to skip opening the browser, or `--local` for plain HTTP on this computer only (no headset).
 
 ### Install with pip
 
@@ -64,13 +64,13 @@ To install straight from GitHub without cloning, preferably into a virtual
 environment:
 
 ```bash
-pip install git+https://github.com/BuffaloMtnBill/3D-Map-Extractor
-terrain-studio --open
+pip install git+https://github.com/BuffaloMtnBill/3D-VR-Terrain
+terrain-studio
 ```
 
 From a cloned copy, `pip install .` does the same. On Windows, use
 `py -m pip` if `pip` is not on your PATH. `terrain-studio` takes the same
-`--port` and `--open` options as `app.py`.
+`--port`, `--local`, and `--no-browser` options as `app.py`.
 
 To uninstall, use the package name rather than the command name:
 
@@ -201,8 +201,13 @@ says so); data requests retry too, and a terrain being generated is picked up wh
 about a third of the JSON size and no number parsing on the headset. In VR the surface is drawn in tiles of 48 × 48
 grid cells that share the page's buffers, so at life size the ground out of view is not drawn.
 
-The model starts as a 1 m tabletop model in front of you. Hands and controllers both work; put the controllers
-down and the headset switches to hand tracking (your hands are drawn as joint dots).
+The model starts as a 1 m tabletop model in front of you, sitting on a large flat map at its real place: the
+OpenStreetMap street map (or the topographic map) is laid out under it, turned with the selection, in a detailed
+layer four times the model's size and a wide layer sixteen times its size that fades out at its edge. In the Cut
+tab the cut's surroundings stand on the same map. **Ground map** on the Cut and Terrain tabs switches between
+Streets, Topographic, and Off; the headset loads the map tiles from the internet, as the page's map does. Hands and controllers both work; put the controllers
+down and the headset switches to hand tracking. Your hands are drawn like the Quest's own: a see-through hand
+with a white outline that turns gold and thickens while you pinch.
 
 | Hands | Controllers | Effect |
 | --- | --- | --- |
@@ -236,12 +241,13 @@ map-feature switch and detail setting, and Save as default (the page's style pre
 The menu changes the page's real inputs. **Reset view** brings back the tabletop model and **Exit VR** returns to
 the page.
 
-**From the headset to the computer.** While you work in VR, the headset hands its workspace to the server: the
-cut, its name, the elevation source and detail, every model and map-layer setting, the model size, and the
-generated terrain. It is kept in the server's memory only, never on disk. When you take the headset off (or exit
-VR), the page on the computer offers **Continue here**; it sets the same cut on the map, applies the settings, and
-opens the same model, ready to export with the page's usual export. A page opened later shows the offer too, for
-two hours.
+**From the headset to the computer.** While you work in VR, the headset hands its workspace to the server a few
+times a second: the cut (even mid-drag), its name, the elevation source and detail, every model and map-layer
+setting, the model size, and the generated terrain. It is kept in the server's memory only, never on disk. The
+computer's page follows along live (**FOLLOW HEADSET** in the header, on by default): its map frame, sliders, and
+settings move as you edit, and a cut generated in VR opens there too, ready to export with the page's usual
+export. With following off, the page keeps its own view and offers **Continue here** instead; a page opened later
+offers the headset's last work for two hours.
 
 Models cannot be saved from VR. An export started while in VR is refused, and nothing is written to the
 server computer.
@@ -930,8 +936,9 @@ layout, and offline map handling. It writes artifacts to `test-results/`.
 
 Python modules live in `terrain_app/`; the browser UI lives in
 `terrain_app/static/app.js` and `style.css`. Vendored UI dependencies are Leaflet
-1.9.4 (BSD-2-Clause) and Three.js 0.180.0 (MIT); their licenses are included in
-`static/vendor/`. Terrain source attribution is included in
+1.9.4 (BSD-2-Clause) and Three.js 0.180.0 (MIT, with its GLTFLoader and BufferGeometryUtils addons); their
+licenses are included in `static/vendor/`. The VR hand models in `static/vendor/hands/` are the generic hand from
+WebXR Input Profiles 1.0.19 (MIT, `hands/LICENSE.md`). Terrain source attribution is included in
 `terrain_app/data/ATTRIBUTION.txt`, the source-credits download, and embedded in
 OBJ, GLB, PNG, and optional metadata exports.
 

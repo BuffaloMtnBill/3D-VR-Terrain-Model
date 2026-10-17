@@ -2,6 +2,9 @@
 // page's own controls from a floating menu. The menu drives the real page inputs, so everything stays in step.
 import * as THREE from 'three';
 import {createCut} from './vr-cut.js';
+import {createHandSkin} from './vr-hands.js';
+import {createGroundMap} from './vr-map.js';
+import {mercatorPixel,rotationAngle} from './selection-geometry.js';
 
 const $=id=>document.getElementById(id);
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -76,8 +79,9 @@ export function createVR(ctx) {
   const camera=new THREE.PerspectiveCamera(70,1,.05,200);rig.add(camera);
   // The rig maps the room onto the world: world = position + scale · rotateY(yaw) · room.
   const view={position:new THREE.Vector3(),yaw:0,scale:1,size:6.4,minScale:.001,maxScale:100};
-  let session=null,background=null,lastId=null,menuTab='terrain',cutGenerating=false,regions=[],menuSignature='',lastPoll=0,cutFramed=false,palmPressed=0;
+  let flownSeconds=0,session=null,background=null,lastId=null,menuTab='terrain',cutGenerating=false,regions=[],menuSignature='',lastPoll=0,cutFramed=false,palmPressed=0;
   const cut=createCut(ctx);
+  const ground=createGroundMap(ctx);
   const raycaster=new THREE.Raycaster();
 
   // ---------- controllers ----------
@@ -93,9 +97,9 @@ export function createVR(ctx) {
     tip.context.fillStyle='#101b14d0';tip.context.fillRect(0,0,300,88);tip.context.fillStyle=UI.accent;
     tip.context.font=`600 44px ${UI.sans}`;tip.context.textAlign='center';tip.context.textBaseline='middle';tip.context.fillText('A / X: menu',150,46);
     tip.texture.needsUpdate=true;tip.mesh.position.set(0,.045,.02);tip.mesh.rotation.x=-.9;grip.add(tip.mesh);
-    // Tracked hands: three.js keeps one object per joint up to date; each gets a small dot so you can see your hands.
+    // Tracked hands: three.js keeps one object per joint up to date; the hand model follows them (dots until it loads).
     const xrHand=renderer.xr.getHand(index);
-    const hand={controller,grip,xrHand,laser,dot,tip:tip.mesh,source:null,trigger:false,menuButton:false,mode:null,region:null,hover:null,anchor:null,lastInput:0,pending:false,sliderU:0,
+    const hand={controller,grip,xrHand,skin:createHandSkin(xrHand),laser,dot,tip:tip.mesh,source:null,trigger:false,menuButton:false,mode:null,region:null,hover:null,anchor:null,lastInput:0,pending:false,sliderU:0,
       point:new THREE.Vector3(),tracked:false,handle:null};
     controller.addEventListener('connected',event=>{hand.source=event.data;});
     controller.addEventListener('disconnected',()=>{hand.source=null;hand.mode=null;hand.trigger=false;});
@@ -108,11 +112,13 @@ export function createVR(ctx) {
   const tipMaterial=new THREE.MeshStandardMaterial({color:0xe9c890,roughness:.5,emissive:0x3a2a10});
   const jointGeometry=new THREE.SphereGeometry(1,10,8);
   const joint=(hand,name)=>{const j=hand.xrHand.joints?.[name];return j&&j.visible!==false?j:null;};
-  function dressJoints(hand) {
+  function dressJoints(hand,shown) {
     for(const [name,j] of Object.entries(hand.xrHand.joints||{})) {
-      if(j.userData.dot)continue;
-      const dot=new THREE.Mesh(jointGeometry,name.endsWith('-tip')?tipMaterial:jointMaterial);
-      dot.scale.setScalar(Math.max(j.jointRadius||.008,.006)*.9);j.add(dot);j.userData.dot=dot;
+      if(!j.userData.dot&&shown){
+        const dot=new THREE.Mesh(jointGeometry,name.endsWith('-tip')?tipMaterial:jointMaterial);
+        dot.scale.setScalar(Math.max(j.jointRadius||.008,.006)*.9);j.add(dot);j.userData.dot=dot;
+      }
+      if(j.userData.dot)j.userData.dot.visible=shown;
     }
   }
   // A pinch: the system's own (select button) or thumb and index tips touching, with a little hysteresis.
@@ -160,6 +166,25 @@ export function createVR(ctx) {
     if(fingertip&&fingertip.position.distanceTo(shown.position)<TOUCH&&now-palmPressed>900){palmPressed=now;toggleMenu();}
   }
 
+  // ---------- the ground map under the model (or under the cut's surroundings) ----------
+  function syncGround() {
+    const map=ground.group;
+    if(!map.parent)scene.add(map);
+    if(ctx.grid)ctx.grid.visible=false;   // the map is the floor now
+    const place=cut.active?cut.place:null,data=ctx.state.data;
+    if(place) {
+      // The surroundings are north up, in meters scaled like the cut.
+      map.rotation.set(0,0,0);map.position.set(0,-place.side*place.scale*2e-4,0);map.scale.setScalar(place.scale);
+      ground.show(place.lat,place.lng,place.side);
+    } else if(data) {
+      // The model is turned with its selection and scaled so its longest side is SCALE; the map turns and scales with it.
+      const b=data.bounds,nw=mercatorPixel(b.west,b.north),se=mercatorPixel(b.east,b.south),x=(nw.x+se.x)/2,y=(nw.y+se.y)/2;
+      const lat=Math.atan(Math.sinh(Math.PI*(1-2*y/256)))*180/Math.PI,lng=x/256*360-180,side=Math.max(data.width_m,data.height_m);
+      map.rotation.set(0,rotationAngle(b)*Math.PI/180,0);map.position.set(0,-ctx.SCALE*2e-4,0);map.scale.setScalar(ctx.SCALE/side);
+      ground.show(lat,lng,side);
+    }
+  }
+
   // ---------- tiled surface (VR only; the page keeps its single mesh) ----------
   let tiles=null,tiledFrom=null;
   function syncTiles() {
@@ -185,7 +210,7 @@ export function createVR(ctx) {
   function applyView() {
     rig.position.copy(view.position);rig.rotation.set(0,view.yaw,0);rig.scale.setScalar(view.scale);rig.updateMatrixWorld(true);
     // Keep the whole model inside the depth range at any zoom, with a near plane that never clips the hands.
-    const far=2**Math.ceil(Math.log2(Math.max(30,4*view.size/view.scale)));
+    const far=2**Math.ceil(Math.log2(Math.max(30,12*view.size/view.scale)));   // the wide ground map reaches 8 model widths out
     if(camera.far!==far){camera.far=far;camera.near=clamp(far/1e5,.02,.1);}
   }
   const toWorld=room=>room.clone().applyAxisAngle(Y,view.yaw).multiplyScalar(view.scale).add(view.position);
@@ -252,6 +277,7 @@ export function createVR(ctx) {
       velocity.add(new THREE.Vector3(0,0,-1).applyQuaternion(q).multiplyScalar(-y)).add(new THREE.Vector3(1,0,0).applyQuaternion(q).multiplyScalar(x));
     }
     if(!velocity.lengthSq())return;
+    flownSeconds+=delta;
     // A room-space step, scaled into the world: zoomed out, the same step crosses more ground.
     view.position.add(velocity.multiplyScalar(SPEED*delta).applyAxisAngle(Y,view.yaw).multiplyScalar(view.scale));
   }
@@ -309,6 +335,9 @@ export function createVR(ctx) {
     if(key==='cut'){cut.enter();cutFramed=false;ctx.model.visible=false;}
     else if(wasCut){cut.leave();ctx.model.visible=true;frameModel();}
   }
+  // The ground map switch and its credit, on the Cut and Terrain tabs.
+  const groundRows=()=>[{type:'button',id:'ground-map',label:`Ground map: ${ground.label} ›`,action:()=>ground.cycle()},
+    {type:'text',text:ground.attribution?`Map ${ground.attribution}`:''}];
   function rows() {
     if(menuTab==='cut') {
       const generate=$('generate'),problem=cut.status()?.error;
@@ -326,6 +355,7 @@ export function createVR(ctx) {
           action:()=>{cutGenerating=true;generate.click();}},
         ctx.state.loading?{type:'progress',value:Number($('progress').value)||0}:null,
         {type:'text',text:'When it looks right, take off the headset: the page on the computer offers Continue here, ready to export.'},
+        ...groundRows(),
       ].filter(Boolean);
     }
     if(menuTab==='terrain') {
@@ -338,6 +368,7 @@ export function createVR(ctx) {
         {type:'heading',text:'Surface'},
         segment('View','[data-view]'),segment('Colors','[data-palette]'),
         ...[...document.querySelectorAll('#terrain-controls select, #terrain-controls input')].map(el=>controlRow(el)),
+        ...groundRows(),
       ].filter(Boolean);
     }
     if(menuTab==='layers') {
@@ -421,7 +452,7 @@ export function createVR(ctx) {
     tabs.forEach(([key,label],index)=>button(`tab:${key}`,pad+index*(tabWidth+10),214,tabWidth,62,label,{active:menuTab===key,action:()=>setTab(key)}));
     let y=304;const left=pad,width=W-2*pad;
     for(const [index,row] of rows().entries()) {
-      const x=left+(row.indent?44:0),w=width-(row.indent?44:0),key=`${menuTab}:${row.el?.id||row.type+index}`;
+      const x=left+(row.indent?44:0),w=width-(row.indent?44:0),key=`${menuTab}:${row.id||row.el?.id||row.type+index}`;
       c.textAlign='left';c.textBaseline='middle';
       if(row.type==='heading'){c.fillStyle=UI.accent;c.font=`650 22px ${UI.sans}`;c.fillText(row.text.toUpperCase(),x,y+26);y+=50;continue;}
       if(row.type==='text'){if(!row.text)continue;c.font=`23px ${UI.sans}`;c.fillStyle=row.accent?UI.accent:UI.muted;
@@ -495,7 +526,6 @@ export function createVR(ctx) {
   function updateHand(hand) {
     hand.tracked=Boolean(hand.source?.hand);
     hand.grip.visible=!hand.tracked;   // the controller model and its hint only for controllers
-    if(hand.tracked)dressJoints(hand);
     handPoint(hand);
     const gamepad=hand.source?.gamepad;
     const hit=pointer(hand);hand.hover=hand.mode?hand.hover:regionAt(hit);
@@ -538,6 +568,8 @@ export function createVR(ctx) {
       }
       hand.trigger=trigger;
     }
+    // The outlined hand model once loaded; joint dots meanwhile (or if the model could not load).
+    if(hand.tracked)dressJoints(hand,!hand.skin.update(hand.trigger));
     const onMenu=hit?.inside&&hand.mode!=='grab'&&hand.mode!=='handle';
     // Hands show their ray only on the menu; controllers always show a short one.
     hand.laser.visible=!hand.tracked||Boolean(onMenu);
@@ -564,6 +596,7 @@ export function createVR(ctx) {
       frameModel();
     }
     cut.update(view);
+    syncGround();
     if(cut.active&&cut.ready&&!cutFramed){cutFramed=true;frameSurroundings();}
     hands.forEach(updateHand);
     updatePalm();
@@ -586,6 +619,8 @@ export function createVR(ctx) {
     session.addEventListener('visibilitychange',()=>{if(session?.visibilityState==='visible')ctx.live?.now();else ctx.handoff?.(true);});
     session.addEventListener('end',()=>{
       dropTiles();
+      ground.group.removeFromParent();
+      if(ctx.grid)ctx.grid.visible=ctx.state.view!=='elevation';
       if(menuTab==='cut'){cut.leave();ctx.model.visible=true;menuTab='terrain';}
       palmButton.mesh.visible=false;
       ctx.handoff?.(true);   // you are taking the headset off: the computer's page can continue from here
@@ -607,8 +642,8 @@ export function createVR(ctx) {
 
   instance={update,attachButton,camera,get live(){return ctx.live;},get presenting(){return Boolean(session);},
     get state(){return {scale:view.scale,yaw:view.yaw,position:view.position.toArray(),minScale:view.minScale,maxScale:view.maxScale,
-      menuOpen:panel.mesh.visible,menuTab,cut:cut.state,palmButton:palmButton.mesh.visible?palmButton.mesh.position.toArray():null,
-      hands:hands.map(hand=>({tracked:hand.tracked,pinching:hand.trigger,mode:hand.mode,point:hand.point.toArray(),indexTip:joint(hand,'index-finger-tip')?.position.toArray()||null})),tiles:tiles?tiles.children.length:0,
+      menuOpen:panel.mesh.visible,menuTab,flownSeconds,cut:cut.state,area:ctx.state.data?{bounds:ctx.state.data.bounds,width_m:ctx.state.data.width_m,height_m:ctx.state.data.height_m}:null,ground:{...ground.state,rotation:ground.group.rotation.y,scale:ground.group.scale.x,parent:ground.group.parent?.type||null},palmButton:palmButton.mesh.visible?palmButton.mesh.position.toArray():null,
+      hands:hands.map(hand=>({tracked:hand.tracked,model:hand.skin.ready,pinching:hand.trigger,mode:hand.mode,point:hand.point.toArray(),indexTip:joint(hand,'index-finger-tip')?.position.toArray()||null})),tiles:tiles?tiles.children.length:0,
       tileTriangles:tiles?tiles.children.reduce((sum,part)=>sum+part.geometry.index.count/3,0):0,surfaceHidden:ctx.surface?!ctx.surface.visible:false,regions:regions.map(({id,x,y,w,h,disabled})=>({id,x,y,w,h,disabled})),panel:panel.mesh.matrix.toArray()};}};
   return instance;
 }

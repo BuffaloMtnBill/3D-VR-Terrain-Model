@@ -2,6 +2,8 @@ import argparse
 import os
 from pathlib import Path
 import socket
+from threading import Thread
+import time
 import webbrowser
 
 from .server import create_app
@@ -11,7 +13,8 @@ def main():
     parser = argparse.ArgumentParser(description="Run 3D-VR-Terrain. By default it serves HTTPS to this network, so a VR headset can connect.")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--host", default=None, help="Address to listen on (default: every interface; with --local, 127.0.0.1)")
-    parser.add_argument("--open", action="store_true", help="Open the app in your browser")
+    parser.add_argument("--no-browser", action="store_true", help="Do not open the app in this computer's browser")
+    parser.add_argument("--open", action="store_true", help=argparse.SUPPRESS)  # the default now; kept so older commands still work
     parser.add_argument("--local", action="store_true", help="Serve plain HTTP to this computer only (no headset, no pairing)")
     parser.add_argument("--lan", action="store_true", help=argparse.SUPPRESS)  # the default now; kept so older commands still work
     parser.add_argument("--forget-devices", action="store_true", help="Unpair every device, so each must enter the PIN again")
@@ -38,10 +41,21 @@ def main():
     print(f"\n3D-VR-Terrain is running at {' or '.join(urls)}\n{lan_note}"
           f"Downloaded map data is cached in {Path(app.config['CACHE_DIR']).parent}\n"
           "Press Ctrl+C to stop.\n", flush=True)
-    if args.open:
-        # This computer never needs pairing, so it opens on localhost.
-        webbrowser.open(f"https://localhost:{args.port}" if lan else urls[0])
+    if not args.no_browser:
+        # This computer never needs pairing, so it opens on localhost, once the server answers.
+        Thread(target=open_when_ready, args=(f"https://localhost:{args.port}" if lan else urls[0], args.port), daemon=True).start()
     app.run(host=args.host, port=args.port, threaded=True, debug=False, ssl_context=ssl_context)
+
+
+def open_when_ready(url, port, timeout=30):
+    end = time.monotonic()+timeout
+    while time.monotonic() < end:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                break
+        except OSError:
+            time.sleep(.2)
+    webbrowser.open(url)
 
 
 if __name__ == "__main__":

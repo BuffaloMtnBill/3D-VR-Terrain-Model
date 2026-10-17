@@ -181,6 +181,11 @@ label.route-option { justify-content: flex-start; }
 @keyframes ridge-pulse { 0%, 100% { stroke-width: 5px; stroke-opacity: 1; } 50% { stroke-width: 8px; stroke-opacity: .55; } }
 .ridge-pulse { animation: ridge-pulse 1.8s ease-in-out infinite; filter: drop-shadow(0 0 3px rgba(255, 240, 200, .55)); }
 @media (prefers-reduced-motion: reduce) { .ridge-pulse { animation: none; } }
-.scene-tools .vr-button{font-size:11px;font-weight:650;letter-spacing:.5px}
 #live-status.offline{color:#a0603a}#live-status.offline i{background:#c98a4b;animation:live-blink 1.2s infinite}@keyframes live-blink{50%{opacity:.25}}
 .live-offer{position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:5;display:flex;align-items:center;gap:12px;background:#fbfcf7;border:1px solid var(--line);padding:8px 10px 8px 14px;font-size:12px;box-shadow:0 6px 18px rgba(0,0,0,.18);max-width:calc(100% - 32px)}.live-offer .button{padding:7px 12px;font-size:12px}
+.follow-toggle{cursor:pointer}.follow-toggle input{margin:0;width:12px;height:12px;accent-color:#6f9953}
+.generate-top{margin:0 0 6px}.generate-top .button.full{margin-top:0;padding:16px 18px;font-size:15px}.generate-top #job-progress{margin-top:10px}
+.vr-launch{display:flex;align-items:center;gap:18px;width:100%;min-height:88px;margin:0 0 22px;padding:16px 26px;border:0;border-radius:14px;background:var(--green);color:#fffbe8;font-family:var(--sans);font-size:30px;font-weight:650;line-height:1.1;cursor:pointer;text-align:left;box-shadow:0 6px 18px rgba(0,0,0,.18)}
+.vr-launch:hover,.vr-launch:focus-visible{filter:brightness(1.12)}.vr-launch small{margin-left:auto;font-size:14px;font-weight:450;opacity:.85}
+.vr-launch-mark{display:inline-grid;place-items:center;width:62px;height:46px;border:3px solid currentColor;border-radius:14px;font-size:20px;letter-spacing:1px}
+@media(max-width:900px){.vr-launch{font-size:24px;min-height:72px}.vr-launch small{display:none}}

@@ -73,6 +73,8 @@ async function openPage(browser,headset) {
   await page.click('#enter-vr');
   let state=await until(s=>s.hands.every(hand=>hand.tracked),10000,'entering VR with tracked hands');
   assert.deepEqual(state.hands.map(hand=>hand.tracked),[true,true],'Both hands are tracked');
+  // Drawn as the outlined hand model (from static/vendor/hands), not joint dots.
+  state=await until(s=>s.hands.every(hand=>hand.model),15000,'the hand models to load');
 
   // A pinch in open air grabs the world, and moving the pinched hand drags it.
   await place('right',[.25,1.3,-.35]);await frames();
@@ -107,6 +109,11 @@ async function openPage(browser,headset) {
   assert.equal(state.cut.active,true);
   assert.ok(Object.values(state.cut.handles).filter(Boolean).length>=4,`The cut has handles: ${JSON.stringify(state.cut)}`);
   const start=state.cut.frame;
+  // The surroundings stand on the ground map, north up, at the cut's scale.
+  assert.equal(state.ground.parent,'Scene');assert.equal(state.ground.rotation,0,'Under the surroundings the map is north up');
+  near(state.ground.scale,state.cut.scale,1e-9,'and scaled like the surroundings');
+  state=await until(s=>s.ground.layers.length===2,30000,'the ground map layers');
+  assert.ok(state.ground.layers.every(layer=>layer.tiles>0),'The ground map is made of map tiles');
 
   async function dragHandle(name,move) {
     const s=await vrState(),room=toRoom(s,s.cut.handles[name]);
@@ -132,6 +139,9 @@ async function openPage(browser,headset) {
   assert.ok(Math.abs(turned.angle)>=5,`The ring turns the cut (${turned.angle}°)`);
   const selection=await page.evaluate(()=>document.getElementById('selection-rotation').textContent);
   assert.match(selection,new RegExp(`${Math.abs(turned.angle)}`),`The page's own selection is turned too (${selection})`);
+  // The computer's map frame follows the cut live, before anything is generated.
+  await computer.waitForFunction(text=>document.getElementById('selection-rotation').textContent===text,selection,{timeout:10000});
+  assert.equal(await computer.locator('#selection-size').innerText(),await page.locator('#selection-size').innerText(),'The computer shows the same cut size');
 
   // Scale: the elevation multiplier raises the surroundings while you watch.
   await tap('right','^cut:exaggeration:plus$');
@@ -144,18 +154,38 @@ async function openPage(browser,headset) {
   await until(s=>s.menuTab==='terrain'&&!s.cut.active,120000,'the generated cut to replace the surroundings');
   await page.waitForFunction(()=>document.getElementById('selection-state').textContent==='Terrain generated',null,{timeout:30000});
   assert.match(await page.locator('#scene-detail').innerText(),new RegExp(`${Math.abs(turned.angle)}° selection`));
+  // Under the model, the map turns with the cut, so the model sits on it in its real place.
+  state=await until(s=>Math.abs(s.ground.rotation-turned.angle*Math.PI/180)<1e-6,10000,'the ground map to turn with the model');
+  for(const label of ['terrain','off','streets']) {
+    await tap('right','^terrain:ground-map$');
+    state=await vrState();assert.equal(state.ground.style,label,`The Ground map switch cycles to ${label}`);
+  }
 
-  // Taking off the headset: the computer's page offers the headset's work and continues from it.
+  // The computer's page followed along: same cut, same model, without touching it.
+  const mirrored=async()=>({rotation:await computer.locator('#selection-rotation').innerText(),detail:await computer.locator('#scene-detail').innerText(),
+    exaggeration:await computer.locator('#exaggeration').inputValue()});
+  await computer.waitForFunction(text=>document.getElementById('scene-detail').textContent===text,await page.locator('#scene-detail').innerText(),{timeout:30000});
+  assert.deepEqual(await mirrored(),{rotation:await page.locator('#selection-rotation').innerText(),detail:await page.locator('#scene-detail').innerText(),
+    exaggeration:await page.locator('#exaggeration').inputValue()},'The computer mirrors the headset as you edit');
+  assert.equal(await computer.locator('#live-offer').isHidden(),true,'Following needs no Continue here');
+
+  // Not following: the computer keeps its own view and offers the headset's work instead.
+  await computer.locator('#follow-headset').uncheck();
+  const kept=await computer.locator('#exaggeration').inputValue();
+  await tap('right','^tab:terrain$');
+  await tap('right','^terrain:exaggeration:plus$');
+  await computer.waitForFunction(()=>!document.getElementById('live-offer').hidden,null,{timeout:10000});
+  assert.equal(await computer.locator('#exaggeration').inputValue(),kept,'Unfollowed, the computer keeps its own settings');
+  assert.equal(await computer.locator('#live-offer-open').innerText(),'Continue here');
+
+  // Taking off the headset: Continue here brings the latest work over.
   await tap('right','^exit-vr$');
   await page.waitForTimeout(500);
   assert.equal(await page.evaluate(async()=>(await import('/static/vr.js')).currentVR().presenting),false,'Exit VR leaves the headset view');
-  await computer.waitForFunction(()=>!document.getElementById('live-offer').hidden&&/From the headset/.test(document.getElementById('live-offer-text').textContent),null,{timeout:10000});
-  assert.equal(await computer.locator('#live-offer-open').innerText(),'Continue here');
   await computer.click('#live-offer-open');
   await computer.waitForFunction(()=>/Continued from the headset/.test(document.getElementById('toast').textContent),null,{timeout:30000});
-  assert.equal(await computer.locator('#scene-detail').innerText(),await page.locator('#scene-detail').innerText(),'The computer shows the same model');
-  assert.equal(await computer.locator('#exaggeration').inputValue(),await page.locator('#exaggeration').inputValue(),'and the same elevation multiplier');
-  assert.equal(await computer.locator('#selection-rotation').innerText(),await page.locator('#selection-rotation').innerText(),'and the same cut');
+  assert.equal(await computer.locator('#exaggeration').inputValue(),await page.locator('#exaggeration').inputValue(),'Continue here brings the latest settings');
+  assert.equal(await computer.locator('#scene-detail').innerText(),await page.locator('#scene-detail').innerText(),'and the same model');
   // Exporting on the computer is the ordinary page export.
   await computer.click('#export-button');
   const download=computer.waitForEvent('download',{timeout:60000});

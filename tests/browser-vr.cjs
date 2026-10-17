@@ -58,7 +58,11 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await page.evaluate(async()=>{const vr=await import('/static/vr.js');window.testVR=()=>vr.currentVR();});
   await page.waitForFunction(()=>window.testVR().presenting,null,{timeout:10000});
   await frames(10);
+  // The ground map's tiles load in the first moments; wait for them so the timed flights below run at an even frame rate.
+  await page.waitForFunction(()=>window.testVR().state.ground.layers.length===2,null,{timeout:30000});
+  await frames(10);
   let state=await vrState();
+  assert.equal(state.ground.parent,'Scene','The model sits on the ground map');
   near(state.scale,6.4,.01,'Initial world units per room meter (a 6.4-unit model shown 1 m wide)');
   assert.equal(state.menuOpen,false);
   // In VR the surface is drawn as tiles, so ground out of view is skipped; together they hold every triangle.
@@ -74,11 +78,13 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await page.waitForFunction(()=>document.getElementById('live-status').textContent.trim()==='LIVE',null,{timeout:10000});
 
   // Flying: full stick forward moves where the hand points (-Z here), at the same room speed at any zoom.
+  // Speeds are per second of flying as the headset counts it (its frame times), not the test's wall clock, so a
+  // slow software renderer dropping frames does not change them.
   async function flight() {
-    const before=(await vrState()).position;
+    const start=await vrState(),before=start.position;
     await stick('right',0,-1);await page.waitForTimeout(600);await stick('right',0,0);await frames();
     const after=await vrState();
-    return {dx:after.position[0]-before[0],dz:after.position[2]-before[2],scale:after.scale};
+    return {dx:after.position[0]-before[0],dz:after.position[2]-before[2],scale:after.scale,seconds:after.flownSeconds-start.flownSeconds};
   }
   await pose('right',[.2,1.2,-.3]);await pose('left',[-.2,1.2,-.3]);await frames();
   const first=await flight();
@@ -104,8 +110,8 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   // At a different zoom, the same stick time covers ground in proportion to the zoom.
   await pose('right',[.2,1.2,-.3],[0,0,0,1]);await frames();
   const second=await flight();
-  const firstRate=Math.hypot(first.dx,first.dz)/first.scale,secondRate=Math.hypot(second.dx,second.dz)/second.scale;
-  near(secondRate/firstRate,1,.45,`Room speed is the same at ${second.scale.toFixed(2)} and ${first.scale.toFixed(2)} units per meter`);
+  const firstRate=Math.hypot(first.dx,first.dz)/first.scale/first.seconds,secondRate=Math.hypot(second.dx,second.dz)/second.scale/second.seconds;
+  near(secondRate/firstRate,1,.05,`Room speed is the same at ${second.scale.toFixed(2)} and ${first.scale.toFixed(2)} units per meter`);
 
   // A / X opens the menu in front of you.
   await button('right','a-button',1);await frames();await button('right','a-button',0);await frames(8);

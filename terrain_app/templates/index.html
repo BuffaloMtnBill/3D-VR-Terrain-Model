@@ -22,12 +22,16 @@
       <span>terrain<span class="brand-studio">STUDIO</span></span>
     </a>
     <div class="topbar-description">Print the world.</div>
-    <div class="topbar-right"><span class="local-badge" id="live-status" title="Live link to the server: progress and new terrain arrive instantly"><i></i> LIVE</span><span class="local-badge" id="pairing-pin" title="Enter this PIN on a headset or other device to pair it" hidden><i></i> HEADSET PIN</span><button id="restart-server" type="button" class="button quiet" title="Restart the local Terrain Studio server so code changes take effect, then reload this page">Restart server <span aria-hidden="true">↻</span></button><button id="help-button" class="button quiet">How it works <span aria-hidden="true">↗</span></button></div>
+    <div class="topbar-right"><span class="local-badge" id="live-status" title="Live link to the server: progress and new terrain arrive instantly"><i></i> LIVE</span><label class="local-badge follow-toggle" id="follow-label" title="Mirror the headset here as you edit in VR" hidden><input type="checkbox" id="follow-headset" checked> FOLLOW HEADSET</label><span class="local-badge" id="pairing-pin" title="Enter this PIN on a headset or other device to pair it" hidden><i></i> HEADSET PIN</span><button id="restart-server" type="button" class="button quiet" title="Restart the local Terrain Studio server so code changes take effect, then reload this page">Restart server <span aria-hidden="true">↻</span></button><button id="help-button" class="button quiet">How it works <span aria-hidden="true">↗</span></button></div>
   </header>
 
   <main class="workspace">
     <aside class="sidebar" aria-label="Terrain settings">
       <div class="intro"><span class="eyebrow">STEP 1</span><h1>Geography selection</h1><p>Find a place. Frame it. <br>Make the landscape your own.</p></div>
+      <div class="generate-top">
+        <button id="generate" class="button primary full">Generate terrain <span aria-hidden="true">↗</span></button>
+        <div id="job-progress" hidden><progress id="progress" max="1" value="0"></progress><span id="job-message" class="small-hint" role="status"></span></div>
+      </div>
       <section class="control-section">
         <div class="section-label"><h2>Your landscape</h2></div>
         <label for="place">Famous landscapes</label>
@@ -67,8 +71,6 @@
           <input id="base" type="range" min="0.5" max="10" step="0.5" value="3">
           <div class="toggles"><label class="toggle"><span>Contour lines</span><input type="checkbox" id="contours" checked><span class="switch"></span></label></div>
         </div>
-        <button id="generate" class="button primary full">Generate terrain <span aria-hidden="true">↗</span></button>
-        <div id="job-progress" hidden><progress id="progress" max="1" value="0"></progress><span id="job-message" class="small-hint" role="status"></span></div>
       </section>
 
 
@@ -78,6 +80,7 @@
     </aside>
 
     <div class="main-content">
+      <button id="enter-vr" class="vr-launch" type="button" title="Explore the terrain and choose the cut in VR (Meta Quest)" hidden><span class="vr-launch-mark" aria-hidden="true">VR</span><span>Enter VR</span><small>Put on the headset, then press this in its browser</small></button>
       <div class="workspace-heading"><div><span class="eyebrow">THE EXPLORER</span><h2 id="landscape-title">{{ presets[default_place].name }}</h2></div><span id="terrain-badge" class="data-badge"><i></i> REAL ELEVATION DATA</span></div>
       <div class="view-panes">
         <section class="map-panel panel" aria-label="Area selection">
@@ -108,7 +111,7 @@
         <section class="terrain-panel panel" aria-label="3D terrain preview">
           <div class="panel-heading"><div><h3>A different perspective</h3></div><button id="reset-camera" class="icon-button" aria-label="Reset camera" title="Reset camera">⌖</button></div>
           <div class="view-tabs" role="group" aria-label="Visualization mode"><button class="active" data-view="relief" aria-pressed="true">Relief</button><button data-view="map" aria-pressed="false">Map</button><button data-view="wireframe" aria-pressed="false">Wireframe</button><button data-view="elevation" aria-pressed="false">Elevation</button></div>
-          <div id="scene-container"><div id="scene-empty" hidden>Select an area and generate its terrain to begin.</div><div class="scene-label"><span id="scene-mode">ALPINE RELIEF</span><span id="scene-detail">Preparing terrain…</span></div><div class="north-arrow" aria-label="North direction relative to the selected area"><span>N</span><span>↑</span></div><div class="scene-tools"><button id="rotate" class="icon-button" title="Auto rotate" aria-label="Auto rotate" aria-pressed="false">⟳</button><button id="screenshot" class="icon-button" title="Save preview image" aria-label="Save preview image">▧</button><button id="enter-vr" class="icon-button vr-button" title="Explore and edit in VR (Meta Quest)" aria-label="Enter VR" hidden>VR</button></div><div id="live-offer" class="live-offer" hidden><span id="live-offer-text"></span><button id="live-offer-open" type="button" class="button primary">Open it</button><button id="live-offer-dismiss" type="button" class="text-button" aria-label="Dismiss">✕</button></div><div class="scene-instructions" id="scene-instructions">Drag to orbit · scroll to zoom</div><div id="map-attribution" hidden>© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a></div></div>
+          <div id="scene-container"><div id="scene-empty" hidden>Select an area and generate its terrain to begin.</div><div class="scene-label"><span id="scene-mode">ALPINE RELIEF</span><span id="scene-detail">Preparing terrain…</span></div><div class="north-arrow" aria-label="North direction relative to the selected area"><span>N</span><span>↑</span></div><div class="scene-tools"><button id="rotate" class="icon-button" title="Auto rotate" aria-label="Auto rotate" aria-pressed="false">⟳</button><button id="screenshot" class="icon-button" title="Save preview image" aria-label="Save preview image">▧</button></div><div id="live-offer" class="live-offer" hidden><span id="live-offer-text"></span><button id="live-offer-open" type="button" class="button primary">Open it</button><button id="live-offer-dismiss" type="button" class="text-button" aria-label="Dismiss">✕</button></div><div class="scene-instructions" id="scene-instructions">Drag to orbit · scroll to zoom</div><div id="map-attribution" hidden>© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a></div></div>
           <div id="print-legend" class="print-legend" hidden></div><div class="elevation-legend"><span id="legend-low">— ft ASL</span><span id="legend-gradient"></span><span id="legend-high">— ft ASL</span></div>
         </section>
       </div>

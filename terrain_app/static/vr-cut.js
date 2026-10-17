@@ -164,7 +164,8 @@ export function createCut(ctx) {
     const selection=ctx.state.selection;
     if(!origin&&selection){const nw=mercatorPixel(selection.west,selection.north),se=mercatorPixel(selection.east,selection.south),x=(nw.x+se.x)/2,y=(nw.y+se.y)/2;
       const k=metersPerPixel(fromMercator(x,y).lat);
-      origin={x,y,k,s:ctx.SCALE/Math.max((se.x-nw.x)*k,(se.y-nw.y)*k,1)};}
+      const size=Math.max((se.x-nw.x)*k,(se.y-nw.y)*k,1);
+      origin={x,y,k,s:ctx.SCALE/size,side:SURROUNDINGS*size};}
     if(!drag&&selection)frame=frameOf(selection);
     if(!frame)return;
     if(!loading&&!loadError&&!drag&&!covers(frame))loadSurroundings();
@@ -228,6 +229,7 @@ export function createCut(ctx) {
     }
     f.w=Math.min(f.w,MAX_SIDE_M);f.h=Math.min(f.h,MAX_SIDE_M);
     frame=f;
+    ctx.previewSelection?.(boundsOf(f));
   }
   function endDrag() {
     if(!drag)return;
@@ -264,9 +266,11 @@ export function createCut(ctx) {
     return null;
   }
 
-  return {group,enter,leave,update,handleAt,hover,startDrag,moveDrag,endDrag,summary,status,
+  return {group,enter,leave,update,
+    // Where the local frame is on Earth, for the ground map under the surroundings.
+    get place(){if(!origin)return null;const {lat,lng}=fromMercator(origin.x,origin.y);return {lat,lng,side:origin.side,scale:origin.s};},handleAt,hover,startDrag,moveDrag,endDrag,summary,status,
     retry(){loadError=null;},
     get active(){return active;},get dragging(){return Boolean(drag);},get ready(){return Boolean(terrain);},
-    get state(){return {active,ready:Boolean(terrain),frame,loading:Boolean(loading),error:loadError,
+    get state(){return {active,ready:Boolean(terrain),frame,loading:Boolean(loading),error:loadError,scale:origin?.s??null,
       handles:Object.fromEntries(Object.entries(handles).map(([name,mesh])=>[name,mesh.visible?mesh.getWorldPosition(new THREE.Vector3()).toArray():null]))};}};
 }

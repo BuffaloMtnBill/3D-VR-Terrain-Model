@@ -23,7 +23,7 @@ const paletteStops = {
 const ramps = Object.fromEntries(Object.entries(paletteStops).map(([key, stops]) => [key, stops.map(hex => new THREE.Color(hex))]));
 const state = {selection:null, selectionError:null, palette:'alpine', view:'relief', mapStyle:'terrain', data:null, id:null, loading:false, name:'', surfaceVersion:0};
 let map, mapLayer, selectionFrame, profileMapLine, renderer, scene, camera, perspective, orthographic, controls, sun, grid, model, topMesh, baseMesh, mapTexture, featureGroup;
-let toastTimer, sceneReady = false, lastMapError = 0, studio = null, silhouette = null, vr = null, live = null, offered = null;
+let toastTimer, sceneReady = false, lastMapError = 0, studio = null, silhouette = null, vr = null, live = null, offered = null, mapStyles = null;
 let featureData=null,featureRequest=null,featureError=null,placeRequest=null;
 let waterSourceChosen=false;
 const featureCache=new Map();
@@ -129,7 +129,7 @@ function setupMap(config) {
     zoomControl:true,boxZoom:false,worldCopyJump:true,maxZoom:18,minZoom:2,
     zoomSnap:0,zoomDelta:0.25,wheelPxPerZoomLevel:240,
   }).setView([(state.selection.south+state.selection.north)/2,(state.selection.west+state.selection.east)/2],11);
-  const styles={
+  const styles=mapStyles={
     terrain:{url:config.map_tile_url,attribution:config.map_attribution,nativeZoom:config.map_max_native_zoom},
     streets:{url:config.street_tile_url,attribution:config.street_attribution,nativeZoom:19},
   };
@@ -258,10 +258,12 @@ function setupScene() {
   // Draw only while something is changing; an idle model costs no GPU time.
   controls.addEventListener('change',requestRender);
   for(const type of ['input','change','click','keydown','pointerup'])document.addEventListener(type,requestRender,true);
-  vr=createVR({renderer,scene,SCALE,notify,requestRender,api,fetchSurface,handoff,get model(){return model;},get surface(){return topMesh;},get state(){return state;},get live(){return live;},
+  vr=createVR({renderer,scene,SCALE,notify,requestRender,api,fetchSurface,handoff,mapStyles:()=>mapStyles,get grid(){return grid;},get model(){return model;},get surface(){return topMesh;},get state(){return state;},get live(){return live;},
     source:()=>$('elevation-source').value,exaggeration:()=>Number($('exaggeration').value),
     // The VR cut sets the page's selection, exactly as dragging the map frame would.
-    setSelection:bounds=>{updateSelection(bounds,true,true);if(vr?.presenting)handoff();}});
+    setSelection:bounds=>{draftSelection=null;updateSelection(bounds,true,true);if(vr?.presenting)handoff();},
+    // A handle mid-drag: the computer's page follows the cut before it is let go.
+    previewSelection:bounds=>{draftSelection=bounds;if(vr?.presenting)handoff();}});
   vr.attachButton($('enter-vr'));
   let previous=performance.now();
   renderer.setAnimationLoop(now=>{
@@ -738,12 +740,17 @@ async function followJob(id) {
 // Live events from the server: terrain generated on another device (the PC or the headset) can be opened here,
 // and the headset's whole workspace (cut, scale, settings, model) can be continued on the computer.
 function liveEvent(event) {
-  if(event.type==='terrain'&&event.id!==state.jobId&&event.id!==state.id&&offered?.type!=='workspace') {
+  const followingHeadset=!$('follow-label').hidden&&$('follow-headset').checked;   // the workspace event brings the model
+  if(event.type==='terrain'&&event.id!==state.jobId&&event.id!==state.id&&offered?.type!=='workspace'&&!followingHeadset) {
     if(vr?.presenting&&!state.loading){openTerrain(event);return;}
     offer(event,`New terrain from another device: ${event.name||'unnamed area'}`,'Open it');
   }
-  if(event.type==='workspace'&&event.page!==pageId&&!vr?.presenting)
-    offer(event,`From the headset: ${event.name||'your cut'}${event.terrain_id?'':' (not generated yet)'}`,'Continue here');
+  if(event.type==='workspace'&&event.page!==pageId&&!vr?.presenting) {
+    $('follow-label').hidden=false;
+    // Following (the default), this page mirrors the headset as you edit; otherwise it offers to continue.
+    if($('follow-headset').checked)followWorkspace(event);
+    else offer(event,`From the headset: ${event.name||'your cut'}${event.terrain_id?'':' (not generated yet)'}`,'Continue here');
+  }
   if(event.type==='reconnected'&&event.restarted&&state.data&&state.id!=='example')
     notify('The server restarted. The model here still works; generate again before exporting or changing its detail.',true);
 }
@@ -763,37 +770,63 @@ async function openTerrain(event) {
 // ---------- handoff: the headset's workspace, continued on the computer ----------
 const pageId=Math.random().toString(36).slice(2);
 const handoffInputs=()=>[...styleInputs(),$('resolution'),$('elevation-source')];
+let draftSelection=null;   // the cut while a VR handle is being dragged, before it is set on the page
 function workspace() {
-  return {page:pageId,name:state.loadedName&&state.data&&sameBounds(state.selection,state.data.bounds)?state.loadedName:state.name,
-    place:$('place').value,selection:state.selection,terrain_id:state.data&&state.id!=='example'&&sameBounds(state.selection,state.data.bounds)?state.id:null,
+  const selection=draftSelection||state.selection,generated=state.data&&state.id!=='example'&&sameBounds(selection,state.data.bounds);
+  return {page:pageId,name:state.loadedName&&generated?state.loadedName:state.name,
+    place:$('place').value,selection,terrain_id:generated?state.id:null,
     palette:state.palette,controls:controlValues(handoffInputs()),export_size:Number($('export-size').value)};
 }
-let handoffTimer=null;
-// Sent while in VR (and at once when the headset comes off); kept only in the server's memory.
+let handoffTimer=null,lastHandoff=0;
+// Sent while in VR, a few times a second at most (and at once when the headset comes off); kept only in the
+// server's memory. The computer's page follows along live.
 function handoff(now=false) {
-  clearTimeout(handoffTimer);
-  const send=()=>{if(state.selection&&!state.selectionError)api('/api/workspace',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(workspace())}).catch(()=>{});};
-  if(now)send();else handoffTimer=setTimeout(send,1200);
+  const send=()=>{
+    clearTimeout(handoffTimer);handoffTimer=null;lastHandoff=performance.now();
+    if(state.selection&&!state.selectionError)api('/api/workspace',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(workspace())}).catch(()=>{});
+  };
+  if(now)return send();
+  if(!handoffTimer)handoffTimer=setTimeout(send,Math.max(0,250-(performance.now()-lastHandoff)));
+}
+
+// Following the headset: apply only what changed, so the map frame and sliders move as you edit in VR.
+let followed=null,following=null,followNext=null;
+function followWorkspace(w) {
+  if(following){followNext=w;return;}
+  following=applyWorkspace(w).catch(error=>notify(error.message,true)).finally(()=>{
+    following=null;if(followNext){const next=followNext;followNext=null;followWorkspace(next);}
+  });
+}
+async function applyWorkspace(w) {
+  if(!w.selection)return;
+  if(offered?.type==='workspace'){$('live-offer').hidden=true;offered=null;}   // now applied, so no longer on offer
+  const previous=followed;followed=w;
+  if(!state.selection||!sameBounds(state.selection,w.selection))updateSelection(w.selection,true,false);
+  if(typeof w.name==='string'&&w.name){state.name=w.name;$('landscape-title').textContent=state.loadedName&&state.id===w.terrain_id?state.loadedName:w.name;}
+  $('place').value=[...$('place').options].some(option=>option.value===w.place)?w.place:'custom';
+  const current=controlValues(handoffInputs()),controls=w.controls||{};
+  const changed=Object.keys(controls).filter(id=>id in current&&current[id]!==controls[id]);
+  if(changed.length||w.palette!==state.palette) {
+    // Only well-formed values for this page's own controls are taken (applyControls checks each one).
+    applyControls(handoffInputs(),{palette:w.palette,controls:Object.fromEntries(changed.map(id=>[id,controls[id]]))});
+    for(const id of changed){$(id).dispatchEvent(new Event('input',{bubbles:true}));$(id).dispatchEvent(new Event('change',{bubbles:true}));}
+    if(w.palette!==previous?.palette||changed.some(id=>renderingInputs().includes($(id))))applyRenderingSettings({palette:w.palette,controls});
+  }
+  if(Number.isFinite(w.export_size)&&w.export_size>=10&&w.export_size<=2000&&Number($('export-size').value)!==w.export_size) {
+    $('export-size').value=w.export_size;$('export-size').dispatchEvent(new Event('input',{bubbles:true}));
+  }
+  if(w.terrain_id&&w.terrain_id!==state.id) {
+    try{await loadSurface(w.terrain_id,true,w.name||null);$('selection-state').textContent='Terrain generated';}
+    catch{notify('The headset’s cut is set, but the server no longer has its terrain. Generate it, then export.',true);}
+  }
 }
 
 async function continueWorkspace(w) {
   $('live-offer').hidden=true;offered=null;
   try {
     if(!w.selection)w=await api('/api/workspace');
-    updateSelection(w.selection,true,false);
-    state.name=typeof w.name==='string'&&w.name?w.name:'Custom landscape';
-    $('place').value=[...$('place').options].some(option=>option.value===w.place)?w.place:'custom';
-    // Only well-formed values for this page's own controls are taken (applyControls checks each one).
-    applyControls(handoffInputs(),w);
-    for(const id of ['relief-method','relief-strength','exaggeration','base','contours','resolution','elevation-source'])$(id).dispatchEvent(new Event('input',{bubbles:true}));
-    if(Number.isFinite(w.export_size)&&w.export_size>=10&&w.export_size<=2000)$('export-size').value=w.export_size;
-    $('export-size').dispatchEvent(new Event('input',{bubbles:true}));
-    applyRenderingSettings({palette:w.palette,controls:w.controls});
-    if(w.terrain_id) {
-      try{await loadSurface(w.terrain_id,true,state.name);$('selection-state').textContent='Terrain generated';}
-      catch{notify('The headset’s cut is set, but the server no longer has its terrain. Generate it, then export.',true);return;}
-      notify('Continued from the headset. Export when you are ready.');
-    } else notify('The headset’s cut is set here. Generate it, then export.');
+    followed=null;await applyWorkspace(w);
+    notify(state.id===w.terrain_id?'Continued from the headset. Export when you are ready.':'The headset’s cut is set here. Generate it, then export.');
   } catch(error){notify(error.message,true);}
 }
 
@@ -1360,7 +1393,12 @@ async function init() {
     api('/api/workspace').then(w=>{if(w.selection&&w.page!==pageId&&w.age_s<7200&&(!state.data||w.terrain_id!==state.id))
       offer({...w,type:'workspace'},`From the headset: ${w.name||'your cut'}`,'Continue here');}).catch(()=>{});
     // While in VR every change is handed off, so the computer can continue from the latest cut.
-    document.addEventListener('change',()=>{if(vr?.presenting)handoff();},true);
+    for(const type of ['input','change'])document.addEventListener(type,()=>{if(vr?.presenting)handoff();},true);
+    try{$('follow-headset').checked=localStorage.getItem('follow-headset')!=='off';}catch{/* Storage is optional. */}
+    $('follow-headset').addEventListener('change',event=>{
+      try{localStorage.setItem('follow-headset',event.target.checked?'on':'off');}catch{/* Storage is optional. */}
+      if(event.target.checked)api('/api/workspace').then(w=>{if(w.selection&&w.page!==pageId)followWorkspace(w);}).catch(()=>{});
+    });
     if(config.pairing_pin){$('pairing-pin').hidden=false;$('pairing-pin').lastChild.textContent=` HEADSET PIN ${config.pairing_pin}`;}
     profileModes=createProfileModes({get map(){return map;},get state(){return state;},api,units,number,
       redraw:()=>drawProfile(),sliceVisible:()=>updateProfileMapLine(),changed:()=>silhouette?.modelChanged(),

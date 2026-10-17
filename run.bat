@@ -26,7 +26,7 @@ if errorlevel 1 goto :failed
 copy /y requirements.txt ".venv\requirements.installed" >nul
 
 :run
-"%VENV_PY%" app.py --open %*
+"%VENV_PY%" app.py %*
 if errorlevel 1 pause
 exit /b %errorlevel%
 

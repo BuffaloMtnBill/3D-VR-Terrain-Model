@@ -181,7 +181,9 @@ def test_the_headset_hands_off_its_workspace(app, monkeypatch):
     payload = {"page": "headset", "name": "Roan Mountain", "place": "custom", "selection": ROAN, "terrain_id": "abc",
                "palette": "earth", "controls": {"exaggeration": 3.5, "contours": True, "bad": {"nested": 1}}, "export_size": 220}
     assert client.post("/api/workspace", json=payload).status_code == 200
-    assert events == [{"type": "workspace", "page": "headset", "name": "Roan Mountain", "terrain_id": "abc"}]
+    # The event carries the whole workspace, so following pages apply it without another request.
+    assert len(events) == 1 and events[0]["type"] == "workspace"
+    assert events[0]["selection"] == ROAN and events[0]["controls"]["exaggeration"] == 3.5 and "saved" not in events[0]
     shared = client.get("/api/workspace").get_json()
     assert shared["selection"] == ROAN and shared["export_size"] == 220 and shared["age_s"] == 0
     assert shared["controls"] == {"exaggeration": 3.5, "contours": True}  # only plain values pass

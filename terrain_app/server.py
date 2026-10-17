@@ -70,6 +70,8 @@ def restart_process():
     """Start this server again with the same command line (python app.py, python -m terrain_app, or the installed
     command), so code changes take effect. POSIX replaces the process; Windows starts a new one and exits."""
     command = [sys.executable, *getattr(sys, "orig_argv", [sys.executable, *sys.argv])[1:]]
+    if "--no-browser" not in command:
+        command.append("--no-browser")  # the page that asked for the restart is already open; it reloads itself
     logging.getLogger(__name__).info("Restarting Terrain Studio: %s", " ".join(command))
     if os.name == "nt":
         subprocess.Popen(command)
@@ -306,7 +308,9 @@ def create_app(test_config=None):
             workspace.update(page=text("page", 40), name=text("name", 120), place=text("place", 60), selection=selection,
                              terrain_id=terrain_id or None, palette=text("palette", 20), controls=controls,
                              export_size=size if isinstance(size, (int, float)) and not isinstance(size, bool) else None, saved=time.monotonic())
-        hub.publish(dict(type="workspace", page=workspace["page"], name=workspace["name"], terrain_id=workspace["terrain_id"]))
+            event = {key: value for key, value in workspace.items() if key != "saved"}
+        # The whole workspace travels with the event, so a following page can apply it at once.
+        hub.publish(dict(type="workspace", **event))
         return jsonify(ok=True)
 
     @app.get("/api/workspace")
