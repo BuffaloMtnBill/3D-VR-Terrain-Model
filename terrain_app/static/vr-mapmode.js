@@ -24,7 +24,20 @@ const tileUrl=(template,z,x,y)=>template.replace('{s}','a').replace('{z}',z).rep
 export function createMapMode(ctx,{table}) {
   const world=new THREE.Group();world.name='VR map';world.visible=false;
   const room=new THREE.Group();room.name='VR selection box';room.visible=false;   // added to the rig: room units
-  const center=new THREE.Vector3(0,table.height,-table.distance);
+  // Where the box sits: placed 45° below your line of sight, straight ahead and facing you, when Map Selection
+  // opens (seated or standing alike). The map then only slides and turns on that level, never up or down.
+  const REACH=.55;
+  let center=new THREE.Vector3(0,table.height,-table.distance),heading=0,placed=false;
+  const anchor=new THREE.Group();anchor.name='VR selection box anchor';room.add(anchor);
+  function place(camera) {
+    const forward=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);forward.y=0;
+    if(forward.lengthSq()<1e-6)forward.set(0,0,-1);
+    forward.normalize();
+    heading=Math.atan2(-forward.x,-forward.z);
+    center=camera.position.clone().addScaledVector(forward,REACH);center.y=Math.max(.35,camera.position.y-REACH);
+    anchor.position.copy(center);anchor.rotation.set(0,heading,0);placed=true;
+  }
+  const poseKnown=camera=>camera.position.lengthSq()>.01;   // the headset has reported where you are
   let origin=null,box={w:BOX_ROOM_M,h:BOX_ROOM_M*.75,shape:'rectangle'},boxKey='',lastSet='',active=false,lastLod=0,lodStats={};
   // Relief: heights are kept in meters above sea level; `ref` (set from the first relief that arrives near the box)
   // is the height that sits at table level, and the lowest height seen sets the flat base layer just under it all.
@@ -196,7 +209,7 @@ export function createMapMode(ctx,{table}) {
   const labelCanvas=document.createElement('canvas');labelCanvas.width=1024;labelCanvas.height=128;
   const labelTexture=new THREE.CanvasTexture(labelCanvas);labelTexture.colorSpace=THREE.SRGBColorSpace;
   const label=new THREE.Mesh(new THREE.PlaneGeometry(.4,.05),new THREE.MeshBasicMaterial({map:labelTexture,transparent:true,depthTest:false}));
-  label.renderOrder=1001;room.add(label);
+  label.renderOrder=1001;anchor.add(label);
   function shapePath(w,h,shape,path=new THREE.Path()) {
     if(shape==='rectangle'){path.moveTo(-w/2,-h/2);path.lineTo(w/2,-h/2);path.lineTo(w/2,h/2);path.lineTo(-w/2,h/2);path.lineTo(-w/2,-h/2);}
     else path.absellipse(0,0,w/2,h/2,0,Math.PI*2,false,0);
@@ -204,7 +217,7 @@ export function createMapMode(ctx,{table}) {
   }
   function buildBox() {
     const key=`${box.w}:${box.h}:${box.shape}`;if(key===boxKey)return;boxKey=key;
-    for(const mesh of [outline,mask,walls])if(mesh){room.remove(mesh);mesh.geometry.dispose();}
+    for(const mesh of [outline,mask,walls])if(mesh){anchor.remove(mesh);mesh.geometry.dispose();}
     // The outline: a flat band 6 mm wide; the mask: the table around the box, dimmed (the page's frame does the same).
     const outer=new THREE.Shape();shapePath(box.w+.012,box.h+.012,box.shape,outer);outer.holes.push(shapePath(box.w,box.h,box.shape));
     outline=new THREE.Mesh(new THREE.ShapeGeometry(outer,64).rotateX(-Math.PI/2),ribbon);outline.renderOrder=1000;
@@ -212,14 +225,14 @@ export function createMapMode(ctx,{table}) {
     table.holes.push(shapePath(box.w,box.h,box.shape));
     mask=new THREE.Mesh(new THREE.ShapeGeometry(table,64).rotateX(-Math.PI/2),shade);mask.renderOrder=999;
     // ShapeGeometry's y becomes -z after rotateX: the box's "top" edge faces away from you, like north on the page.
-    for(const mesh of [outline,mask]){mesh.position.copy(center).setY(center.y+.002);room.add(mesh);}
+    for(const mesh of [outline,mask]){mesh.position.set(0,.002,0);anchor.add(mesh);}
     // Low glowing walls along the outline, so the box still reads where the relief rises around it.
     const points=shapePath(box.w,box.h,box.shape).getSpacedPoints(box.shape==='rectangle'?4*24:96),quads=[];
     for(let i=0;i<points.length-1;i++){const a=points[i],b=points[i+1];
       quads.push(a.x,-.03,-a.y,b.x,-.03,-b.y,a.x,.06,-a.y,a.x,.06,-a.y,b.x,-.03,-b.y,b.x,.06,-b.y);}
     walls=new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute(quads,3)),curtain);
-    walls.position.copy(center);walls.renderOrder=998;room.add(walls);
-    label.position.set(center.x,center.y+.004,center.z-box.h/2-.04);label.rotation.set(-Math.PI/2.6,0,0);
+    walls.renderOrder=998;anchor.add(walls);
+    label.position.set(0,.004,-box.h/2-.04);label.rotation.set(-Math.PI/2.6,0,0);
   }
   let labelText='';
   function drawLabel(text) {
@@ -241,8 +254,9 @@ export function createMapMode(ctx,{table}) {
     const cx=origin.x+c.x/origin.k,cy=origin.y+c.z/origin.k,hw=box.w*view.scale/2/origin.k,hh=box.h*view.scale/2/origin.k;
     const nw=fromMercator(cx-hw,cy-hh),se=fromMercator(cx+hw,cy+hh);
     const bounds={north:nw.lat,south:se.lat,west:nw.lng,east:se.lng};
-    // The box turns with the map the other way: the map turned by yaw puts the selection at -yaw.
-    const angle=Math.round(normalizeAngle(-view.yaw*180/Math.PI)*10)/10;
+    // The box turns with the map the other way: the map turned by yaw (and the box facing you) puts the selection at
+    // -(yaw + heading).
+    const angle=Math.round(normalizeAngle(-(view.yaw+heading)*180/Math.PI)*10)/10;
     if(angle)bounds.rotation_deg=angle;
     if(box.shape!=='rectangle')bounds.shape=box.shape;
     return bounds;
@@ -254,7 +268,7 @@ export function createMapMode(ctx,{table}) {
     const width=se.x-nw.x,height=se.y-nw.y;
     box={w:width>=height?BOX_ROOM_M:BOX_ROOM_M*width/height,h:height>width?BOX_ROOM_M:BOX_ROOM_M*height/width,shape:bounds.shape||'rectangle'};
     buildBox();
-    view.scale=width*origin.k/box.w;view.yaw=-rotationAngle(bounds)*Math.PI/180;
+    view.scale=width*origin.k/box.w;view.yaw=-rotationAngle(bounds)*Math.PI/180-heading;
     const c=new THREE.Vector3(((nw.x+se.x)/2-origin.x)*origin.k,0,((nw.y+se.y)/2-origin.y)*origin.k);
     view.position.copy(c).sub(center.clone().applyAxisAngle(new THREE.Vector3(0,1,0),view.yaw).multiplyScalar(view.scale));
     limits(view);
@@ -263,15 +277,17 @@ export function createMapMode(ctx,{table}) {
   function limits(view) {
     view.minScale=MIN_SIDE_M/Math.max(box.w,box.h);view.maxScale=MAX_SIDE_M/Math.max(box.w,box.h);
     view.size=Math.max(box.w,box.h)*view.scale;
-    view.position.y=-table.height*view.scale;   // the map stays on the table at every zoom
+    view.position.y=-center.y*view.scale;   // the map stays at the box's level at every zoom: never up or down
   }
   const km=meters=>meters>=1000?`${(meters/1000).toFixed(meters>=10000?0:1)} km`:`${Math.round(meters)} m`;
 
   // ---------- per frame ----------
   let previewAt=0;
-  function update(view,eye,{interacting}) {
+  function update(view,eye,{interacting,camera}) {
     if(!active)return;
     const selection=ctx.state.selection;
+    // Placed once the headset reports where you are (the first frames of a session may not know yet).
+    if(!placed&&camera&&poseKnown(camera)&&!interacting){place(camera);if(selection)fitView(view,selection);}
     // The page's selection changed without us (a search, a shape or aspect change, the computer): follow it.
     if(selection&&!interacting&&JSON.stringify(selection)!==lastSet)fitView(view,selection);
     limits(view);
@@ -280,7 +296,8 @@ export function createMapMode(ctx,{table}) {
       if(now-previewAt>150){previewAt=now;ctx.previewSelection?.(bounds);}
     }
     const meters=box.w*view.scale*metersPerPixel(fromMercator(origin.x,origin.y).lat)/origin.k;
-    drawLabel(`${km(meters)} × ${km(meters*box.h/box.w)}${view.yaw?` · ${Math.round(normalizeAngle(-view.yaw*180/Math.PI))}°`:''}`);
+    const turned=Math.round(normalizeAngle(-(view.yaw+heading)*180/Math.PI));
+    drawLabel(`${km(meters)} × ${km(meters*box.h/box.w)}${turned?` · ${turned}°`:''}`);
     const now=performance.now();
     if(now-lastLod>120){lastLod=now;updateTiles(eye);}
   }
@@ -292,8 +309,9 @@ export function createMapMode(ctx,{table}) {
     try{ctx.setSelection(bounds);lastSet=JSON.stringify(ctx.state.selection);}
     catch(error){ctx.notify(error.message,true);}
   }
-  function enter(view) {
+  function enter(view,camera) {
     active=true;world.visible=true;room.visible=true;
+    placed=false;if(camera&&poseKnown(camera))place(camera);
     if(!world.parent)ctx.scene.add(world);
     const selection=ctx.state.selection;
     if(selection){
@@ -320,5 +338,5 @@ export function createMapMode(ctx,{table}) {
     get relief(){return reliefOn;},
     set relief(on){reliefOn=Boolean(on);for(const tile of cache.values())tile.placed=null;},
     get active(){return active;},
-    get state(){return {active,origin,box,tiles:lodStats,relief:reliefOn,ref};}};
+    get state(){return {active,origin,box,tiles:lodStats,relief:reliefOn,ref,center:center.toArray(),heading,placed};}};
 }

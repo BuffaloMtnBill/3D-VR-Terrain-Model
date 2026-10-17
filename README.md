@@ -207,9 +207,11 @@ VR** button (**Full page** in the header shows everything; `?headset` shows the 
 VR has two modes, and works with tracked hands or controllers (put the controllers down and the Quest switches to
 hand tracking; your hands are drawn as see-through outlined hands that turn gold while you pinch).
 
-**Map Selection** (where VR starts) is the page's map and selection box in 3D. The box stays fixed on a table in
-front of you and the map moves beneath it, just as the page's map moves beneath its frame: whatever is under the box
-is the selection. The map is the topographic style, with hill shading and contour lines, drawn in tiles that get
+**Map Selection** (where VR starts) is the page's map and selection box in 3D. The box is placed 45° below your
+line of sight, straight ahead and facing you (about 55 cm out and 55 cm down, seated or standing), each time Map
+Selection opens; it stays there and the map moves beneath it, just as the page's map moves beneath its frame:
+whatever is under the box is the selection. The map only slides and turns at the box's level; nothing moves it up or
+down. The map is the topographic style, with hill shading and contour lines, drawn in tiles that get
 sharper the closer they are to your eyes: lean in, or zoom in, and finer tiles load (a coarse layer underneath means
 the map never shows holes while they arrive).
 

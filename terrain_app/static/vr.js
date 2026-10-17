@@ -183,7 +183,7 @@ export function createVR(ctx) {
     mode=next;
     hands.forEach(hand=>{hand.mode=null;});
     if(ctx.grid)ctx.grid.visible=false;   // the page's floor grid does not move with the world
-    if(mode==='map'){ctx.model.visible=false;mapMode.enter(view);}
+    if(mode==='map'){ctx.model.visible=false;mapMode.enter(view,camera);}
     else{mapMode.leave();ctx.model.visible=true;lastId=ctx.state.id;frameModel();}
     applyView();
   }
@@ -290,7 +290,7 @@ export function createVR(ctx) {
     hands.forEach(updateHand);
     watch.update();
     if(!updateGrab())fly(delta);
-    if(mode==='map')mapMode.update(view,toWorld(camera.position),{interacting:hands.some(busy)});
+    if(mode==='map')mapMode.update(view,toWorld(camera.position),{interacting:hands.some(busy),camera});
     applyView();
   }
 

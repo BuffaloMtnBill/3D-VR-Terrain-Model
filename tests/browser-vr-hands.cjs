@@ -97,10 +97,11 @@ async function openPage(browser,headset) {
     const h=window.xrDevice.hands[hand];h.position.set(...from);h.quaternion.set(q.x,q.y,q.z,q.w);
   },[hand,from,target]);
   const startSelection=(await vrState()).pageSelection;
-  await aimHand('right',[.25,1.2,-.3],[0,.75,-.8]);await frames();
+  const C=(await vrState()).map.center;
+  await aimHand('right',[.25,C[1]+.4,-.3],[C[0],C[1],C[2]]);await frames();
   await pinch('right',1);await frames();
   assert.equal((await vrState()).hands[1].mode,'pan','A pinch while pointing at the map takes it');
-  for(const x of [.03,.06,.1]){await aimHand('right',[.25,1.2,-.3],[x,.75,-.8]);await frames();}
+  for(const x of [.03,.06,.1]){await aimHand('right',[.25,C[1]+.4,-.3],[C[0]+x,C[1],C[2]]);await frames();}
   await pinch('right',0);await frames(6);
   const panned=(await vrState()).pageSelection;
   assert.ok((panned.west+panned.east)/2<(startSelection.west+startSelection.east)/2,'Sweeping the ray east drags the map east, so the selection moves west');

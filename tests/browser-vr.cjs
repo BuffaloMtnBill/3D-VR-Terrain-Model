@@ -53,15 +53,21 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
 
   // Enter VR: it starts in Map Selection, the page's map and selection box on the table.
   assert.equal(await page.isVisible('#enter-vr'),true,'The VR button shows when WebXR is available');
+  // Standing, looking down at the table: the box is placed 45° below the line of sight, straight ahead.
+  await page.evaluate(()=>{window.xrDevice.position.set(0,1.55,.05);const a=-.75;window.xrDevice.quaternion.set(Math.sin(a/2),0,0,Math.cos(a/2));});
   await page.click('#enter-vr');
   // waitForFunction does not await an async predicate, so keep a synchronous handle on the VR explorer.
   await page.evaluate(async()=>{const vr=await import('/static/vr.js');window.testVR=()=>vr.currentVR();});
   await page.waitForFunction(()=>window.testVR().presenting,null,{timeout:10000});
-  await page.evaluate(()=>{window.xrDevice.position.set(0,1.55,.05);const a=-.75;window.xrDevice.quaternion.set(Math.sin(a/2),0,0,Math.cos(a/2));});
   await pose('left',[-.4,1,.1]);await pose('right',[.4,1,.1]);
   await page.waitForFunction(()=>window.testVR().state.map.tiles.shown>20,null,{timeout:30000});
   let state=await vrState();
   assert.equal(state.mode,'map','VR starts in Map Selection');
+  const C=state.map.center;
+  near(C[1],1.55-.55,.03,'The box sits 55 cm below your eyes');
+  near(C[2],.05-.55,.03,'and 55 cm ahead: 45° below your line of sight');
+  near(state.map.heading,0,1e-6,'facing you');
+  const onTable=x=>[C[0]+x,C[1],C[2]];
   const start=state.pageSelection;
   for(const key of ['north','south','west','east'])assert.ok(Math.abs(state.map.selection[key]-start[key])<1e-6,`The box covers the page's selection (${key})`);
   assert.ok(tileRequests.some(address=>address.includes('opentopomap')),'The map is the topographic style (shading and contours)');
@@ -70,7 +76,7 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   // Leaning in loads finer tiles near your eyes.
   const deepest=s=>Math.max(...Object.keys(s.map.tiles.zooms).map(Number));
   const far=deepest(state);
-  await page.evaluate(()=>window.xrDevice.position.set(0,.95,-.5));
+  await page.evaluate(C=>window.xrDevice.position.set(C[0],C[1]+.25,C[2]+.12),C);
   await page.waitForFunction(far=>Math.max(...Object.keys(window.testVR().state.map.tiles.zooms).map(Number))>far,far,{timeout:20000});
   await page.evaluate(()=>window.xrDevice.position.set(0,1.55,.05));await frames(6);
 
@@ -98,10 +104,10 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   // Dragging the map with the ray: the map moves under the box, so the selection moves the other way.
   const metersPerDegree=111320*Math.cos(center(start).y*Math.PI/180);
   state=await vrState();
-  await aimAt('right',[.25,1.2,-.3],[0,.75,-.8]);await frames();
+  await aimAt('right',[.25,1.2,-.3],onTable(0));await frames();
   await button('right','trigger',1);await frames();
   assert.equal((await vrState()).hands[1].mode,'pan','Pointing at the map and pulling the trigger takes the map');
-  for(const x of [.03,.06,.1]){await aimAt('right',[.25,1.2,-.3],[x,.75,-.8]);await frames();}
+  for(const x of [.03,.06,.1]){await aimAt('right',[.25,1.2,-.3],onTable(x));await frames();}
   await button('right','trigger',0);await frames(6);
   const moved=(await vrState()).pageSelection;
   near((center(moved).x-center(start).x)*metersPerDegree,-.1*state.scale,.1*state.scale*.05,'Dragging the map 10 cm east moves the selection 10 cm of ground west');
@@ -111,6 +117,10 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   // Both hands: apart zooms in (the box covers less ground), turning turns the selection.
   await pose('left',[-.1,1.1,-.5]);await pose('right',[.1,1.1,-.5]);await frames();
   await button('left','trigger',1);await button('right','trigger',1);await frames();
+  await pose('left',[-.2,1.1,-.5]);await pose('right',[.2,1.1,-.5]);await frames();
+  // Lifting both hands does not lift the map: it stays at the box's level.
+  await pose('left',[-.2,1.3,-.5]);await pose('right',[.2,1.3,-.5]);await frames();
+  state=await vrState();near(state.position[1]/state.scale,-C[1],1e-6,'The map never moves up or down');
   await pose('left',[-.2,1.1,-.5]);await pose('right',[.2,1.1,-.5]);await frames();
   await pose('left',[0,1.1,-.3]);await pose('right',[0,1.1,-.7]);await frames();
   await button('left','trigger',0);await button('right','trigger',0);await frames(6);
@@ -124,14 +134,15 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await press('watch:face');await press('radial:root:10');await press('radial:center');
   await page.waitForFunction(()=>window.testVR().state.map.relief&&window.testVR().state.map.tiles.reliefSpan>0,null,{timeout:60000});
   const reliefFrom=(await vrState()).pageSelection;
-  await aimAt('right',[.25,1.2,-.3],[0,.75,-.8]);await frames();
+  await aimAt('right',[.15,C[1]+.5,C[2]+.35],onTable(0));await frames();
   await button('right','trigger',1);await frames();
-  for(const x of [.03,.06,.1]){await aimAt('right',[.25,1.2,-.3],[x,.75,-.8]);await frames();}
+  for(const x of [.03,.06,.1]){await aimAt('right',[.15,C[1]+.5,C[2]+.35],onTable(x));await frames();}
   await button('right','trigger',0);await frames(6);
   const reliefTo=(await vrState()).pageSelection,scaleNow=(await vrState()).scale;
-  // The map is turned by now, so check the distance: about the 10 cm swept (more or less with the hills' height).
+  // The map is turned by now, so check the distance. A drag holds the height where it took the map, so over a hill
+  // the same sweep of the ray moves the map less than at table level: some way short of the 10 cm swept.
   const movedMeters=Math.hypot((center(reliefTo).x-center(reliefFrom).x)*metersPerDegree,(center(reliefTo).y-center(reliefFrom).y)*111320);
-  assert.ok(movedMeters>.05*scaleNow&&movedMeters<.2*scaleNow,`Dragging over the relief moves the map too (${Math.round(movedMeters)} m at ${Math.round(scaleNow)} m per room meter)`);
+  assert.ok(movedMeters>.02*scaleNow&&movedMeters<.12*scaleNow,`Dragging over the relief moves the map too (${Math.round(movedMeters)} m at ${Math.round(scaleNow)} m per room meter)`);
 
   // The watch on the left controller (the left wrist with hands): pointing at it and pulling the trigger opens a
   // radial menu of the map generator's options, each one the page's own control.
@@ -262,8 +273,13 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   // Back to the map from the right wrist.
   await pose('right',[.15,1.2,-.3]);await pose('left',[-.3,1.1,-.1]);await frames(6);
   assert.equal((await vrState()).watch.buttonLabel,'◀ Map');
+  await page.evaluate(()=>{const turn=Math.PI/4;window.xrDevice.quaternion.set(0,Math.sin(turn),0,Math.cos(turn));});   // now facing left
   await pressWrist();
-  assert.equal((await vrState()).mode,'map','◀ Map returns to Map Selection');
+  state=await vrState();
+  assert.equal(state.mode,'map','◀ Map returns to Map Selection');
+  near(state.map.heading,Math.PI/2,1e-3,'The box is placed in front of you again, wherever you face');
+  near(state.map.center[0],-.55,.03,'(a quarter turn to the left puts it to the left)');
+  await page.evaluate(()=>{const a=-.75;window.xrDevice.quaternion.set(Math.sin(a/2),0,0,Math.cos(a/2));});
 
   // Nothing can be saved from VR: an export started anyway writes nothing.
   const downloads=[];page.on('download',d=>downloads.push(d));
