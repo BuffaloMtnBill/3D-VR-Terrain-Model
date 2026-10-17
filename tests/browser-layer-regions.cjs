@@ -1,5 +1,5 @@
 /* Focused test for the viewpoint distance number line and decorative clouds. */
-const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright');
+const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright-core');
 const assert=require('node:assert/strict');
 const url=process.env.TERRAIN_TEST_URL||'http://127.0.0.1:8021';
 (async()=>{

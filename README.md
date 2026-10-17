@@ -923,11 +923,25 @@ saved colors, mapped surface classes, closed color-part partitions, 3MF
 materials and assemblies, and
 the actual bundled Roan Mountain mesh.
 
-An optional browser test is in `tests/browser.cjs`. With Playwright installed,
-start the separate fixture server with `python scripts/browser_fixture_server.py`
-(port 8001), then run `node tests/browser.cjs`. This server supplies synthetic
-land-cover regions for tests and never alters the production app on port 8000. Set `TERRAIN_PLAYWRIGHT_PATH`
-to the Playwright package directory if it is installed outside this project.
+The browser tests (`tests/browser*.cjs`) drive a real Chromium with Playwright; the VR ones also use Meta's IWER
+WebXR emulator. Both are pinned in `package.json`. Set up once (Node.js 18 or newer), then run them all:
+
+```bash
+npm install          # Playwright and IWER, into node_modules/
+npm run setup        # Playwright's Chromium (about 120 MB, shared in ~/.cache/ms-playwright)
+npm test             # starts the fixture server, runs every browser test, prints a summary, stops the server
+npm test -- vr hands # only some: tests/browser-vr.cjs and tests/browser-vr-hands.cjs (`main` is tests/browser.cjs)
+```
+
+`npm test` runs `scripts/run-browser-tests.cjs`: it starts `scripts/browser_fixture_server.py` with the project's
+`.venv` Python on port 8001 (`TERRAIN_TEST_PORT` picks another), runs each test against it in turn, and exits
+non-zero if any fails. The fixture server supplies fixed landscapes and synthetic land-cover regions and never
+alters the production app on port 8000; the tests intercept map tiles, geocoding, and feature requests, while
+elevation still goes through the server's normal tile cache (the first run downloads some). A single test can also be
+run by hand against a fixture server you started: `node tests/browser-water.cjs`. `TERRAIN_PLAYWRIGHT_PATH` and
+`TERRAIN_IWER_PATH` point at packages installed elsewhere.
+
+`node tests/browser.cjs` is the main page test.
 Run `node tests/browser-water.cjs` against the same server to verify USGS/OSM
 switching, cached sources, saved preferences, and late-response handling.
 `node tests/browser-studio.cjs` covers the 3D model design page and `node tests/browser-silhouette.cjs`

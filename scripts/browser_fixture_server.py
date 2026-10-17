@@ -85,5 +85,6 @@ for source, client in app.extensions["terrain"]["clients"].items():
     client.fetch = shape_terrain
 
 if __name__ == "__main__":
-    print("TEST FIXTURES ONLY: http://127.0.0.1:8001", flush=True)
-    app.run(host="127.0.0.1", port=8001, debug=False, threaded=True)
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8001   # scripts/run-browser-tests.cjs may pick another
+    print(f"TEST FIXTURES ONLY: http://127.0.0.1:{port}", flush=True)
+    app.run(host="127.0.0.1", port=port, debug=False, threaded=True)

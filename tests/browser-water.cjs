@@ -1,5 +1,5 @@
 /* Run against scripts/browser_fixture_server.py; no public services are queried. */
-const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright');
+const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright-core');
 const assert=require('node:assert/strict');
 
 (async()=>{

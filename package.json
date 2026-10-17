@@ -1,0 +1,13 @@
+{
+  "name": "3d-vr-terrain-browser-tests",
+  "private": true,
+  "description": "Browser tests for 3D-VR-Terrain: Playwright, and Meta's IWER emulator for the VR tests",
+  "scripts": {
+    "setup": "playwright-core install chromium",
+    "test": "node scripts/run-browser-tests.cjs"
+  },
+  "devDependencies": {
+    "iwer": "2.6.0",
+    "playwright-core": "1.64.1"
+  }
+}

@@ -1,7 +1,7 @@
 /* Profile modes end-to-end test: run scripts/browser_fixture_server.py (port 8019) first.
  * TERRAIN_PLAYWRIGHT_PATH points at a Playwright package; TERRAIN_CHROMIUM_PATH at a Chromium binary if needed.
  */
-const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright');
+const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright-core');
 const assert=require('node:assert/strict');
 
 const url=process.env.TERRAIN_TEST_URL||'http://127.0.0.1:8019';

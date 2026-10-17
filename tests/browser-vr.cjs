@@ -2,7 +2,7 @@
  * TERRAIN_PLAYWRIGHT_PATH points at a Playwright package, TERRAIN_IWER_PATH at the IWER WebXR emulator's
  * build/iwer.min.js (npm package "iwer"), and TERRAIN_CHROMIUM_PATH at a Chromium binary if needed.
  */
-const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright');
+const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright-core');
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
 const path=require('node:path');

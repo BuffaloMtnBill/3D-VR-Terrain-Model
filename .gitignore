@@ -7,3 +7,4 @@ build/
 dist/
 test-results/
 *.kate-swp
+node_modules/

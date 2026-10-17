@@ -1,5 +1,5 @@
 /* Circle/oval explorer selection and transfer into 3D model design. Uses the fixture server's synthetic round terrains. */
-const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright');
+const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright-core');
 const assert=require('node:assert/strict');
 // The page fetches the surface in binary; the same request as JSON is easier to check.
 const surfaceJSON=async(page,response)=>(await page.request.get(response.url().replace('format=binary','format=json'))).json();

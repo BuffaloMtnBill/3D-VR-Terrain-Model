@@ -1,5 +1,5 @@
 /* Direct silhouette ridge editing. Run scripts/browser_fixture_server.py first. */
-const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright');
+const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright-core');
 const assert=require('node:assert/strict');
 const path=require('node:path');
 const fs=require('node:fs/promises');

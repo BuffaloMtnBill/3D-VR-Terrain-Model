@@ -2,7 +2,7 @@
  * Run scripts/browser_fixture_server.py (port 8001) first; TERRAIN_PLAYWRIGHT_PATH, TERRAIN_IWER_PATH, and
  * TERRAIN_CHROMIUM_PATH as for tests/browser-vr.cjs.
  */
-const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright');
+const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright-core');
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
 const path=require('node:path');

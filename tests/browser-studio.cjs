@@ -3,7 +3,7 @@
  * Studio endpoints are used when the server has them; on a 404 the test answers with a fixture from the spec,
  * so the UI flow is tested either way (exports then fall back to the original /api/export endpoint).
  */
-const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright');
+const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright-core');
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
 const path=require('node:path');
