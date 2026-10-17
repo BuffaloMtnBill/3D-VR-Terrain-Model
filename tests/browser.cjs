@@ -380,7 +380,7 @@ async function main() {
   for(const method of ['local','lowland']) {
     const surface=page.waitForResponse(response=>response.url().includes('/api/terrain/')&&response.url().includes('relief='+method));
     await page.locator('#relief-method').selectOption(method);
-    const body=await (await surface).json();
+    const body=await (await page.request.get((await surface).url().replace('format=binary','format=json'))).json();
     assert.equal(body.relief,method);assert.equal(body.true_elevations.length,body.elevations.length);
     assert.equal(await page.locator('#relief-strength-block').isVisible(),true);
     assert.notEqual(await canvasImage(),standardScene,method+' must reshape the rendered model');

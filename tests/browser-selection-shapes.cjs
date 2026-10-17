@@ -1,6 +1,8 @@
 /* Circle/oval explorer selection and transfer into 3D model design. Uses the fixture server's synthetic round terrains. */
 const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright');
 const assert=require('node:assert/strict');
+// The page fetches the surface in binary; the same request as JSON is easier to check.
+const surfaceJSON=async(page,response)=>(await page.request.get(response.url().replace('format=binary','format=json'))).json();
 const fs=require('node:fs/promises');
 const path=require('node:path');
 const url=process.env.TERRAIN_TEST_URL||'http://127.0.0.1:8001';
@@ -59,7 +61,7 @@ function glbPositions(bytes) {
     let response=page.waitForResponse(r=>/\/api\/terrain\/[^/?]+(?:\?|$)/.test(r.url())&&r.request().method()==='GET');
     await page.locator('#generate').click();
     assert.deepEqual((await request).postDataJSON().bounds,bounds);
-    const surface=await (await response).json();
+    const surface=await surfaceJSON(page,await response);
     assert.equal(surface.bounds.shape,'oval');assert.ok(Math.abs(surface.bounds.rotation_deg-25)<1);
     assert.equal(surface.footprint.length,128);
     await page.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('oval footprint'));
@@ -84,7 +86,7 @@ function glbPositions(bytes) {
     await page.locator('#selection-shape').selectOption('circle');
     response=page.waitForResponse(r=>/\/api\/terrain\/[^/?]+(?:\?|$)/.test(r.url())&&r.request().method()==='GET');
     await page.locator('#generate').click();
-    const circle=await (await response).json();assert.equal(circle.width_m,circle.height_m);
+    const circle=await surfaceJSON(page,await response);assert.equal(circle.width_m,circle.height_m);
     await page.waitForFunction(()=>document.getElementById('scene-detail').textContent.includes('circle footprint'));
     await page.evaluate(()=>window.scrollTo(0,0));
     await page.screenshot({path:path.join(output,'selection-circle-explorer.png')});

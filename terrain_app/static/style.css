@@ -181,3 +181,6 @@ label.route-option { justify-content: flex-start; }
 @keyframes ridge-pulse { 0%, 100% { stroke-width: 5px; stroke-opacity: 1; } 50% { stroke-width: 8px; stroke-opacity: .55; } }
 .ridge-pulse { animation: ridge-pulse 1.8s ease-in-out infinite; filter: drop-shadow(0 0 3px rgba(255, 240, 200, .55)); }
 @media (prefers-reduced-motion: reduce) { .ridge-pulse { animation: none; } }
+.scene-tools .vr-button{font-size:11px;font-weight:650;letter-spacing:.5px}
+#live-status.offline{color:#a0603a}#live-status.offline i{background:#c98a4b;animation:live-blink 1.2s infinite}@keyframes live-blink{50%{opacity:.25}}
+.live-offer{position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:5;display:flex;align-items:center;gap:12px;background:#fbfcf7;border:1px solid var(--line);padding:8px 10px 8px 14px;font-size:12px;box-shadow:0 6px 18px rgba(0,0,0,.18);max-width:calc(100% - 32px)}.live-offer .button{padding:7px 12px;font-size:12px}

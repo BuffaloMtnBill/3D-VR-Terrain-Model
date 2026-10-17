@@ -1,4 +1,10 @@
-# Terrain Studio · 3D Map Extractor
+# 3D-VR-Terrain
+
+A fork of [Terrain Studio · 3D Map Extractor](https://github.com/BuffaloMtnBill/3D-Map-Extractor) built around an
+integrated 3D workflow: the terrain is explored and edited in a VR headset as well as on the page. For safety,
+the VR side cannot save a model anywhere: there is no Save menu in VR, and the server has no endpoint that
+writes uploaded files to disk.
+
 
 A Python application that turns a rectangle on OpenStreetMap into an interactive
 3D terrain model. A fixed, resizable frame selects the map area beneath it.
@@ -161,6 +167,83 @@ The Famous landscapes list comes from `terrain_app/data/DefaultProfiles.txt`.
 | Elevation | Top-down elevation color map, in the selected frame's orientation |
 | Profile | A movable geographic cross-section, showing unexaggerated elevations |
 | Map features | Optional OSM geometry draped over the terrain; railways have two rails and ties, boundaries use dashed lines, and water areas retain islands. Checkboxes on the geography page, colors in the Colors card |
+| VR | Opens the model in a VR headset (shown only where WebXR is available); see [VR explorer](#vr-explorer) |
+
+## VR explorer
+
+The **VR** button in the 3D preview opens the terrain in a WebXR headset such as a Meta Quest. Headset browsers
+allow VR only on secure (HTTPS) pages, so start the server in LAN mode on the computer that runs it:
+
+```bash
+python app.py --lan
+```
+
+It serves HTTPS on every network interface with a self-signed certificate made for this computer's addresses,
+trusts those addresses as hosts, and prints the address to open, such as `https://192.168.0.177:8000`. Open it in
+the headset's browser and accept the certificate warning once (choose **Advanced → Proceed**). The certificate is
+kept with the cache and made again only when the computer's addresses change. Allow the port through the
+computer's firewall if the headset cannot connect.
+
+**Pairing.** In LAN mode every other device pairs once: the first visit shows a PIN page, and the 6-digit PIN is
+printed in the terminal and shown in the page header on the computer itself (HEADSET PIN). A paired device keeps a
+cookie and is remembered across server restarts; the computer stores only hashes of those cookies. Five wrong PINs
+pause pairing for a minute. The PIN is new each run unless `TERRAIN_PAIRING_PIN` sets it, and
+`python app.py --lan --forget-devices` unpairs every device. Pages on the computer itself never need pairing.
+
+**Live link.** Every open page keeps a WebSocket to the server (the LIVE badge in the header). Generation progress
+arrives over it instead of by polling, and terrain generated on one device is offered on the others: the page shows
+**Open it**, and a headset in VR opens it straight away. The link reconnects by itself when a headset wakes from
+sleep, comes back into Wi-Fi range, or the server restarts (the badge shows RECONNECTING meanwhile, and the VR menu
+says so); data requests retry too, and a terrain being generated is picked up where it left off.
+
+**Compact surfaces.** The page fetches the terrain as float32 grids (`/api/terrain/<id>?format=binary`), gzipped:
+about a third of the JSON size and no number parsing on the headset. In VR the surface is drawn in tiles of 48 × 48
+grid cells that share the page's buffers, so at life size the ground out of view is not drawn.
+
+The model starts as a 1 m tabletop model in front of you. Hands and controllers both work; put the controllers
+down and the headset switches to hand tracking (your hands are drawn as joint dots).
+
+| Hands | Controllers | Effect |
+| --- | --- | --- |
+| Pinch (thumb and index) in open air | One trigger | Grab the world and drag it |
+| Pinch with both hands, apart / together | Both triggers, apart / together | Zoom in / out around your hands, from a model 8 cm across to life size |
+| Pinch with both hands, turn them | Both triggers, turn your hands | Turn the world about the vertical, as if holding it |
+| Turn a palm toward you, tap **Menu** above it with the other index finger | A or X | Open or close the menu |
+| Point at the menu and pinch | Trigger on the menu | Press buttons and drag sliders |
+| — | Thumbstick | Fly toward where that hand points, at the same room speed at every zoom |
+
+The menu has the page's own controls in three tabs.
+
+**Cut** is where the selection is chosen. It replaces the model with the surroundings of the cut (an area three
+times its size, loaded at 160 points per side) and draws the cut as a glowing fence, with the ground outside it
+dimmed. Five handles float above the fence; pinch one where it is (or point at it and pinch) and drag:
+
+| Handle | Effect |
+| --- | --- |
+| Middle | Move the cut |
+| East side / south side | Stretch the width / height (about the middle) |
+| Corner | Scale the whole cut, keeping its proportions |
+| Ring beyond the north side | Turn the cut (snaps back to north-up within 2°) |
+
+Each drag sets the page's own selection, so the map frame, shape (rectangle, circle, oval) and aspect buttons
+stay in step, and the tab has those too, with the elevation multiplier, model size, and terrain detail. Moving the
+cut past the loaded surroundings loads new ones around it. **Generate this cut** makes the model and shows it.
+
+**Terrain** has the famous landscapes, elevation source, terrain detail, Generate terrain, the View and Colors
+buttons, the elevation profile, the elevation multiplier, base thickness and contour lines. **Map layers** has every
+map-feature switch and detail setting, and Save as default (the page's style preferences, kept in the browser).
+The menu changes the page's real inputs. **Reset view** brings back the tabletop model and **Exit VR** returns to
+the page.
+
+**From the headset to the computer.** While you work in VR, the headset hands its workspace to the server: the
+cut, its name, the elevation source and detail, every model and map-layer setting, the model size, and the
+generated terrain. It is kept in the server's memory only, never on disk. When you take the headset off (or exit
+VR), the page on the computer offers **Continue here**; it sets the same cut on the map, applies the settings, and
+opens the same model, ready to export with the page's usual export. A page opened later shows the offer too, for
+two hours.
+
+Models cannot be saved from VR. An export started while in VR is refused, and nothing is written to the
+server computer.
 
 ## Elevation profile
 
@@ -787,11 +870,12 @@ Optional environment variables:
 | `TERRAIN_MAP_TILE_URL` | Alternative map provider URL with `{z}`, `{x}`, `{y}` placeholders |
 | `TERRAIN_MAP_ATTRIBUTION` | Attribution HTML for that provider |
 | `TERRAIN_MAP_MAX_NATIVE_ZOOM` | Highest native zoom of the terrain provider; defaults to 17 |
+| `TERRAIN_PAIRING_PIN` | Fixed 6-digit pairing PIN for `--lan`; a new random one each run by default |
 | `TERRAIN_TRUSTED_HOSTS` | Comma-separated allowed hosts; defaults to localhost, 127.0.0.1, and [::1] |
 
 The default server binds to loopback. This is a local workstation app, not a
-multi-user hosted service. For LAN access, use `--host 0.0.0.0` and explicitly add
-your machine's hostname/IP to `TERRAIN_TRUSTED_HOSTS`.
+multi-user hosted service. For LAN access, use `--lan` (HTTPS, as the [VR explorer](#vr-explorer) needs),
+or `--host 0.0.0.0` and explicitly add your machine's hostname/IP to `TERRAIN_TRUSTED_HOSTS`.
 
 To refresh the bundled terrain for the first famous landscape from the live elevation service:
 
@@ -827,6 +911,11 @@ switching, cached sources, saved preferences, and late-response handling.
 the silhouette design page (the shared slice, text and mount settings, STL and SVG downloads, saved settings).
 `node tests/browser-ridge-edit.cjs` checks curve dragging, cancellation, multi-ridge deletion, Undo/Redo, exports, and saved edits.
 `node tests/browser-selection-shapes.cjs` checks circle/oval border dragging, rotation, generation, the 3D design handoff, and clipped GLB exports. The fixture server uses synthetic elevations for round selections.
+`node tests/browser-vr.cjs` drives the VR explorer on an emulated Meta Quest 3 (the `iwer` npm package; set
+`TERRAIN_IWER_PATH` to its `build/iwer.min.js` if it is installed elsewhere). It flies, grabs, zooms, and turns,
+uses the menu's switches, slider, and buttons, checks the tiled surface and that the live link reconnects, and checks that nothing can be saved from VR.
+`node tests/browser-vr-hands.cjs` does the hand-tracking workflow: pinch to grab, the palm menu, the Cut tab's
+handles (move, stretch, scale, turn), Generate this cut, then **Continue here** and an STL export on a second page.
 Set `TERRAIN_CHROMIUM_PATH` when using an existing Chromium executable.
 The test intercepts map, ZIP, and feature requests with fixtures, exercises ZIP
 navigation and errors, two-point alignment with mouse/touch, cancellation,

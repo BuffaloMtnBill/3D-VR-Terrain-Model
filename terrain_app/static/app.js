@@ -9,6 +9,8 @@ import {buildFeatures,buildRoute,disposeFeatures,featureLabels,filterFeatures} f
 import {paintSurface,coverLabels} from './print-palette.js';
 import {createStudio} from './print-studio.js';
 import {createSilhouette} from './silhouette.js';
+import {createVR} from './vr.js';
+import {createLive} from './live.js';
 
 const $ = id => document.getElementById(id);
 const presets = {};
@@ -21,7 +23,7 @@ const paletteStops = {
 const ramps = Object.fromEntries(Object.entries(paletteStops).map(([key, stops]) => [key, stops.map(hex => new THREE.Color(hex))]));
 const state = {selection:null, selectionError:null, palette:'alpine', view:'relief', mapStyle:'terrain', data:null, id:null, loading:false, name:'', surfaceVersion:0};
 let map, mapLayer, selectionFrame, profileMapLine, renderer, scene, camera, perspective, orthographic, controls, sun, grid, model, topMesh, baseMesh, mapTexture, featureGroup;
-let toastTimer, sceneReady = false, lastMapError = 0, studio = null, silhouette = null;
+let toastTimer, sceneReady = false, lastMapError = 0, studio = null, silhouette = null, vr = null, live = null, offered = null;
 let featureData=null,featureRequest=null,featureError=null,placeRequest=null;
 let waterSourceChosen=false;
 const featureCache=new Map();
@@ -47,8 +49,22 @@ function notify(message, error=false) {
   toastTimer = setTimeout(() => { $('toast').hidden = true; }, error ? 8500 : 4500);
 }
 
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// Reads (GET) ride out a dropped connection, such as a headset waking up, by retrying a few times.
+async function reach(path, options={}) {
+  const reads = !options.method || options.method === 'GET';
+  for (let attempt = 0; ; attempt++) {
+    try { return await fetch(path, options); }
+    catch (error) {
+      if (!reads || attempt >= 4) throw new Error('Cannot reach the server. Check that it is running and this device is on the network.');
+      await pause(500 * 2 ** attempt);
+    }
+  }
+}
+
 async function api(path, options={}) {
-  const response = await fetch(path, options);
+  const response = await reach(path, options);
   if (!response.ok) {
     let message = `Request failed (${response.status}).`;
     try { message = (await response.json()).error || message; } catch { /* HTTP errors may not be JSON. */ }
@@ -242,9 +258,16 @@ function setupScene() {
   // Draw only while something is changing; an idle model costs no GPU time.
   controls.addEventListener('change',requestRender);
   for(const type of ['input','change','click','keydown','pointerup'])document.addEventListener(type,requestRender,true);
+  vr=createVR({renderer,scene,SCALE,notify,requestRender,api,fetchSurface,handoff,get model(){return model;},get surface(){return topMesh;},get state(){return state;},get live(){return live;},
+    source:()=>$('elevation-source').value,exaggeration:()=>Number($('exaggeration').value),
+    // The VR cut sets the page's selection, exactly as dragging the map frame would.
+    setSelection:bounds=>{updateSelection(bounds,true,true);if(vr?.presenting)handoff();}});
+  vr.attachButton($('enter-vr'));
   let previous=performance.now();
   renderer.setAnimationLoop(now=>{
     const delta=Math.min((now-previous)/1000,.05); previous=now;
+    // A headset draws every frame, from its own camera.
+    if(vr.presenting){vr.update(delta);renderer.render(scene,vr.camera);return;}
     const moved=controls.update(delta);
     if(moved||controls.autoRotate||now<renderUntil)renderer.render(scene,camera);
   });
@@ -254,7 +277,7 @@ let renderUntil=0;
 function requestRender() {renderUntil=performance.now()+400;}
 
 function resizeScene() {
-  if(!renderer) return;
+  if(!renderer||renderer.xr.isPresenting) return;
   requestRender();
   const width=$('scene-container').clientWidth,height=$('scene-container').clientHeight;
   if(!width||!height) return;
@@ -442,9 +465,25 @@ function updateElevationCredit() {
   link.textContent=`${state.data.source} ↗`; link.href=state.data.source_url;
 }
 
+// The surface arrives as float32 grids after a JSON header (see binary_terrain in server.py), not as JSON numbers.
+async function fetchSurface(path) {
+  const response=await reach(path);
+  if(!response.ok) {
+    let message=`Request failed (${response.status}).`;
+    try{message=(await response.json()).error||message;}catch{/* HTTP errors may not be JSON. */}
+    throw new Error(message);
+  }
+  const buffer=await response.arrayBuffer(),length=new DataView(buffer).getUint32(0,true);
+  const data=JSON.parse(new TextDecoder().decode(new Uint8Array(buffer,4,length)));
+  const count=data.rows*data.columns;let offset=4+length;
+  for(const name of data.arrays){data[name]=new Float32Array(buffer,offset,count);offset+=count*4;}
+  delete data.arrays;
+  return data;
+}
+
 async function loadSurface(id, reset=false, loadedName=null) {
   const version=++state.surfaceVersion;
-  const data=await api(`/api/terrain/${id}?relief=${$('relief-method').value}&relief_strength=${$('relief-strength').value}`);
+  const data=await fetchSurface(`/api/terrain/${id}?relief=${$('relief-method').value}&relief_strength=${$('relief-strength').value}&format=binary`);
   if(version!==state.surfaceVersion) return;
   const changedArea=state.id!==id;
   state.id=id; state.data=data;
@@ -666,19 +705,102 @@ async function generateTerrain() {
   $('progress').value=0; $('job-message').textContent='Preparing terrain…';
   const selectedName=state.name;
   try {
-    const result=await api('/api/terrain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bounds:state.selection,resolution:Number($('resolution').value),source:$('elevation-source').value})});
-    let status;
-    do {
-      await new Promise(resolve=>setTimeout(resolve,450));
-      status=await api(`/api/jobs/${result.id}`);
-      $('progress').value=status.progress; $('job-message').textContent=status.message;
-      if(status.state==='error') throw new Error(status.message);
-    } while(status.state!=='ready');
+    const result=await api('/api/terrain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bounds:state.selection,resolution:Number($('resolution').value),source:$('elevation-source').value,name:selectedName})});
+    state.jobId=result.id;
+    await followJob(result.id);
     await loadSurface(result.id,true,selectedName);
     $('selection-state').textContent=sameBounds(state.selection,state.data.bounds)?'Terrain generated':'Generate to update';
     notify('Your terrain is ready. Explore the view or export your model.');
+    if(vr?.presenting)handoff(true);
   } catch(error) { notify(error.message,true); $('job-message').textContent=error.message; }
   finally { state.loading=false; $('generate').disabled=Boolean(state.selectionError); if(state.data) setTimeout(()=>{$('job-progress').hidden=true;},1500); }
+}
+
+// Progress arrives over the live link; the job is also checked now and then, and whenever the link comes back,
+// so a dropped connection or a sleeping headset never leaves the page waiting on an event it missed.
+async function followJob(id) {
+  let status={state:'queued'},checked=0;
+  while(status.state!=='ready') {
+    const event=live?await live.next(e=>e.type==='job'&&e.id===id||e.type==='reconnected',live.connected?3000:450):(await pause(450),null);
+    if(event?.type==='job')status=event;
+    if(!event||event.type==='reconnected'||performance.now()-checked>3000) {
+      try{status=await api(`/api/jobs/${id}`);checked=performance.now();}
+      catch(error){
+        if(/expired/.test(error.message))throw new Error('The server restarted or forgot this terrain. Generate it again.');
+        $('job-message').textContent='Reconnecting to the server…';continue;
+      }
+    }
+    $('progress').value=status.progress; $('job-message').textContent=status.message;
+    if(status.state==='error') throw new Error(status.message);
+  }
+}
+
+// Live events from the server: terrain generated on another device (the PC or the headset) can be opened here,
+// and the headset's whole workspace (cut, scale, settings, model) can be continued on the computer.
+function liveEvent(event) {
+  if(event.type==='terrain'&&event.id!==state.jobId&&event.id!==state.id&&offered?.type!=='workspace') {
+    if(vr?.presenting&&!state.loading){openTerrain(event);return;}
+    offer(event,`New terrain from another device: ${event.name||'unnamed area'}`,'Open it');
+  }
+  if(event.type==='workspace'&&event.page!==pageId&&!vr?.presenting)
+    offer(event,`From the headset: ${event.name||'your cut'}${event.terrain_id?'':' (not generated yet)'}`,'Continue here');
+  if(event.type==='reconnected'&&event.restarted&&state.data&&state.id!=='example')
+    notify('The server restarted. The model here still works; generate again before exporting or changing its detail.',true);
+}
+
+function offer(event,text,action) {
+  offered=event;
+  $('live-offer-text').textContent=text;$('live-offer-open').textContent=action;
+  $('live-offer').hidden=false;
+}
+
+async function openTerrain(event) {
+  $('live-offer').hidden=true;offered=null;
+  try{await loadSurface(event.id,true,event.name||null);notify(`Opened ${event.name||'the new terrain'} from another device.`);}
+  catch(error){notify(error.message,true);}
+}
+
+// ---------- handoff: the headset's workspace, continued on the computer ----------
+const pageId=Math.random().toString(36).slice(2);
+const handoffInputs=()=>[...styleInputs(),$('resolution'),$('elevation-source')];
+function workspace() {
+  return {page:pageId,name:state.loadedName&&state.data&&sameBounds(state.selection,state.data.bounds)?state.loadedName:state.name,
+    place:$('place').value,selection:state.selection,terrain_id:state.data&&state.id!=='example'&&sameBounds(state.selection,state.data.bounds)?state.id:null,
+    palette:state.palette,controls:controlValues(handoffInputs()),export_size:Number($('export-size').value)};
+}
+let handoffTimer=null;
+// Sent while in VR (and at once when the headset comes off); kept only in the server's memory.
+function handoff(now=false) {
+  clearTimeout(handoffTimer);
+  const send=()=>{if(state.selection&&!state.selectionError)api('/api/workspace',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(workspace())}).catch(()=>{});};
+  if(now)send();else handoffTimer=setTimeout(send,1200);
+}
+
+async function continueWorkspace(w) {
+  $('live-offer').hidden=true;offered=null;
+  try {
+    if(!w.selection)w=await api('/api/workspace');
+    updateSelection(w.selection,true,false);
+    state.name=typeof w.name==='string'&&w.name?w.name:'Custom landscape';
+    $('place').value=[...$('place').options].some(option=>option.value===w.place)?w.place:'custom';
+    // Only well-formed values for this page's own controls are taken (applyControls checks each one).
+    applyControls(handoffInputs(),w);
+    for(const id of ['relief-method','relief-strength','exaggeration','base','contours','resolution','elevation-source'])$(id).dispatchEvent(new Event('input',{bubbles:true}));
+    if(Number.isFinite(w.export_size)&&w.export_size>=10&&w.export_size<=2000)$('export-size').value=w.export_size;
+    $('export-size').dispatchEvent(new Event('input',{bubbles:true}));
+    applyRenderingSettings({palette:w.palette,controls:w.controls});
+    if(w.terrain_id) {
+      try{await loadSurface(w.terrain_id,true,state.name);$('selection-state').textContent='Terrain generated';}
+      catch{notify('The headset’s cut is set, but the server no longer has its terrain. Generate it, then export.',true);return;}
+      notify('Continued from the headset. Export when you are ready.');
+    } else notify('The headset’s cut is set here. Generate it, then export.');
+  } catch(error){notify(error.message,true);}
+}
+
+function liveStatus(connected) {
+  const badge=$('live-status');
+  badge.classList.toggle('offline',!connected);
+  badge.lastChild.textContent=connected?' LIVE':' RECONNECTING…';
 }
 
 function captureMapTexture() {
@@ -822,7 +944,9 @@ function updateExportDimensions() {
   $('export-dimensions').textContent=`${number(data.width_m*ratio,1)} × ${number(data.height_m*ratio,1)} × ${number(height,1)} mm · closed solid`;
 }
 
+// Nothing is ever written to disk from VR: there is no Save tab, and a stray export is refused.
 function download(blob,name) {
+  if(vr?.presenting){notify('Models cannot be saved from VR.',true);return;}
   const url=URL.createObjectURL(blob),anchor=document.createElement('a');anchor.href=url;anchor.download=name;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
 }
 
@@ -1229,6 +1353,15 @@ async function init() {
     state.selection={...initialPlace.bounds};state.name=initialPlace.name;
     $('place').value=config.default_place;
     setupMap(config); setupScene(); wireControls(); wireRoute();
+    live=createLive({onEvent:liveEvent,onStatus:liveStatus});
+    $('live-offer-open').addEventListener('click',()=>offered&&(offered.type==='workspace'?continueWorkspace(offered):openTerrain(offered)));
+    $('live-offer-dismiss').addEventListener('click',()=>{$('live-offer').hidden=true;offered=null;});
+    // Coming back to the computer after the headset: offer what it left, if it is recent.
+    api('/api/workspace').then(w=>{if(w.selection&&w.page!==pageId&&w.age_s<7200&&(!state.data||w.terrain_id!==state.id))
+      offer({...w,type:'workspace'},`From the headset: ${w.name||'your cut'}`,'Continue here');}).catch(()=>{});
+    // While in VR every change is handed off, so the computer can continue from the latest cut.
+    document.addEventListener('change',()=>{if(vr?.presenting)handoff();},true);
+    if(config.pairing_pin){$('pairing-pin').hidden=false;$('pairing-pin').lastChild.textContent=` HEADSET PIN ${config.pairing_pin}`;}
     profileModes=createProfileModes({get map(){return map;},get state(){return state;},api,units,number,
       redraw:()=>drawProfile(),sliceVisible:()=>updateProfileMapLine(),changed:()=>silhouette?.modelChanged(),
       // The frame was moved, resized, or switched source since the terrain was generated: picking points generates it first.

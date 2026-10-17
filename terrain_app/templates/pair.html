@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pair this device · 3D-VR-Terrain</title>
+  <style>
+    :root{color-scheme:dark;--paper:#101b14;--surface:#19281e;--line:#414633;--ink:#fff6d6;--muted:#a9ae99;--accent:#e9c890;--green:#426746;--error:#d2a36c}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--paper);color:var(--ink);font:18px/1.45 Inter,"Segoe UI",Arial,sans-serif;padding:16px}
+    main{width:min(460px,100%);background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:34px 30px}
+    h1{font:400 34px Georgia,"Times New Roman",serif;margin:0 0 8px}
+    p{color:var(--muted);margin:0 0 22px}
+    input{width:100%;font:600 44px/1 ui-monospace,Menlo,monospace;letter-spacing:12px;text-align:center;padding:16px 8px;border-radius:14px;border:1px solid var(--line);background:#0b140e;color:var(--ink)}
+    button{margin-top:18px;width:100%;padding:18px;font:650 22px Inter,"Segoe UI",Arial,sans-serif;border:0;border-radius:14px;background:var(--green);color:#fffbe8;cursor:pointer}
+    button:disabled{opacity:.5}
+    #message{min-height:1.5em;margin:16px 0 0;color:var(--error)}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Pair this device</h1>
+    <p>Enter the 6-digit PIN shown in the terminal and in the page header on the computer running 3D-VR-Terrain. This device stays paired afterwards.</p>
+    <form id="pair">
+      <input id="pin" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" aria-label="PIN" autofocus required>
+      <button id="submit" type="submit">Pair</button>
+      <div id="message" role="status"></div>
+    </form>
+  </main>
+  <script>
+    document.getElementById('pair').addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = document.getElementById('submit'), message = document.getElementById('message');
+      button.disabled = true; message.textContent = '';
+      try {
+        const response = await fetch('/api/pair', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({pin: document.getElementById('pin').value})});
+        if (response.ok) { location.replace('/'); return; }
+        message.textContent = (await response.json().catch(() => ({}))).error || `Pairing failed (${response.status}).`;
+      } catch { message.textContent = 'The computer did not answer. Check that the server is running.'; }
+      button.disabled = false;
+    });
+  </script>
+</body>
+</html>

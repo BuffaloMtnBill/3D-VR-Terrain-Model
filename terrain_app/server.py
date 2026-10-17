@@ -1,6 +1,7 @@
 """Local HTTP interface and bounded background elevation downloads."""
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+import gzip
 from io import BytesIO
 from pathlib import Path
 from threading import RLock
@@ -8,13 +9,15 @@ import json
 import logging
 import os
 import re
+import struct
 import subprocess
 import sys
 from threading import Timer
 import time
 import uuid
 
-from flask import Flask, jsonify, render_template, request, send_file
+from flask import Flask, Response, jsonify, redirect, render_template, request, send_file
+from flask_sock import Sock
 import numpy as np
 
 from .elevation import Bounds, DEFAULT_SOURCE, SOURCES, THREE_DEP_URL, ElevationClient, Terrain, ThreeDepClient, grid_shape, source_id
@@ -28,6 +31,8 @@ from .addons import BALL_COLOR, catalog as studio_catalog, check_project, platfo
 from .studio import marker_ball_file, marker_platform_file, studio_export, studio_format
 from .hydrography import HydrographyClient, HYDROGRAPHY_URL, water_source
 from . import lamp_handoff
+from .live import Hub
+from .pairing import COOKIE as PAIR_COOKIE, is_local
 from .silhouette import PRESET_DATA as SILHOUETTE_PRESETS, SilhouetteOptions, Sources, outline_json, silhouette_export, text_block_json
 from .profiles import profile_json, profile_options
 from .routes import MAX_GPX_BYTES, RouteStore, public_route, route_lines, route_options, with_route
@@ -82,7 +87,8 @@ def create_app(test_config=None):
                       MAP_ATTRIBUTION=os.environ.get("TERRAIN_MAP_ATTRIBUTION", TERRAIN_ATTRIBUTION),
                       MAP_MAX_NATIVE_ZOOM=int(os.environ.get("TERRAIN_MAP_MAX_NATIVE_ZOOM", "17")),
                       CACHE_DIR=os.environ.get("TERRAIN_CACHE_DIR", str(default_cache_dir() / "elevation")),
-                      LANDSCAPES=PRESETS, DEFAULT_LANDSCAPE=DEFAULT_PLACE, EXAMPLE_PATH=None)
+                      LANDSCAPES=PRESETS, DEFAULT_LANDSCAPE=DEFAULT_PLACE, EXAMPLE_PATH=None,
+                      PAIRING=None)  # a pairing.Pairing in LAN mode: other devices enter its PIN once
     if test_config:
         app.config.update(test_config)
     client = ElevationClient(Path(app.config["CACHE_DIR"]))
@@ -113,6 +119,21 @@ def create_app(test_config=None):
                                  "features": feature_client, "feature_jobs": feature_jobs, "building_jobs": building_jobs, "zip": zip_client, "places": place_client,
                                  "landcover": cover_client, "cover_jobs": cover_jobs, "hydrography": hydro_client, "water_jobs": water_jobs, "studio_jobs": studio_jobs,
                                  "routes": route_store}
+    hub = Hub()
+    app.extensions["terrain"]["live"] = hub
+    sock = Sock(app)
+
+    @app.before_request
+    def paired_devices_only():
+        # In LAN mode another device must pair once with the PIN shown on this computer; this computer never needs to.
+        pairing = app.config["PAIRING"]
+        if pairing is None or is_local(request.remote_addr) or request.path in ("/pair", "/api/pair"):
+            return None
+        if pairing.is_paired(request.cookies.get(PAIR_COOKIE)):
+            return None
+        if request.path == "/":
+            return redirect("/pair")
+        return jsonify(error="Pair this device first: open the page and enter the PIN shown on the computer."), 401
 
     @app.before_request
     def same_origin():
@@ -120,6 +141,8 @@ def create_app(test_config=None):
         if request.method == "POST":
             if not request.is_json:
                 return jsonify(error="Send an application/json request."), 415
+        # Browsers let any page open a WebSocket to any server, so the live channel checks its origin too.
+        if request.method == "POST" or request.path == "/api/live":
             origin = request.headers.get("Origin")
             if origin and origin.rstrip("/") != request.host_url.rstrip("/"):
                 return jsonify(error="This request must originate from Terrain Studio."), 403
@@ -163,15 +186,22 @@ def create_app(test_config=None):
         def progress(fraction, message):
             with lock:
                 jobs[identifier].update(progress=fraction, message=message, state="loading")
+            hub.publish(dict(type="job", id=identifier, state="loading", progress=fraction, message=message))
         try:
             terrain = clients[source].fetch(bounds, resolution, progress)
             with lock:
                 jobs[identifier].update(state="ready", progress=1, message="Terrain ready", terrain=terrain, accessed=time.monotonic())
+                name, preview = jobs[identifier].get("name", ""), jobs[identifier].get("preview", False)
+            hub.publish(dict(type="job", id=identifier, state="ready", progress=1, message="Terrain ready"))
+            # Every open page hears about it, so terrain generated on the PC can be opened in the headset and back.
+            if not preview:
+                hub.publish(dict(type="terrain", id=identifier, name=name))
         except Exception as error:
             LOGGER.exception("Elevation download failed")
             message = str(error) if isinstance(error, ValueError) else "Terrain processing failed. Try a smaller selection or check the terminal for details."
             with lock:
                 jobs[identifier].update(state="error", message=message, accessed=time.monotonic())
+            hub.publish(dict(type="job", id=identifier, state="error", progress=0, message=message))
 
     def run_features(identifier, terrain, records, fetch):
         with lock:
@@ -230,7 +260,65 @@ def create_app(test_config=None):
                        street_tile_url=STREET_URL, street_attribution=STREET_ATTRIBUTION,
                        presets=presets, default_place=default_place,
                        elevation_sources={key: value["label"] for key, value in SOURCES.items()},
-                       example_available=example is not None)
+                       example_available=example is not None, boot=hub.boot,
+                       # Shown only on this computer, which is where the person pairing a headset reads it.
+                       pairing_pin=app.config["PAIRING"].pin if app.config["PAIRING"] and is_local(request.remote_addr) else None)
+
+    @app.get("/pair")
+    def pair_page():
+        return render_template("pair.html")
+
+    @app.post("/api/pair")
+    def pair_device():
+        pairing = app.config["PAIRING"]
+        if pairing is None:
+            return jsonify(paired=True)
+        try:
+            token = pairing.pair((request.get_json(silent=True) or {}).get("pin", ""))
+        except PermissionError as error:
+            return jsonify(error=str(error)), 429
+        if token is None:
+            return jsonify(error="That PIN is not right. It is shown in the terminal and on the page on the computer."), 403
+        response = jsonify(paired=True)
+        response.set_cookie(PAIR_COOKIE, token, max_age=400*24*3600, secure=request.is_secure, httponly=True, samesite="Strict")
+        return response
+
+    workspace = {}
+
+    @app.post("/api/workspace")
+    def hand_off():
+        """The headset's latest cut, scale, and settings, for the computer's page to continue from. Kept in memory only."""
+        payload = request.get_json()
+        if not isinstance(payload, dict):
+            raise ValueError("Supply the workspace.")
+        selection = Bounds.from_dict(payload.get("selection")).to_dict()
+        def text(key, limit):
+            value = payload.get(key)
+            return value[:limit] if isinstance(value, str) else ""
+        controls = payload.get("controls")
+        if not isinstance(controls, dict) or len(controls) > 200:
+            controls = {}
+        controls = {str(key)[:60]: value for key, value in controls.items() if isinstance(value, (bool, int, float, str)) and len(str(value)) <= 60}
+        terrain_id = text("terrain_id", 64)
+        size = payload.get("export_size")
+        with lock:
+            workspace.clear()
+            workspace.update(page=text("page", 40), name=text("name", 120), place=text("place", 60), selection=selection,
+                             terrain_id=terrain_id or None, palette=text("palette", 20), controls=controls,
+                             export_size=size if isinstance(size, (int, float)) and not isinstance(size, bool) else None, saved=time.monotonic())
+        hub.publish(dict(type="workspace", page=workspace["page"], name=workspace["name"], terrain_id=workspace["terrain_id"]))
+        return jsonify(ok=True)
+
+    @app.get("/api/workspace")
+    def workspace_now():
+        with lock:
+            if not workspace:
+                return jsonify({})  # nothing handed off yet
+            return jsonify({**{key: value for key, value in workspace.items() if key != "saved"}, "age_s": round(time.monotonic()-workspace["saved"])})
+
+    @sock.route("/api/live")
+    def live(ws):
+        hub.serve(ws)
 
     @app.get("/api/location/zip/<zipcode>")
     def locate_zip(zipcode):
@@ -325,7 +413,10 @@ def create_app(test_config=None):
             if sum(job["state"] in ("queued", "loading") for job in jobs.values()) >= 4:
                 return jsonify(error="Four terrain downloads are already running. Wait for one to finish."), 429
             identifier = uuid.uuid4().hex
-            jobs[identifier] = dict(state="queued", progress=0, message="Preparing elevation download…", accessed=time.monotonic())
+            name = payload.get("name")
+            # A preview (the VR cut's surroundings) is not announced to other devices as new terrain.
+            jobs[identifier] = dict(state="queued", progress=0, message="Preparing elevation download…", accessed=time.monotonic(),
+                                    name=name.strip()[:120] if isinstance(name, str) else "", preview=payload.get("preview") is True)
         executor.terrain.submit(run_job, identifier, bounds, resolution, source)
         return jsonify(id=identifier), 202
 
@@ -357,10 +448,29 @@ def create_app(test_config=None):
         result = dict(id=identifier, **terrain.metadata(), smoothing=sigma, relief=relief, relief_strength=strength,
                       surface_min_m=float(heights.min()), surface_max_m=float(heights.max()),
                       elevations=np.round(heights, 4).ravel().tolist())
-        if heights is not true_heights:
+        reshaped = heights is not true_heights
+        if request.args.get("format") == "binary":
+            return binary_terrain(result, heights, true_heights if reshaped else None)
+        if reshaped:
             # The model is reshaped; colors, contours, and the profile still use real elevations.
             result["true_elevations"] = np.round(true_heights, 4).ravel().tolist()
         return jsonify(result)
+
+    def binary_terrain(result, heights, true_heights):
+        """The surface as little-endian float32 grids after a JSON header: under half the JSON size, gzipped when
+        the browser accepts it. Layout: uint32 header length, header JSON (padded to 4 bytes), elevations, true elevations."""
+        result = {**result, "elevations": None, "arrays": ["elevations"] + (["true_elevations"] if true_heights is not None else [])}
+        header = json.dumps(result, separators=(",", ":")).encode()
+        header += b" " * (-len(header) % 4)
+        body = struct.pack("<I", len(header)) + header + np.asarray(heights, dtype="<f4").tobytes()
+        if true_heights is not None:
+            body += np.asarray(true_heights, dtype="<f4").tobytes()
+        response = Response(body, mimetype="application/octet-stream")
+        if "gzip" in request.headers.get("Accept-Encoding", ""):
+            response.set_data(gzip.compress(body, compresslevel=5))
+            response.headers["Content-Encoding"] = "gzip"
+        response.headers["Vary"] = "Accept-Encoding"
+        return response
 
     def print_inputs(identifier, features, colors):
         """Surface classes and loaded map features for 3MF color parts; a ValueError says what is still loading."""
