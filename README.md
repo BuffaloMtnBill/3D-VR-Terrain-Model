@@ -53,9 +53,10 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-Open **http://127.0.0.1:8000**. Stop the server with Ctrl+C.
-Use `python app.py --port 8080` to change the port, or `--open` to launch your
-browser.
+It serves HTTPS to your network so a VR headset can connect (see [VR explorer](#vr-explorer)). On this computer
+open **https://localhost:8000** and accept the self-signed certificate once. Stop the server with Ctrl+C.
+Use `python app.py --port 8080` to change the port, `--open` to launch your browser, or `--local` for plain
+HTTP on this computer only (no headset).
 
 ### Install with pip
 
@@ -172,10 +173,10 @@ The Famous landscapes list comes from `terrain_app/data/DefaultProfiles.txt`.
 ## VR explorer
 
 The **VR** button in the 3D preview opens the terrain in a WebXR headset such as a Meta Quest. Headset browsers
-allow VR only on secure (HTTPS) pages, so start the server in LAN mode on the computer that runs it:
+allow VR only on secure (HTTPS) pages, which is how the server starts by default:
 
 ```bash
-python app.py --lan
+python app.py
 ```
 
 It serves HTTPS on every network interface with a self-signed certificate made for this computer's addresses,
@@ -184,11 +185,11 @@ the headset's browser and accept the certificate warning once (choose **Advanced
 kept with the cache and made again only when the computer's addresses change. Allow the port through the
 computer's firewall if the headset cannot connect.
 
-**Pairing.** In LAN mode every other device pairs once: the first visit shows a PIN page, and the 6-digit PIN is
+**Pairing.** Every other device pairs once: the first visit shows a PIN page, and the 6-digit PIN is
 printed in the terminal and shown in the page header on the computer itself (HEADSET PIN). A paired device keeps a
 cookie and is remembered across server restarts; the computer stores only hashes of those cookies. Five wrong PINs
 pause pairing for a minute. The PIN is new each run unless `TERRAIN_PAIRING_PIN` sets it, and
-`python app.py --lan --forget-devices` unpairs every device. Pages on the computer itself never need pairing.
+`python app.py --forget-devices` unpairs every device. Pages on the computer itself never need pairing.
 
 **Live link.** Every open page keeps a WebSocket to the server (the LIVE badge in the header). Generation progress
 arrives over it instead of by polling, and terrain generated on one device is offered on the others: the page shows
@@ -870,12 +871,12 @@ Optional environment variables:
 | `TERRAIN_MAP_TILE_URL` | Alternative map provider URL with `{z}`, `{x}`, `{y}` placeholders |
 | `TERRAIN_MAP_ATTRIBUTION` | Attribution HTML for that provider |
 | `TERRAIN_MAP_MAX_NATIVE_ZOOM` | Highest native zoom of the terrain provider; defaults to 17 |
-| `TERRAIN_PAIRING_PIN` | Fixed 6-digit pairing PIN for `--lan`; a new random one each run by default |
+| `TERRAIN_PAIRING_PIN` | Fixed 6-digit pairing PIN; a new random one each run by default |
 | `TERRAIN_TRUSTED_HOSTS` | Comma-separated allowed hosts; defaults to localhost, 127.0.0.1, and [::1] |
 
-The default server binds to loopback. This is a local workstation app, not a
-multi-user hosted service. For LAN access, use `--lan` (HTTPS, as the [VR explorer](#vr-explorer) needs),
-or `--host 0.0.0.0` and explicitly add your machine's hostname/IP to `TERRAIN_TRUSTED_HOSTS`.
+By default the server listens on every interface over HTTPS, and every device other than this computer must pair
+with the PIN first. This is a home-network workstation app, not a multi-user hosted service. `--local` binds to
+loopback over plain HTTP instead, with no pairing.
 
 To refresh the bundled terrain for the first famous landscape from the live elevation service:
 

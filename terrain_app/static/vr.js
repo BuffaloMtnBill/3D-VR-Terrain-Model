@@ -576,7 +576,7 @@ export function createVR(ctx) {
   // ---------- session ----------
   async function enter() {
     if(session)return;
-    if(!navigator.xr){ctx.notify(`VR needs a secure page. Start the server with “python app.py --lan” and open https://${location.hostname}:${location.port||443} in the headset browser.`,true);return;}
+    if(!navigator.xr){ctx.notify(`VR needs a secure page. Start the server without --local and open https://${location.hostname}:${location.port||443} in the headset browser.`,true);return;}
     try {
       session=await navigator.xr.requestSession('immersive-vr',{optionalFeatures:['local-floor','bounded-floor','hand-tracking']});
     } catch(error){session=null;ctx.notify(`Could not start VR: ${error.message}`,true);return;}
