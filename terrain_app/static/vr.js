@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import {createHandSkin} from './vr-hands.js';
 import {createMapMode,reshapeBounds} from './vr-mapmode.js';
 import {createWatch} from './vr-watch.js';
+import {COMMANDS,createCommands,matchCommand,matchOption} from './vr-commands.js';
 
 const $=id=>document.getElementById(id);
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -17,6 +18,11 @@ const PINCH={press:.018,release:.03};   // thumb-to-index distance (m) that star
 const TABLE={width:1,height:.75,distance:.8};   // where Reset view puts the model: 1 m wide at table height
 const UI={paper:'#101b14',surface:'#19281e',raised:'#223329',line:'#414633',ink:'#fff6d6',muted:'#a9ae99',
   accent:'#e9c890',green:'#426746',hover:'#2f4834',error:'#d2a36c',sans:'Inter,"Segoe UI",Arial,sans-serif',serif:'Georgia,"Times New Roman",serif'};
+
+// Backgrounds for the model view: 360° skies around you (made with OpenAI's image generation), or the dark gradient.
+export const BACKGROUNDS=[{key:'gradient',label:'Dark gradient'},{key:'forest',label:'Mellow forest'},
+  {key:'desert',label:'Sandy desert'},{key:'lake',label:'Moonlit lake'}];
+const MAP_SKY=0xa9bfc6;
 
 const TILE_CELLS=48;          // grid cells per side of a VR surface tile; tiles out of view are not drawn
 
@@ -72,6 +78,32 @@ export function createVR(ctx) {
   // The rig maps the room onto the world: world = position + scale · rotateY(yaw) · room.
   const view={position:new THREE.Vector3(),yaw:0,scale:1,size:6.4,minScale:.001,maxScale:100};
   let flownSeconds=0,session=null,background=null,lastId=null,mode='map';
+  // ---------- backgrounds (model view) ----------
+  let backdrop='gradient';
+  try{if(BACKGROUNDS.some(b=>b.key===localStorage.getItem('vr-background')))backdrop=localStorage.getItem('vr-background');}catch{/* Storage is optional. */}
+  const skies={};
+  function sky(key) {
+    if(skies[key])return skies[key];
+    let texture;
+    if(key==='gradient') {
+      const canvas=document.createElement('canvas');canvas.width=64;canvas.height=512;
+      const c=canvas.getContext('2d'),g=c.createLinearGradient(0,0,0,512);
+      g.addColorStop(0,'#05080a');g.addColorStop(.42,'#14211b');g.addColorStop(.5,'#24352b');g.addColorStop(.58,'#121c16');g.addColorStop(1,'#040605');
+      c.fillStyle=g;c.fillRect(0,0,64,512);
+      texture=new THREE.CanvasTexture(canvas);
+    } else texture=new THREE.TextureLoader().load(`/static/backgrounds/${key}.jpg`,()=>ctx.requestRender());
+    texture.mapping=THREE.EquirectangularReflectionMapping;texture.colorSpace=THREE.SRGBColorSpace;
+    return skies[key]=texture;
+  }
+  function showBackdrop() {
+    if(!session)return;
+    scene.background=mode==='model'?sky(backdrop):new THREE.Color(MAP_SKY);
+  }
+  function setBackdrop(key) {
+    if(!BACKGROUNDS.some(b=>b.key===key))return;
+    backdrop=key;showBackdrop();
+    try{localStorage.setItem('vr-background',key);}catch{/* Storage is optional. */}
+  }
   const mapMode=createMapMode(ctx,{table:TABLE});rig.add(mapMode.room);
 
   // ---------- controllers ----------
@@ -137,11 +169,30 @@ export function createVR(ctx) {
     if(hand.tracked&&thumb&&index)return hand.point.copy(thumb.position).add(index.position).multiplyScalar(.5);
     return hand.point.copy(hand.controller.position);
   }
-  // Generate from the right wrist: when the new terrain arrives, show it in the model view.
+  // Generate from the right wrist (or by voice): when the new terrain arrives, show it in the model view.
   let generating=null;   // the terrain showing when Generate was pressed
+  function generate(){const button=document.getElementById('generate');if(button.disabled||ctx.state.loading)return false;generating={from:ctx.state.id};button.click();return true;}
+  // Voice commands, on by default while in VR: "Open menu", "Generate terrain", "Exit program".
+  let voiceOn=true;
+  // With a menu open, any option on show can be said too ("Multiplier", "plus", "Moonlit lake", "Back", …); Whisper is
+  // told which names to expect.
+  const commands=createCommands({api:ctx.api,
+    vocabulary:()=>[...COMMANDS.map(command=>command.label),...watch.voiceOptions().map(option=>option.label)],
+    onHeard:text=>{
+      if(!session)return;
+      const option=watch.busy?matchOption(text,watch.voiceOptions()):null;
+      if(option){option.press();watch.say(`🎤 ${option.label}`);return;}
+      const command=matchCommand(text);
+      if(command?.name==='open-menu'){watch.openMenu();watch.say('🎤 Open menu');}
+      else if(command?.name==='generate'){watch.say(generate()?'🎤 Generate terrain':'🎤 Generate: already busy, or the area needs adjusting');}
+      else if(command?.name==='exit'){watch.say('🎤 Exit');session.end();}
+    },
+    onError:message=>watch?.say(`🎤 ${message}`)});
   watch=createWatch(ctx,{rig,camera,joint,hands,exit:()=>session?.end(),mode:()=>mode,
-    generate:()=>{const button=document.getElementById('generate');if(button.disabled)return;generating={from:ctx.state.id};button.click();},
+    generate,
+    voiceCommands:{get on(){return voiceOn;},toggle(){voiceOn=!voiceOn;if(voiceOn&&session)commands.start();else commands.stop();}},
     showMap:()=>setMode('map'),relief:{get on(){return mapMode.relief;},toggle(){mapMode.relief=!mapMode.relief;}},
+    backgrounds:{list:BACKGROUNDS,get current(){return backdrop;},set:setBackdrop},
     applyShape:shape=>{try{ctx.setSelection(reshapeBounds(ctx.state.selection,shape));}catch(error){ctx.notify(error.message,true);}}});
 
   // ---------- tiled surface (VR only; the page keeps its single mesh) ----------
@@ -197,6 +248,7 @@ export function createVR(ctx) {
     mode=next;
     hands.forEach(hand=>{hand.mode=null;});
     if(ctx.grid)ctx.grid.visible=false;   // the page's floor grid does not move with the world
+    showBackdrop();
     if(mode==='map'){ctx.model.visible=false;mapMode.enter(view,camera);}
     else{mapMode.leave();ctx.model.visible=true;lastId=ctx.state.id;frameModel();}
     applyView();
@@ -287,6 +339,7 @@ export function createVR(ctx) {
       syncTiles();
       if(ctx.state.id!==lastId){lastId=ctx.state.id;frameModel();}
     }
+    commands.paused=watch.searching;   // a search being spoken is not a command
     hands.forEach(updateHand);
     // A menu opened while the map was held: let go of it there (the selection is set as on any release).
     if(watch.busy&&hands.some(busy)){hands.forEach(hand=>{if(busy(hand))hand.mode=null;});if(mode==='map')mapMode.commit(view);}
@@ -303,12 +356,12 @@ export function createVR(ctx) {
     try {
       session=await navigator.xr.requestSession('immersive-vr',{optionalFeatures:['local-floor','bounded-floor','hand-tracking']});
     } catch(error){session=null;ctx.notify(`Could not start VR: ${error.message}`,true);return;}
-    background=scene.background;scene.background=new THREE.Color(0xa9bfc6);
+    background=scene.background;scene.background=new THREE.Color(MAP_SKY);
     scene.add(rig);renderer.xr.enabled=true;renderer.xr.setReferenceSpaceType('local-floor');
     // Taking the headset off hides the session; on return, reconnect at once rather than after the backoff.
     session.addEventListener('visibilitychange',()=>{if(session?.visibilityState==='visible')ctx.live?.now();else ctx.handoff?.(true);});
     session.addEventListener('end',()=>{
-      dropTiles();mapMode.leave();watch.close();ctx.model.visible=true;
+      dropTiles();mapMode.leave();watch.close();commands.stop();ctx.model.visible=true;
       ctx.model.matrixAutoUpdate=true;ctx.model.updateMatrix();   // back to the page's own viewif(ctx.grid)ctx.grid.visible=ctx.state.view!=='elevation';
       ctx.handoff?.(true);   // you are taking the headset off: the computer's page can continue from here
       session=null;renderer.xr.enabled=false;scene.remove(rig);scene.background=background;
@@ -316,6 +369,7 @@ export function createVR(ctx) {
     });
     await renderer.xr.setSession(session);
     lastId=null;setMode('map');
+    if(voiceOn)commands.start();
   }
 
   async function attachButton(button) {
@@ -329,8 +383,8 @@ export function createVR(ctx) {
 
   instance={update,attachButton,camera,setMode,exit:()=>session?.end(),watchPoint:id=>watch.regionPoint(id),get live(){return ctx.live;},get presenting(){return Boolean(session);},
     get state(){return {scale:view.scale,yaw:view.yaw,position:view.position.toArray(),minScale:view.minScale,maxScale:view.maxScale,
-      mode,watch:watch.state,map:{...mapMode.state,selection:mapMode.active?mapMode.boundsFrom(view):null},pageSelection:ctx.state.selection,flownSeconds,area:ctx.state.data?{bounds:ctx.state.data.bounds,width_m:ctx.state.data.width_m,height_m:ctx.state.data.height_m}:null,
-      hands:hands.map(hand=>({tracked:hand.tracked,model:hand.skin.ready,pinching:hand.trigger,mode:hand.mode,point:hand.point.toArray(),indexTip:joint(hand,'index-finger-tip')?.position.toArray()||null})),tiles:tiles?tiles.children.length:0,
+      mode,background:session?backdrop:null,backgroundShown:scene.background?.isTexture?scene.background.image?.src?.split('/').pop()||'gradient':null,watch:watch.state,commands:{...commands.state,on:voiceOn},map:{...mapMode.state,selection:mapMode.active?mapMode.boundsFrom(view):null},pageSelection:ctx.state.selection,flownSeconds,area:ctx.state.data?{bounds:ctx.state.data.bounds,width_m:ctx.state.data.width_m,height_m:ctx.state.data.height_m}:null,
+      hands:hands.map(hand=>({tracked:hand.tracked,model:hand.skin.ready,touching:Boolean(hand.poking),over:hand.uiHover||null,pinching:hand.trigger,mode:hand.mode,point:hand.point.toArray(),indexTip:joint(hand,'index-finger-tip')?.position.toArray()||null})),tiles:tiles?tiles.children.length:0,
       tileTriangles:tiles?tiles.children.reduce((sum,part)=>sum+part.geometry.index.count/3,0):0,surfaceHidden:ctx.surface?!ctx.surface.visible:false};}};
   return instance;
 }

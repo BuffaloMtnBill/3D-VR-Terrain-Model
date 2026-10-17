@@ -252,6 +252,7 @@ fingertip comes near); each one is the page's own control:
 | Features | The map features shown on the model, each a switch |
 | Exit VR | Back to the page |
 | Flat map / 3D relief | Switch the map's relief off or on |
+| Voice: on / off | Listen for the voice commands (below), or not |
 
 The middle of the menu goes back (or closes it); tapping the watch again closes it too. The keyboard's keys are tapped
 the same way. While any menu is up the map stays put: grips do not move it.
@@ -267,13 +268,31 @@ menu.
 asks); **■ Stop** (or eight seconds) ends it, and the words heard replace the text in the box, to check before tapping
 Search. A ZIP code read digit by digit is joined up. The headset sends plain 16 kHz samples to the computer, which
 transcribes them with Whisper (faster-whisper, on the CPU); nothing is sent anywhere else and nothing is saved. The
-first voice search downloads the speech model once (`small.en`, about 480 MB; `TERRAIN_WHISPER_MODEL=base.en` picks a
+first voice search (or command) downloads the speech model once (`small.en`, about 480 MB; `TERRAIN_WHISPER_MODEL=base.en` picks a
 smaller, less accurate one, about 140 MB); after that a search takes well under a second.
 
 **The button on your right wrist** (on top of the right controller): tap it with your left index finger. It reads
 **Generate** in Map Selection: the box's area is generated (the button shows the progress), and
 VR switches to the **model view**, the new model as a 1 m tabletop model to grab, zoom, and turn (grip it with one hand
 to move it, with both to zoom and turn it; controller sticks fly over it). There the button reads **◀ Map** and goes back.
+
+**The model view's menu** is its own: tapping the watch there opens just the backgrounds and **On the model**. The
+model sits in front of a dark gradient by default; the menu changes it, in one tap, to a 360° mellow forest, sandy
+desert, or moonlit lake (in `static/backgrounds/`, made with OpenAI's image generation and joined seamlessly where the
+panorama wraps around; the headset's browser remembers the choice). **On the model** has a switch for each map
+feature drawn on the model (roads, water, trails, …) and for the contour lines. Map Selection keeps its light sky.
+
+**Voice commands.** While you are in VR the microphone stays open for three commands: **"Open menu"** (or "show
+menu") opens the watch's menu, **"Generate terrain"** generates the box's area as the wrist button does, and **"Exit
+program"** (or "exit VR") leaves VR. A caption in front of you shows what was heard. The headset finds where speech
+starts and stops by itself, so only those short moments go to the computer (to the same Whisper, told to expect the
+commands); nothing is sent while you are quiet, and nothing is saved. Listening pauses while you use the keyboard's
+Speak key, and **Voice: on / off** on the watch's menu switches it off and on.
+
+While a menu is open, its options can be said too: any name on show ("Source", "Multiplier", "Moonlit lake",
+"Roads", "Contour lines"), the stepper's "plus", "minus", "plus ten", and "minus ten", "Back" and "Close", and in the
+shape editor "Circle", "Sixteen by nine", or "OK" (and "Search" or "Cancel" at the keyboard). Each does exactly what
+tapping it would. The names on show are sent along with the speech, so Whisper expects them.
 
 **From the headset to the computer.** While you work in VR, the headset hands its workspace to the server a few
 times a second: the cut (even mid-drag), its name, the elevation source and detail, every model and map-layer
@@ -975,6 +994,9 @@ tiled surface, the live link reconnecting) and that nothing can be saved from VR
 `node tests/browser-vr-hands.cjs` does the same workflow with hands (pinches, fingertip touches on the watch, keys,
 and wrist button), with a second page standing in for the computer: it follows the box, opens the generated model,
 and exports an STL. `node tests/browser-headset-page.cjs` checks the headset's basic page.
+`node tests/browser-vr-voice.cjs` plays spoken commands (`tests/fixtures/voice-*.wav`, made with espeak-ng) into
+Chromium's fake microphone and checks each one acts; `TERRAIN_REAL_SPEECH=1` has the fixture server's Whisper hear them
+too (instead of a stand-in).
 Set `TERRAIN_CHROMIUM_PATH` when using an existing Chromium executable.
 The test intercepts map, ZIP, and feature requests with fixtures, exercises ZIP
 navigation and errors, two-point alignment with mouse/touch, cancellation,

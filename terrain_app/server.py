@@ -33,7 +33,7 @@ from .hydrography import HydrographyClient, HYDROGRAPHY_URL, water_source
 from . import lamp_handoff
 from .live import Hub
 from .relief import ReliefTiles
-from .speech import MAX_SECONDS as MAX_SPEECH_SECONDS, Transcriber, decode_samples
+from .speech import MAX_SECONDS as MAX_SPEECH_SECONDS, Transcriber, decode_samples, purpose_of, vocabulary_of
 from .pairing import COOKIE as PAIR_COOKIE, is_local
 from .silhouette import PRESET_DATA as SILHOUETTE_PRESETS, SilhouetteOptions, Sources, outline_json, silhouette_export, text_block_json
 from .profiles import profile_json, profile_options
@@ -441,12 +441,15 @@ def create_app(test_config=None):
 
     @app.post("/api/transcribe")
     def transcribe():
-        """Voice search: the headset's recording (16 kHz samples) to text, on this computer; nothing is kept."""
+        """Voice search and voice commands: the headset's recording (16 kHz samples) to text, on this computer; nothing
+        is kept. purpose "command" expects the VR voice commands, "search" (the default) a place."""
         if not transcriber.available():
             return jsonify(error="Voice search needs faster-whisper on the computer: pip install faster-whisper"), 503
-        samples = decode_samples(request.get_json(silent=True))
+        payload = request.get_json(silent=True)
+        samples, purpose = decode_samples(payload), purpose_of(payload)
+        vocabulary = vocabulary_of(payload) if purpose == "command" else ()
         try:
-            text = transcriber.transcribe(samples)
+            text = transcriber.transcribe(samples, purpose, vocabulary)
         except Exception:
             LOGGER.exception("Transcription failed")
             return jsonify(error="The voice search could not be understood. Try again, or type it."), 500

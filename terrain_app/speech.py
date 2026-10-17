@@ -14,7 +14,11 @@ import numpy as np
 
 RATE = 16000
 MAX_SECONDS = 20
-PROMPT = "A place name, street address, city, or US ZIP code."
+PROMPTS = {
+    "search": "A place name, street address, city, or US ZIP code.",
+    # Short clips heard while VR listens for its voice commands: told what to expect, Whisper hears them reliably.
+    "command": "Open menu. Generate terrain. Exit program.",
+}
 
 
 class Transcriber:
@@ -38,9 +42,10 @@ class Transcriber:
                 self._model = WhisperModel(self.model_name, device="cpu", compute_type="int8")
             return self._model
 
-    def transcribe(self, samples):
+    def transcribe(self, samples, purpose="search", vocabulary=()):
         model = self._load()
-        segments, _ = model.transcribe(samples, language="en", beam_size=5, vad_filter=True, initial_prompt=PROMPT)
+        prompt = PROMPTS[purpose] + "".join(f" {word}." for word in vocabulary)
+        segments, _ = model.transcribe(samples, language="en", beam_size=5, vad_filter=True, initial_prompt=prompt)
         return tidy(" ".join(segment.text.strip() for segment in segments))
 
 
@@ -50,6 +55,22 @@ def tidy(text):
     if re.fullmatch(r"[\d\s,.-]+", text) and len(digits := re.sub(r"\D", "", text)) in (5, 9):
         return digits if len(digits) == 5 else f"{digits[:5]}-{digits[5:]}"
     return text
+
+
+def purpose_of(payload):
+    purpose = payload.get("purpose", "search") if isinstance(payload, dict) else "search"
+    if purpose not in PROMPTS:
+        raise ValueError("purpose is search or command.")
+    return purpose
+
+
+def vocabulary_of(payload):
+    """The names a command may be (the menu's options on show), to tell Whisper what to expect: plain short text only."""
+    words = payload.get("vocabulary", []) if isinstance(payload, dict) else []
+    if not isinstance(words, list):
+        raise ValueError("vocabulary is a list of names.")
+    cleaned = [re.sub(r"[^\w\s:+'-]", "", word).strip()[:40] for word in words[:40] if isinstance(word, str)]
+    return [word for word in cleaned if word]
 
 
 def decode_samples(payload):

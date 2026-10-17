@@ -270,8 +270,8 @@ class FakeTranscriber:
     def available(self):
         return self.works
 
-    def transcribe(self, samples):
-        self.heard = samples
+    def transcribe(self, samples, purpose="search", vocabulary=()):
+        self.heard, self.purpose, self.vocabulary = samples, purpose, list(vocabulary)
         from terrain_app.speech import tidy
         return tidy(self.text)
 
@@ -325,3 +325,20 @@ def test_spoken_zip_codes_are_joined():
     assert tidy("2 8 6 0 4 1 2 3 4") == "28604-1234"
     assert tidy("Mount Rainier, Washington.") == "Mount Rainier, Washington"
     assert tidy("Route 66.") == "Route 66"
+
+
+def test_voice_commands_are_transcribed_expecting_commands(tmp_path):
+    fake = FakeTranscriber("Open menu.")
+    app = create_app({"TESTING": True, "CACHE_DIR": tmp_path / "tiles", "TRANSCRIBER": fake})
+    try:
+        client = app.test_client()
+        assert client.post("/api/transcribe", json={**speech(), "purpose": "command"}).get_json() == {"text": "Open menu"}
+        assert fake.purpose == "command"
+        client.post("/api/transcribe", json={**speech(), "purpose": "command", "vocabulary": ["Multiplier", "16:9", "<script>", 7, "x" * 99]})
+        assert fake.vocabulary == ["Multiplier", "16:9", "script", "x" * 40], "The menu's names reach Whisper, cleaned"
+        assert client.post("/api/transcribe", json={**speech(), "purpose": "command", "vocabulary": "Multiplier"}).status_code == 400
+        client.post("/api/transcribe", json=speech())
+        assert fake.purpose == "search"
+        assert client.post("/api/transcribe", json={**speech(), "purpose": "dictation"}).status_code == 400
+    finally:
+        app.extensions["terrain"]["executor"].shutdown(wait=True)

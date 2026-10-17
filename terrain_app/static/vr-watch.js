@@ -30,10 +30,11 @@ function surface(name,width,height,pixels) {
     regionAt(x,y){return this.regions.find(region=>!region.disabled&&region.contains(x,y))||null;}};
 }
 
-export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showMap,relief,applyShape}) {
+export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showMap,relief,applyShape,voiceCommands,backgrounds}) {
   const face=surface('watch',.045,.045,256),radial=surface('radial menu',.42,.42,1024),keyboard=surface('keyboard',.62,.27,1600);
   const wrist=surface('wrist button',.075,.04,512),editor=surface('shape editor',.42,.5,1024);
-  for(const s of [face,radial,keyboard,wrist,editor])rig.add(s.mesh);
+  const caption=surface('caption',.3,.05,768);   // what a voice command was heard as, for a moment
+  for(const s of [face,radial,keyboard,wrist,editor,caption])rig.add(s.mesh);
   face.mesh.renderOrder=1050;
   let menu=null,text='',hovered=new Set(),lastStatus='',voiceNote='';
   // Voice search: the words heard replace the text in the box, to check (or fix) before tapping Search.
@@ -47,10 +48,13 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     const step=Number(el.step||1),set=value=>{
       const min=Number(el.min||0),max=Number(el.max||100),snapped=Math.min(max,Math.max(min,Math.round((value-min)/step)*step+min));
       el.value=String(Number(snapped.toFixed(6)));fire(el,'input');fire(el,'change');};
-    return [['−−',-10],['−',-1],['+',1],['++',10]].map(([label,steps])=>({label,press:()=>set(Number(el.value)+steps*step)}));
+    // Spoken as words: "plus", "minus ten", …
+    const said={'−−':['minus ten','down ten','much less'],'−':['minus','down','less'],'+':['plus','up','more'],'++':['plus ten','up ten','much more']};
+    return [['−−',-10],['−',-1],['+',1],['++',10]].map(([label,steps])=>({label,aliases:said[label],press:()=>set(Number(el.value)+steps*step)}));
   };
+  const SPOKEN={'feature-at':['appalachian trail']};   // labels too short to listen for as they are
   const features=()=>[...document.querySelectorAll('#style-editor input[type=checkbox][id^="feature-"]')].filter(shown).map(el=>({
-    label:short(labelOf(el)),active:el.checked,press:()=>el.click()}));
+    key:el.id.replace('feature-',''),label:short(labelOf(el)),aliases:SPOKEN[el.id],active:el.checked,press:()=>el.click()}));
   const MENUS={
     root:{title:'Map options',items:()=>[
       {key:'search',label:'Search',press:()=>openKeyboard()},
@@ -58,7 +62,14 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
       {key:'multiplier',label:'Multiplier',press:()=>open('multiplier')},{key:'base',label:'Base',press:()=>open('base')},
       {key:'shape',label:'Shape',press:()=>openEditor()},{key:'features',label:'Features',press:()=>open('features')},
       {key:'exit',label:'Exit VR',press:()=>exit()},
-      {key:'relief',label:relief.on?'Flat map':'3D relief',press:()=>relief.toggle()}]},
+      {key:'relief',label:relief.on?'Flat map':'3D relief',press:()=>relief.toggle()},
+      {key:'voice',label:voiceCommands.on?'Voice: on':'Voice: off',aliases:['voice'],active:voiceCommands.on,press:()=>voiceCommands.toggle()}]},
+    // The model view's own menu: the sky around the model, and what is drawn on the model.
+    model:{title:'Model view',items:()=>[
+      ...backgrounds.list.map(b=>({key:b.key,label:b.label,active:backgrounds.current===b.key,press:()=>backgrounds.set(b.key)})),
+      {key:'display',label:'On the model',aliases:['on the model','display','features'],press:()=>open('display')}]},
+    display:{title:'On the model',items:()=>[...features(),
+      {key:'contours',label:'Contour lines',aliases:['contours'],active:$('contours').checked,press:()=>$('contours').click()}]},
     source:{title:'Elevation source',items:()=>selectItems($('elevation-source'))},
     detail:{title:'Terrain detail',items:()=>selectItems($('resolution'))},
     profile:{title:'Elevation profile',items:()=>selectItems($('relief-method'))},
@@ -70,7 +81,7 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
   function openMenu() {
     keyboard.mesh.visible=false;editor.mesh.visible=false;
     // Fixed in the room in front of you (not on the moving wrist), a little below eye level.
-    place(radial.mesh,.38,-.16);radial.mesh.visible=true;open('root');   // a comfortable reach in front of you
+    place(radial.mesh,.38,-.16);radial.mesh.visible=true;open(mode()==='model'?'model':'root');   // a comfortable reach in front of you
   }
   function closeMenu(){radial.mesh.visible=false;menu=null;}
   function openKeyboard() {
@@ -228,13 +239,13 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
         return Math.floor(angle/slice)===i;}});
     });
     // The middle: the menu's name and value, and Back (or Close at the top level).
-    const back=menu==='root'?'Close':'‹ Back',hot=hovered.has('radial:center');
+    const top=menu==='root'||menu==='model',back=top?'Close':'‹ Back',hot=hovered.has('radial:center');
     c.beginPath();c.arc(C,C,inner-12,0,Math.PI*2);c.fillStyle=hot?UI.hover:'#0b140ef2';c.fill();c.lineWidth=4;c.strokeStyle=UI.accent;c.stroke();
     c.fillStyle=UI.accent;c.font=`650 30px ${UI.sans}`;c.textAlign='center';
     wrapText(c,spec.title.toUpperCase(),280,2).forEach((line,k)=>c.fillText(line,C,C-70+k*34));
     if(value){c.fillStyle=UI.ink;c.font=`600 ${value.length>8?32:52}px ${UI.sans}`;c.fillText(value,C,C+5);}
     c.fillStyle=UI.muted;c.font=`600 34px ${UI.sans}`;c.fillText(back,C,C+72);
-    radial.regions.push({id:'radial:center',press:()=>menu==='root'?closeMenu():open('root'),contains:(x,y)=>Math.hypot(x-C,y-C)<inner-12});
+    radial.regions.push({id:'radial:center',press:()=>top?closeMenu():open(mode()==='model'?'model':'root'),contains:(x,y)=>Math.hypot(x-C,y-C)<inner-12});
     if(state){c.font=`28px ${UI.sans}`;c.fillStyle=UI.ink;c.fillText(state.slice(0,70),C,S-6);}
     radial.texture.needsUpdate=true;
   }
@@ -330,16 +341,45 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     // Between drags the editor shows the page's selection as it is (after a change is applied, or from the computer).
     if(editor.mesh.visible&&!dragging)draft=draftFromPage();
     drawFace();drawRadial();drawKeyboard();drawWrist();drawEditor();
+    if(caption.mesh.visible&&performance.now()>captionUntil)caption.mesh.visible=false;
     const now=status();if(now!==lastStatus){lastStatus=now;radial.signature='';}
   }
   function close(){closeMenu();voice.cancel();keyboard.mesh.visible=false;editor.mesh.visible=false;dragging=null;}
+  // A short caption in front of you: what a voice command was heard as.
+  let captionUntil=0;
+  function say(text) {
+    const c=caption.context,W=caption.canvas.width,H=caption.canvas.height;
+    c.clearRect(0,0,W,H);c.fillStyle=UI.fill;c.beginPath();c.roundRect(0,0,W,H,H/2);c.fill();
+    c.fillStyle=UI.accent;c.font=`600 ${Math.round(H*.5)}px ${UI.sans}`;c.textAlign='center';c.textBaseline='middle';c.fillText(text,W/2,H/2+2);
+    caption.texture.needsUpdate=true;place(caption.mesh,.6,-.22);caption.mesh.visible=true;captionUntil=performance.now()+2500;
+  }
 
-  return {update,pointer,close,dragStart,dragMove,dragEnd,
+  // What can be said while a menu is open: each option on show, by its label (and any spoken names), and Back or
+  // Close. Pressing it does exactly what tapping it would.
+  function voiceOptions() {
+    const options=[];
+    if(radial.mesh.visible&&menu) {
+      for(const item of MENUS[menu].items())options.push({label:item.label,aliases:item.aliases||[],press:()=>{item.press();radial.signature='';}});
+      const top=menu==='root'||menu==='model';
+      options.push(top?{label:'Close',aliases:['close menu','close the menu'],press:closeMenu}:{label:'Back',aliases:['go back'],press:()=>open(mode()==='model'?'model':'root')});
+    }
+    if(editor.mesh.visible) {
+      for(const [key,label] of SHAPES)options.push({label,aliases:[],press:()=>{draft.shape=key;if(key==='circle')draft.ratio=1;applyDraft();}});
+      for(const [label,ratio] of RATIOS)options.push({label,aliases:[label.replace(':',' by ')],press:()=>{draft.ratio=ratio;if(draft.shape==='circle'&&ratio!==1)draft.shape='oval';applyDraft();}});
+      options.push({label:'OK',aliases:['okay','done'],press:()=>{editor.mesh.visible=false;openMenu();}});
+    }
+    if(keyboard.mesh.visible)options.push({label:'Search',aliases:[],press:search},{label:'Cancel',aliases:[],press:()=>{voice.cancel();keyboard.mesh.visible=false;}});
+    return options;
+  }
+
+  return {update,pointer,close,dragStart,dragMove,dragEnd,say,voiceOptions,
+    openMenu:()=>{if(!radial.mesh.visible)openMenu();},
+    get searching(){return voice.state!=='idle';},   // the keyboard's microphone is in use
     // Any menu up: the map is not gripped meanwhile.
     get busy(){return radial.mesh.visible||keyboard.mesh.visible||editor.mesh.visible;},
     get state(){
       const regions=s=>s.mesh.visible?s.regions.map(({id})=>id):[];
-      return {voice:voice.state,voiceNote,editor:editor.mesh.visible?{...draft,dragging:dragging?.name||null}:null,face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,keyboard:keyboard.mesh.visible,text,
+      return {caption:caption.mesh.visible,voice:voice.state,voiceNote,editor:editor.mesh.visible?{...draft,dragging:dragging?.name||null}:null,face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,keyboard:keyboard.mesh.visible,text,
         regions:{watch:regions(face),radial:regions(radial),keyboard:regions(keyboard),wrist:regions(wrist),editor:regions(editor)},
         surfaces:Object.fromEntries(surfaces.map(s=>[s.name,{visible:s.mesh.visible,matrix:s.mesh.matrixWorld.toArray(),width:s.width,height:s.height,canvas:[s.canvas.width,s.canvas.height]}]))};
     },

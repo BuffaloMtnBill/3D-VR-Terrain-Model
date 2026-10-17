@@ -23,6 +23,9 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   const tileRequests=[];
   await page.route(/tile\.(opentopomap|openstreetmap)\.org/,route=>{tileRequests.push(route.request().url());route.fulfill({status:200,contentType:'image/png',body:tile,headers:{'Access-Control-Allow-Origin':'*'}});});
   await page.route(/overpass|nominatim|3dhp/,route=>route.fulfill({status:503,body:'{}'}));
+  // The fake microphone plays a constant tone, which voice commands would keep sending to the computer's Whisper (and
+  // load the machine); here it is heard as nothing. tests/browser-vr-voice.cjs covers commands with real speech.
+  await page.route('**/api/transcribe',route=>route.fulfill({json:{text:''}}));
   await page.addInitScript({content:`${await fs.readFile(iwer,'utf8')}
     window.xrDevice=new IWER.XRDevice(IWER.metaQuest3);window.xrDevice.installRuntime({forceInstall:true});`});
   await page.goto(url);
@@ -90,7 +93,9 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
     assert.ok(point,`${id} is on show`);
     const rest=hand==='right'?[.3,1.1,-.1]:[-.3,1.1,-.1];
     await pose(hand,[point[0],point[1],point[2]+.12]);await frames(3);    // coming in
-    await pose(hand,[point[0],point[1],point[2]+.06]);await frames(3);    // the dot touches it
+    await pose(hand,[point[0],point[1],point[2]+.06]);                   // the dot touches it, held until VR has seen it
+    const index=hand==='left'?0:1;                                        // (frames come slowly in software rendering)
+    await page.waitForFunction(i=>window.testVR().state.hands[i].touching,index,{timeout:3000});await frames(2);
     await pose(hand,rest);await frames(6);                                // and away
   }
   const press=id=>tapWith('right',id);
@@ -150,6 +155,7 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   assert.ok((await vrState()).watch.face,'The watch is on the left controller');
   await press('watch:face');
   assert.equal((await vrState()).watch.menu,'root','The watch opens the radial menu');
+  assert.equal((await vrState()).watch.regions.radial.includes('radial:root:background'),false,'Background is for the model view only');
   const item=async(menu,label)=>{   // a menu's segment by its label, read from the page's own control
     const ids=(await vrState()).watch.regions.radial;
     const labels={multiplier:['−−','−','+','++']}[menu];
@@ -227,7 +233,7 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await press('radial:root:features');
   const firstFeature=await page.evaluate(()=>[...document.querySelectorAll('#style-editor input[type=checkbox][id^="feature-"]')].filter(el=>!el.closest('[hidden]'))[0].id);
   const wasOn=await page.isChecked(`#${firstFeature}`);
-  await press('radial:features:0');
+  await press(`radial:features:${firstFeature.replace('feature-','')}`);
   assert.equal(await page.isChecked(`#${firstFeature}`),!wasOn,'A feature switch toggles the page\'s checkbox');
   await press('radial:center');
   // Elevation source.
@@ -249,7 +255,10 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   // Voice search: Speak records from the microphone, Stop sends 16 kHz samples to the computer, and the words heard
   // fill the box (the computer's speech recognition is stood in for here; tests/test_live.py covers the server).
   let heard=null;
-  await page.route('**/api/transcribe',route=>{heard=route.request().postDataJSON();route.fulfill({json:{text:'Roan Mountain, Tennessee'}});});
+  // Only searches are heard as the place; commands (the fake microphone's tone) stay silence.
+  const searchHeard=route=>{const body=route.request().postDataJSON();if(body.purpose==='command')return route.fallback();
+    heard=body;route.fulfill({json:{text:'Roan Mountain, Tennessee'}});};
+  await page.route('**/api/transcribe',searchHeard);
   await press('watch:face');await press('radial:root:search');
   await press('key:voice');
   await page.waitForFunction(()=>window.testVR().state.watch.voice==='listening',null,{timeout:10000});
@@ -259,7 +268,7 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   assert.equal(heard.rate,16000,'The recording is sent as 16 kHz samples');
   assert.ok(Buffer.from(heard.samples,'base64').length>16000*2*.3,`of what was said (${Buffer.from(heard.samples,'base64').length/32000} s)`);
   assert.equal((await vrState()).watch.voice,'idle');
-  await press('key:cancel');await page.unroute('**/api/transcribe');
+  await press('key:cancel');await page.unroute('**/api/transcribe',searchHeard);   // only this one: commands stay silent
   await press('watch:face');assert.equal((await vrState()).watch.menu,'root','The watch opens the menu again');
   await press('watch:face');assert.equal((await vrState()).watch.menu,null,'and tapping it again closes it');
 
@@ -274,6 +283,31 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   const turnedTo=Math.round(Math.abs((await vrState()).pageSelection.rotation_deg||0));
   assert.match(await page.locator('#scene-detail').innerText(),new RegExp(`${turnedTo}° selection`),'with the turned selection');
   await frames(10);
+  // The model view has its own menu: the backgrounds (the dark gradient by default), and what is drawn on the model.
+  assert.equal((await vrState()).backgroundShown,'gradient','The model view starts on the dark gradient');
+  await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);
+  await press('watch:face');
+  state=await vrState();
+  assert.equal(state.watch.menu,'model',`The watch opens the model view's menu (${JSON.stringify({menu:state.watch.menu,hands:state.hands,caption:state.watch.caption,keyboard:state.watch.keyboard,editor:state.watch.editor})})`);
+  assert.deepEqual(state.watch.regions.radial,['radial:model:gradient','radial:model:forest','radial:model:desert','radial:model:lake','radial:model:display','radial:center'],
+    'Only the backgrounds and what is drawn on the model');
+  await press('radial:model:lake');
+  state=await vrState();
+  assert.equal(state.background,'lake');assert.equal(state.backgroundShown,'lake.jpg','The moonlit lake surrounds the model');
+  await page.waitForFunction(()=>window.testVR().state.backgroundShown==='lake.jpg');
+  await page.screenshot({path:path.join(output,'vr-model-lake.png')});
+  await press('radial:model:gradient');assert.equal((await vrState()).backgroundShown,'gradient');
+  // On the model: the map features and contour lines, each the page's own switch.
+  await press('radial:model:display');assert.equal((await vrState()).watch.menu,'display');
+  const contours=await page.isChecked('#contours');
+  await press('radial:display:contours');
+  assert.equal(await page.isChecked('#contours'),!contours,'Contour lines switched from the model view');
+  const roads=await page.isChecked('#feature-roads');
+  await press('radial:display:roads');
+  assert.equal(await page.isChecked('#feature-roads'),!roads,'Roads switched from the model view');
+  await press('radial:center');assert.equal((await vrState()).watch.menu,'model','Back to the model view\'s menu');
+  await press('radial:center');assert.equal((await vrState()).watch.menu,null,'Close');
+  await pose('right',[.15,1.2,-.3]);await pose('left',[-.3,1.1,-.1]);await frames(6);
   state=await vrState();
   assert.equal(state.mode,'model');
   near(state.scale,6.4,.01,'Initial world units per room meter (a 6.4-unit model shown 1 m wide)');
