@@ -207,3 +207,57 @@ def test_surroundings_previews_are_not_announced(app, monkeypatch):
             break
         time.sleep(.01)
     assert [event["type"] for event in events] == ["job"]
+
+
+class FakeElevation:
+    """Elevation tiles where height = 1000·row + column (pixel centers), and zoom 15 tile (1, 1) is open sea."""
+    def __init__(self):
+        self.calls = []
+
+    def tile(self, zoom, x, y):
+        self.calls.append((zoom, x, y))
+        if (zoom, x, y) == (15, 1, 1):
+            raise ValueError("Elevation tile contains missing data; select a different area.")
+        rows, columns = np.mgrid[0:256, 0:256]
+        return (1000 * rows + columns).astype(np.float32)
+
+
+def test_relief_grid_samples_the_coarser_elevation_tile():
+    from terrain_app.relief import ReliefTiles
+    tiles = ReliefTiles(FakeElevation())
+    grid, found = tiles.grid(10, 9, 17, size=17)   # zoom 7 elevation tile (1, 2); this map tile is its (1, 1) eighth
+    assert found and grid.shape == (17, 17) and grid.dtype == np.float32
+    # Corners at the map tile's edges: x from 32 to 64 elevation pixels, y the same (pixel centers are at i + 0.5).
+    assert grid[0, 0] == pytest.approx(1000 * 31.5 + 31.5)
+    assert grid[-1, -1] == pytest.approx(1000 * 63.5 + 63.5)
+    assert grid[8, 0] == pytest.approx(1000 * 47.5 + 31.5)
+    # Siblings in the same elevation tile share their edge.
+    right, _ = tiles.grid(10, 10, 17, size=17)
+    np.testing.assert_allclose(grid[:, -1], right[:, 0])
+    assert tiles.client.calls == [(7, 1, 2)]   # one download served both
+
+
+def test_relief_handles_sea_bounds_and_wrapping():
+    from terrain_app.relief import ReliefTiles
+    tiles = ReliefTiles(FakeElevation())
+    grid, found = tiles.grid(18, 8, 8)   # inside zoom 15 tile (1, 1): open sea
+    assert not found and not grid.any()
+    with pytest.raises(ValueError):
+        tiles.grid(3, 0, 8)
+    with pytest.raises(ValueError):
+        tiles.grid(3, 0, 0, size=20)
+    np.testing.assert_array_equal(tiles.grid(3, 9, 2)[0], tiles.grid(3, 1, 2)[0])   # x wraps around the world
+
+
+def test_relief_endpoint(app, monkeypatch):
+    fake = FakeElevation()
+    monkeypatch.setattr(app.extensions["terrain"]["client"], "tile", fake.tile)
+    client = app.test_client()
+    response = client.get("/api/relief/10/9/17?size=9", headers={"Accept-Encoding": "gzip"})
+    assert response.status_code == 200 and response.headers["X-Relief-Size"] == "9"
+    grid = np.frombuffer(gzip.decompress(response.get_data()), "<f4").reshape(9, 9)
+    assert grid[0, 0] == pytest.approx(1000 * 31.5 + 31.5)
+    assert "max-age" in response.headers["Cache-Control"]
+    assert client.get("/api/relief/18/8/8").headers["X-Relief-Missing"] == "1"
+    assert client.get("/api/relief/3/0/9").status_code == 400
+    assert client.get("/api/config").headers["Cache-Control"] == "no-store"

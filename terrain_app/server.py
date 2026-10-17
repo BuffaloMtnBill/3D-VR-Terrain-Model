@@ -32,6 +32,7 @@ from .studio import marker_ball_file, marker_platform_file, studio_export, studi
 from .hydrography import HydrographyClient, HYDROGRAPHY_URL, water_source
 from . import lamp_handoff
 from .live import Hub
+from .relief import ReliefTiles
 from .pairing import COOKIE as PAIR_COOKIE, is_local
 from .silhouette import PRESET_DATA as SILHOUETTE_PRESETS, SilhouetteOptions, Sources, outline_json, silhouette_export, text_block_json
 from .profiles import profile_json, profile_options
@@ -121,6 +122,7 @@ def create_app(test_config=None):
                                  "features": feature_client, "feature_jobs": feature_jobs, "building_jobs": building_jobs, "zip": zip_client, "places": place_client,
                                  "landcover": cover_client, "cover_jobs": cover_jobs, "hydrography": hydro_client, "water_jobs": water_jobs, "studio_jobs": studio_jobs,
                                  "routes": route_store}
+    relief = ReliefTiles(client)
     hub = Hub()
     app.extensions["terrain"]["live"] = hub
     sock = Sock(app)
@@ -153,7 +155,7 @@ def create_app(test_config=None):
     def response_headers(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        if request.path.startswith("/api/"):
+        if request.path.startswith("/api/") and not request.path.startswith("/api/relief/"):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -432,6 +434,28 @@ def create_app(test_config=None):
                 return jsonify(error="Terrain job expired. Generate the area again."), 404
             record["accessed"] = time.monotonic()
             return jsonify({key: record[key] for key in ("state", "progress", "message")})
+
+    @app.get("/api/relief/<int:zoom>/<int:x>/<int:y>")
+    def relief_tile(zoom, x, y):
+        """The VR map's relief: a small float32 height grid (meters, little-endian, row by row from the north-west)
+        for one map tile. X-Relief-Size gives the grid size; X-Relief-Missing marks areas without elevation data."""
+        try:
+            size = int(request.args.get("size", "17"))
+        except ValueError:
+            raise ValueError("size must be a whole number.") from None
+        heights, found = relief.grid(zoom, x, y, size)
+        body = np.ascontiguousarray(heights, dtype="<f4").tobytes()
+        response = Response(gzip.compress(body, compresslevel=5) if "gzip" in request.headers.get("Accept-Encoding", "") else body,
+                            mimetype="application/octet-stream")
+        if "gzip" in request.headers.get("Accept-Encoding", ""):
+            response.headers["Content-Encoding"] = "gzip"
+        response.headers["X-Relief-Size"] = str(size)
+        response.headers["Vary"] = "Accept-Encoding"
+        if not found:
+            response.headers["X-Relief-Missing"] = "1"
+        # Elevation does not change: let the headset keep tiles it has seen (this beats the API's no-store default).
+        response.headers["Cache-Control"] = "private, max-age=86400"
+        return response
 
     @app.get("/api/terrain/<identifier>")
     def get_terrain(identifier):

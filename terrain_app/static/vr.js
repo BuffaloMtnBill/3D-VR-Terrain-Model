@@ -72,7 +72,7 @@ export function createVR(ctx) {
   // The rig maps the room onto the world: world = position + scale · rotateY(yaw) · room.
   const view={position:new THREE.Vector3(),yaw:0,scale:1,size:6.4,minScale:.001,maxScale:100};
   let flownSeconds=0,session=null,background=null,lastId=null,mode='map';
-  const raycaster=new THREE.Raycaster();
+  const raycaster=new THREE.Raycaster(),roomRaycaster=new THREE.Raycaster();
   const mapMode=createMapMode(ctx,{table:TABLE});rig.add(mapMode.room);
 
   // ---------- controllers ----------
@@ -128,7 +128,7 @@ export function createVR(ctx) {
   let generating=null;   // the terrain showing when Generate was pressed
   watch=createWatch(ctx,{rig,camera,joint,hands,exit:()=>session?.end(),mode:()=>mode,
     generate:()=>{const button=document.getElementById('generate');if(button.disabled)return;generating={from:ctx.state.id};button.click();},
-    showMap:()=>setMode('map')});
+    showMap:()=>setMode('map'),relief:{get on(){return mapMode.relief;},toggle(){mapMode.relief=!mapMode.relief;}}});
 
   // ---------- tiled surface (VR only; the page keeps its single mesh) ----------
   let tiles=null,tiledFrom=null;
@@ -234,6 +234,11 @@ export function createVR(ctx) {
     raycaster.set(toWorld(origin),direction);
     return raycaster;
   }
+  // The same ray in the room, where the map's meshes are drawn.
+  function roomRayFor(hand) {
+    roomRaycaster.set(hand.controller.getWorldPosition(new THREE.Vector3()),new THREE.Vector3(0,0,-1).transformDirection(hand.controller.matrixWorld));
+    return roomRaycaster;
+  }
   const busy=hand=>hand.mode==='grab'||hand.mode==='pan';
   function updateHand(hand) {
     hand.tracked=Boolean(hand.source?.hand);
@@ -249,7 +254,7 @@ export function createVR(ctx) {
       ui=watch.pointer(hand,{origin,direction:new THREE.Vector3(0,0,-1).transformDirection(hand.controller.matrixWorld),pinching:trigger,
         fingertip:hand.tracked?joint(hand,'index-finger-tip')?.position:null});
       // In Map Selection the ray finds the map; a pinch (or trigger) there drags it.
-      if(mode==='map'&&!ui.onUI)onMap=mapMode.hit(rayFor(hand));
+      if(mode==='map'&&!ui.onUI)onMap=hand.mode==='pan'?mapMode.hitAt(rayFor(hand),hand.anchor.y):mapMode.hit(rayFor(hand),roomRayFor(hand),toWorld);
       if(hand.mode==='ui'||(trigger&&!hand.trigger&&ui.onUI)) {
         hand.mode=trigger?'ui':null;
       } else if(trigger&&!hand.trigger) {

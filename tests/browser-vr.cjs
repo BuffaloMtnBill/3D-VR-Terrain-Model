@@ -74,6 +74,27 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await page.waitForFunction(far=>Math.max(...Object.keys(window.testVR().state.map.tiles.zooms).map(Number))>far,far,{timeout:20000});
   await page.evaluate(()=>window.xrDevice.position.set(0,1.55,.05));await frames(6);
 
+  // The map stands in relief: each tile draped over heights from the server, raised by the elevation multiplier.
+  await page.waitForFunction(()=>window.testVR().state.map.tiles.relief>10,null,{timeout:60000});
+  state=await vrState();
+  assert.ok(state.map.tiles.reliefSpan>0,`The relief stands up (${state.map.tiles.reliefSpan} m)`);
+  near(state.map.tiles.lift,Number(await page.inputValue('#exaggeration')),1e-9,'at the page\'s elevation multiplier');
+  assert.ok(state.map.tiles.triangles<400000,`and stays light enough for the headset (${state.map.tiles.triangles} triangles)`);
+
+  // The watch's menu (more of it below) switches the relief off for a flat map: the precise drag checks run flat.
+  async function press(id) {
+    const point=await page.evaluate(id=>window.testVR().watchPoint(id),id);
+    assert.ok(point,`${id} is on show`);
+    await aimAt('right',[.12,1.42,.05],point);await frames();
+    await button('right','trigger',1);await frames();await button('right','trigger',0);await frames(6);
+  }
+  await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);
+  await press('watch:face');await press('radial:root:10');await press('radial:center');
+  state=await vrState();
+  assert.equal(state.map.relief,false,'Flat map from the watch');
+  await page.waitForFunction(()=>window.testVR().state.map.tiles.reliefSpan===0);
+  await pose('left',[-.4,1,.1]);await pose('right',[.4,1,.1]);await frames(4);
+
   // Dragging the map with the ray: the map moves under the box, so the selection moves the other way.
   const metersPerDegree=111320*Math.cos(center(start).y*Math.PI/180);
   state=await vrState();
@@ -98,16 +119,24 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   near(Math.abs(zoomedIn.rotation_deg),90,1,'A quarter turn of the hands turns the selection a quarter turn');
   assert.match(await page.locator('#selection-rotation').innerText(),/90/,'The page\'s own selection is turned too');
 
+  // Relief back on; dragging over it glides at the height it started from.
+  await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);
+  await press('watch:face');await press('radial:root:10');await press('radial:center');
+  await page.waitForFunction(()=>window.testVR().state.map.relief&&window.testVR().state.map.tiles.reliefSpan>0,null,{timeout:60000});
+  const reliefFrom=(await vrState()).pageSelection;
+  await aimAt('right',[.25,1.2,-.3],[0,.75,-.8]);await frames();
+  await button('right','trigger',1);await frames();
+  for(const x of [.03,.06,.1]){await aimAt('right',[.25,1.2,-.3],[x,.75,-.8]);await frames();}
+  await button('right','trigger',0);await frames(6);
+  const reliefTo=(await vrState()).pageSelection,scaleNow=(await vrState()).scale;
+  // The map is turned by now, so check the distance: about the 10 cm swept (more or less with the hills' height).
+  const movedMeters=Math.hypot((center(reliefTo).x-center(reliefFrom).x)*metersPerDegree,(center(reliefTo).y-center(reliefFrom).y)*111320);
+  assert.ok(movedMeters>.05*scaleNow&&movedMeters<.2*scaleNow,`Dragging over the relief moves the map too (${Math.round(movedMeters)} m at ${Math.round(scaleNow)} m per room meter)`);
+
   // The watch on the left controller (the left wrist with hands): pointing at it and pulling the trigger opens a
   // radial menu of the map generator's options, each one the page's own control.
   await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);
   assert.ok((await vrState()).watch.face,'The watch is on the left controller');
-  async function press(id) {
-    const point=await page.evaluate(id=>window.testVR().watchPoint(id),id);
-    assert.ok(point,`${id} is on show`);
-    await aimAt('right',[.12,1.42,.05],point);await frames();
-    await button('right','trigger',1);await frames();await button('right','trigger',0);await frames(6);
-  }
   await press('watch:face');
   assert.equal((await vrState()).watch.menu,'root','The watch opens the radial menu');
   const item=async(menu,label)=>{   // a menu's segment by its label, read from the page's own control
@@ -126,6 +155,7 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await press('radial:root:4');assert.equal((await vrState()).watch.menu,'multiplier');
   await press(await item('multiplier','+'));
   near(Number(await page.inputValue('#exaggeration')),multiplier+.1,1e-9,'Multiplier + adds a step to the page\'s multiplier');
+  await page.waitForFunction(m=>Math.abs(window.testVR().state.map.tiles.lift-m)<1e-9,multiplier+.1);   // the relief rises with it
   await press('radial:center');assert.equal((await vrState()).watch.menu,'root','The middle goes back');
   // Shape: a circle, then a rectangle again; the box on the table changes with it.
   await press('radial:root:6');await press(await item('shape','circle'));

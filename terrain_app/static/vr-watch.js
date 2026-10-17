@@ -28,7 +28,7 @@ function surface(name,width,height,pixels) {
     regionAt(x,y){return this.regions.find(region=>!region.disabled&&region.contains(x,y))||null;}};
 }
 
-export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showMap}) {
+export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showMap,relief}) {
   const raycaster=new THREE.Raycaster();
   const face=surface('watch',.045,.045,256),radial=surface('radial menu',.3,.3,1024),keyboard=surface('keyboard',.56,.24,1600);
   const wrist=surface('wrist button',.075,.04,512);
@@ -54,7 +54,8 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
       {label:'Source',press:()=>open('source')},{label:'Detail',press:()=>open('detail')},{label:'Profile',press:()=>open('profile')},
       {label:'Multiplier',press:()=>open('multiplier')},{label:'Base',press:()=>open('base')},
       {label:'Shape',press:()=>open('shape')},{label:'Aspect',press:()=>open('aspect')},{label:'Features',press:()=>open('features')},
-      {label:'Exit VR',press:()=>exit()}]},
+      {label:'Exit VR',press:()=>exit()},
+      {label:relief.on?'Flat map':'3D relief',press:()=>relief.toggle()}]},
     source:{title:'Elevation source',items:()=>selectItems($('elevation-source'))},
     detail:{title:'Terrain detail',items:()=>selectItems($('resolution'))},
     profile:{title:'Elevation profile',items:()=>selectItems($('relief-method'))},

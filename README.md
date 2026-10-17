@@ -213,6 +213,14 @@ is the selection. The map is the topographic style, with hill shading and contou
 sharper the closer they are to your eyes: lean in, or zoom in, and finer tiles load (a coarse layer underneath means
 the map never shows holes while they arrive).
 
+The map stands in **3D relief**: each tile is draped over a low-resolution height grid (17 × 17 points, from
+`/api/relief/<z>/<x>/<y>`, which samples the elevation tiles the generator already caches, three zooms coarser so one
+download serves up to 64 map tiles). The relief is raised by the page's elevation multiplier, so Map Selection
+previews roughly what the model will look like, and changes with it at once. A short skirt along each tile's edge
+hides the cracks between tiles of different detail. The box gets low glowing walls so it reads over hills, and a
+drag glides at the height where it took the map. **Flat map** on the watch switches the relief off (**3D relief**
+switches it back).
+
 | Hands | Controllers | Map Selection |
 | --- | --- | --- |
 | Point at the map and pinch, then sweep | Point and pull the trigger, then sweep | Drag the map under the box |
@@ -238,6 +246,7 @@ finger, or point at it and pinch. The menu floats in front of you; each segment 
 | Aspect | 1:1, 3:4, 16:9 (the same one again turns it) |
 | Features | The map features shown on the model, each a switch |
 | Exit VR | Back to the page |
+| Flat map / 3D relief | Switch the map's relief off or on |
 
 The middle of the menu goes back (or closes it); touching the watch again closes it too.
 
