@@ -189,3 +189,14 @@ label.route-option { justify-content: flex-start; }
 .vr-launch:hover,.vr-launch:focus-visible{filter:brightness(1.12)}.vr-launch small{margin-left:auto;font-size:14px;font-weight:450;opacity:.85}
 .vr-launch-mark{display:inline-grid;place-items:center;width:62px;height:46px;border:3px solid currentColor;border-radius:14px;font-size:20px;letter-spacing:1px}
 @media(max-width:900px){.vr-launch{font-size:24px;min-height:72px}.vr-launch small{display:none}}
+/* The headset's basic page: the map and its selection box, and Enter VR. The 3D preview keeps running off screen
+   (VR draws with it); everything else is for the computer. */
+.headset-only{display:none}
+.headset-page .headset-only{display:inline-flex}
+.headset-page .sidebar,.headset-page .style-sidebar,.headset-page .stats-strip,.headset-page .profile-panel,.headset-page .topbar-description,
+.headset-page #restart-server,.headset-page #help-button,.headset-page .data-badge,.headset-page #follow-label{display:none}
+.headset-page .terrain-panel{position:absolute;left:-10000px;top:0;width:640px}
+.headset-page .view-panes{grid-template-columns:1fr}
+.headset-page .map-wrapper{height:calc(100vh - 430px);min-height:340px}
+.headset-page .vr-launch{min-height:120px;font-size:42px}.headset-page .vr-launch small{font-size:17px}
+.full-page-link{font-size:12px;font-weight:550}

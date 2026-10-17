@@ -201,45 +201,50 @@ says so); data requests retry too, and a terrain being generated is picked up wh
 about a third of the JSON size and no number parsing on the headset. In VR the surface is drawn in tiles of 48 × 48
 grid cells that share the page's buffers, so at life size the ground out of view is not drawn.
 
-The model starts as a 1 m tabletop model in front of you, sitting on a large flat map at its real place: the
-OpenStreetMap street map (or the topographic map) is laid out under it, turned with the selection, in a detailed
-layer four times the model's size and a wide layer sixteen times its size that fades out at its edge. In the Cut
-tab the cut's surroundings stand on the same map. **Ground map** on the Cut and Terrain tabs switches between
-Streets, Topographic, and Off; the headset loads the map tiles from the internet, as the page's map does. Hands and controllers both work; put the controllers
-down and the headset switches to hand tracking. Your hands are drawn like the Quest's own: a see-through hand
-with a white outline that turns gold and thickens while you pinch.
+**The headset's page.** The Quest's browser gets a basic page: the map with its selection box and a big **Enter
+VR** button (**Full page** in the header shows everything; `?headset` shows the basic page on any browser).
 
-| Hands | Controllers | Effect |
+VR has two modes, and works with tracked hands or controllers (put the controllers down and the Quest switches to
+hand tracking; your hands are drawn as see-through outlined hands that turn gold while you pinch).
+
+**Map Selection** (where VR starts) is the page's map and selection box in 3D. The box stays fixed on a table in
+front of you and the map moves beneath it, just as the page's map moves beneath its frame: whatever is under the box
+is the selection. The map is the topographic style, with hill shading and contour lines, drawn in tiles that get
+sharper the closer they are to your eyes: lean in, or zoom in, and finer tiles load (a coarse layer underneath means
+the map never shows holes while they arrive).
+
+| Hands | Controllers | Map Selection |
 | --- | --- | --- |
-| Pinch (thumb and index) in open air | One trigger | Grab the world and drag it |
-| Pinch with both hands, apart / together | Both triggers, apart / together | Zoom in / out around your hands, from a model 8 cm across to life size |
-| Pinch with both hands, turn them | Both triggers, turn your hands | Turn the world about the vertical, as if holding it |
-| Turn a palm toward you, tap **Menu** above it with the other index finger | A or X | Open or close the menu |
-| Point at the menu and pinch | Trigger on the menu | Press buttons and drag sliders |
-| — | Thumbstick | Fly toward where that hand points, at the same room speed at every zoom |
+| Point at the map and pinch, then sweep | Point and pull the trigger, then sweep | Drag the map under the box |
+| Pinch with both hands, apart / together | Both triggers, apart / together | Zoom in / out: the box covers less / more ground |
+| Pinch with both hands, turn them | Both triggers, turn them | Turn the map, which turns the selection |
+| Pinch in open air and move | Trigger in open air and move | Drag the map with your hand |
 
-The menu has the page's own controls in three tabs.
+Every drag, zoom, and turn sets the page's selection when you let go (and the computer's page follows it while you
+move). When the selection changes another way (a search, a shape or aspect change) the map moves to match.
 
-**Cut** is where the selection is chosen. It replaces the model with the surroundings of the cut (an area three
-times its size, loaded at 160 points per side) and draws the cut as a glowing fence, with the ground outside it
-dimmed. Five handles float above the fence; pinch one where it is (or point at it and pinch) and drag:
+**The watch on your left wrist** (on top of the left controller) opens a radial menu: touch it with your right index
+finger, or point at it and pinch. The menu floats in front of you; each segment is one of the page's own controls:
 
-| Handle | Effect |
+| Segment | Choices |
 | --- | --- |
-| Middle | Move the cut |
-| East side / south side | Stretch the width / height (about the middle) |
-| Corner | Scale the whole cut, keeping its proportions |
-| Ring beyond the north side | Turn the cut (snaps back to north-up within 2°) |
+| Search | A keyboard: type an address, place, US ZIP code, or "latitude longitude" and press Search; the map goes there |
+| Source | Elevation source |
+| Detail | Terrain detail |
+| Profile | Elevation profile (standard, local, lowland, …) |
+| Multiplier | Elevation multiplier: − and + one step, −− and ++ ten steps |
+| Base | Base thickness, the same way |
+| Shape | Rectangle, circle, or oval |
+| Aspect | 1:1, 3:4, 16:9 (the same one again turns it) |
+| Features | The map features shown on the model, each a switch |
+| Exit VR | Back to the page |
 
-Each drag sets the page's own selection, so the map frame, shape (rectangle, circle, oval) and aspect buttons
-stay in step, and the tab has those too, with the elevation multiplier, model size, and terrain detail. Moving the
-cut past the loaded surroundings loads new ones around it. **Generate this cut** makes the model and shows it.
+The middle of the menu goes back (or closes it); touching the watch again closes it too.
 
-**Terrain** has the famous landscapes, elevation source, terrain detail, Generate terrain, the View and Colors
-buttons, the elevation profile, the elevation multiplier, base thickness and contour lines. **Map layers** has every
-map-feature switch and detail setting, and Save as default (the page's style preferences, kept in the browser).
-The menu changes the page's real inputs. **Reset view** brings back the tabletop model and **Exit VR** returns to
-the page.
+**The button on your right wrist** (on top of the right controller), touched with the left index finger or pointed at
+and pinched, reads **Generate** in Map Selection: the box's area is generated (the button shows the progress), and
+VR switches to the **model view**, the new model as a 1 m tabletop model to grab, zoom, and turn (one pinch drags
+it, two pinches zoom and turn it, controller sticks fly over it). There the button reads **◀ Map** and goes back.
 
 **From the headset to the computer.** While you work in VR, the headset hands its workspace to the server a few
 times a second: the cut (even mid-drag), its name, the elevation source and detail, every model and map-layer
@@ -918,11 +923,14 @@ switching, cached sources, saved preferences, and late-response handling.
 the silhouette design page (the shared slice, text and mount settings, STL and SVG downloads, saved settings).
 `node tests/browser-ridge-edit.cjs` checks curve dragging, cancellation, multi-ridge deletion, Undo/Redo, exports, and saved edits.
 `node tests/browser-selection-shapes.cjs` checks circle/oval border dragging, rotation, generation, the 3D design handoff, and clipped GLB exports. The fixture server uses synthetic elevations for round selections.
-`node tests/browser-vr.cjs` drives the VR explorer on an emulated Meta Quest 3 (the `iwer` npm package; set
-`TERRAIN_IWER_PATH` to its `build/iwer.min.js` if it is installed elsewhere). It flies, grabs, zooms, and turns,
-uses the menu's switches, slider, and buttons, checks the tiled surface and that the live link reconnects, and checks that nothing can be saved from VR.
-`node tests/browser-vr-hands.cjs` does the hand-tracking workflow: pinch to grab, the palm menu, the Cut tab's
-handles (move, stretch, scale, turn), Generate this cut, then **Continue here** and an STL export on a second page.
+`node tests/browser-vr.cjs` drives VR with controllers on an emulated Meta Quest 3 (the `iwer` npm package; set
+`TERRAIN_IWER_PATH` to its `build/iwer.min.js` if it is installed elsewhere): Map Selection (tiles that sharpen as
+you lean in, dragging, zooming, and turning the map, the page's selection following), every watch menu and the
+keyboard search, Generate and ◀ Map on the right wrist, then the model view (flying, grabbing, zooming, turning, the
+tiled surface, the live link reconnecting) and that nothing can be saved from VR.
+`node tests/browser-vr-hands.cjs` does the same workflow with hands (pinches, fingertip touches on the watch, keys,
+and wrist button), with a second page standing in for the computer: it follows the box, opens the generated model,
+and exports an STL. `node tests/browser-headset-page.cjs` checks the headset's basic page.
 Set `TERRAIN_CHROMIUM_PATH` when using an existing Chromium executable.
 The test intercepts map, ZIP, and feature requests with fixtures, exercises ZIP
 navigation and errors, two-point alignment with mouse/touch, cancellation,

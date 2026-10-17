@@ -1,4 +1,4 @@
-/* Hand-tracking VR cut workflow on an emulated Meta Quest 3, then the handoff to the computer's page.
+/* Hand-tracking VR on an emulated Meta Quest 3, with a second page standing in for the computer.
  * Run scripts/browser_fixture_server.py (port 8001) first. TERRAIN_PLAYWRIGHT_PATH points at a Playwright package,
  * TERRAIN_IWER_PATH at the IWER emulator's build/iwer.min.js, and TERRAIN_CHROMIUM_PATH at a Chromium binary if needed.
  * The surroundings of the cut are real elevation downloads (through the fixture server's normal tile cache).
@@ -89,108 +89,95 @@ async function openPage(browser,headset) {
   await pinch('right',0);await frames();
   assert.equal((await vrState()).hands[1].mode,null,'Opening the fingers lets go');
 
-  // Palm toward you shows the Menu button; tapping it with the other index finger opens the menu.
-  await place('left',[-.1,1.4,-.3],PALM_TOWARD_YOU);await frames(6);
+  // Map Selection with hands: point at the map, pinch, and sweep the ray to drag the map under the box.
+  assert.equal((await vrState()).mode,'map','VR starts in Map Selection');
+  const aimHand=(hand,from,target)=>page.evaluate(async([hand,from,target])=>{
+    const THREE=await import('three'),direction=new THREE.Vector3(...target).sub(new THREE.Vector3(...from)).normalize();
+    const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,-1),direction);
+    const h=window.xrDevice.hands[hand];h.position.set(...from);h.quaternion.set(q.x,q.y,q.z,q.w);
+  },[hand,from,target]);
+  const startSelection=(await vrState()).pageSelection;
+  await aimHand('right',[.25,1.2,-.3],[0,.75,-.8]);await frames();
+  await pinch('right',1);await frames();
+  assert.equal((await vrState()).hands[1].mode,'pan','A pinch while pointing at the map takes it');
+  for(const x of [.03,.06,.1]){await aimHand('right',[.25,1.2,-.3],[x,.75,-.8]);await frames();}
+  await pinch('right',0);await frames(6);
+  const panned=(await vrState()).pageSelection;
+  assert.ok((panned.west+panned.east)/2<(startSelection.west+startSelection.east)/2,'Sweeping the ray east drags the map east, so the selection moves west');
+  await place('right',[.25,1.3,-.35]);await frames();
+
+  // The watch on the back of the left wrist: touch it with the right index finger to open the radial menu.
+  await place('left',[-.06,1.32,-.32]);await place('right',[.3,1.1,-.2]);await frames(6);
   state=await vrState();
-  assert.ok(state.palmButton,'The palm button shows when the palm faces you');
-  const tip=state.hands[1].indexTip,rightAt=await handPosition('right');
-  await place('right',rightAt.map((value,i)=>value+state.palmButton[i]-tip[i]));await frames(6);
-  assert.equal((await vrState()).menuOpen,true,'Tapping the palm button opens the menu');
-  await place('left',[-.25,1.2,-.4]);await place('right',[.25,1.2,-.4]);await frames(6);
-  assert.equal((await vrState()).palmButton,null,'The button hides when the palm turns away');
+  assert.ok(state.watch.face,'The watch is on the left wrist');
+  // Measure the fingertip with the hand held level first: pointing turns the hand, which moves the tip.
+  const touch=async point=>{
+    await place('right',[.3,1.1,-.2]);await frames(4);
+    const s=await vrState(),tip=s.hands[1].indexTip,at=await handPosition('right');
+    await place('right',at.map((value,i)=>value+point[i]-tip[i]));await frames(4);
+    await place('right',[.3,1.1,-.2]);await frames(4);
+  };
+  await touch(state.watch.face);
+  assert.equal((await vrState()).watch.menu,'root','Touching the watch opens the radial menu');
+  // Point at a segment and pinch: Multiplier, then +. A pinch on the menu never drags the map.
+  const beforeMenu=(await vrState()).pageSelection,multiplier=Number(await page.inputValue('#exaggeration'));
+  const choose=async id=>{
+    const point=await page.evaluate(async id=>(await import('/static/vr.js')).currentVR().watchPoint(id),id);
+    assert.ok(point,`${id} is on show`);
+    await aimHand('right',[.1,1.45,.05],point);await frames();
+    await pinch('right',1);await frames();await pinch('right',0);await frames(6);
+  };
+  await choose('radial:root:4');assert.equal((await vrState()).watch.menu,'multiplier');
+  await choose('radial:multiplier:2');
+  near(Number(await page.inputValue('#exaggeration')),multiplier+.1,1e-9,'Pointing and pinching on + raises the multiplier');
+  assert.deepEqual((await vrState()).pageSelection,beforeMenu,'Pinching on the menu leaves the map alone');
+  // The keyboard takes fingertip presses too.
+  await choose('radial:center');await choose('radial:root:0');
+  assert.equal((await vrState()).watch.keyboard,true);
+  await touch(await page.evaluate(async()=>(await import('/static/vr.js')).currentVR().watchPoint('key:7')));
+  assert.equal((await vrState()).watch.text.endsWith('7'),true,'Touching a key types it');
+  await choose('key:cancel');assert.equal((await vrState()).watch.keyboard,false,'Cancel puts the keyboard away');
+  await place('left',[-.25,1.2,-.4]);await place('right',[.25,1.2,-.4]);await frames(4);
 
-  // The Cut tab shows the surroundings with the cut's fence and handles.
-  await tap('right','^tab:cut$');
+  // The computer's page follows the box as you move the map.
+  const selectionText=async p=>[await p.locator('#selection-size').innerText(),await p.locator('#selection-rotation').innerText()];
+  await computer.waitForFunction(text=>document.getElementById('selection-size').textContent===text,(await selectionText(page))[0],{timeout:10000});
+  assert.deepEqual(await selectionText(computer),await selectionText(page),'The computer\'s map frame follows the headset');
+
+  // Generate from the right wrist, touched with the left index finger: the model view shows the new terrain.
+  await place('right',[.12,1.32,-.32]);await place('left',[-.3,1.1,-.2]);await frames(6);
   state=await vrState();
-  assert.equal(state.menuTab,'cut');
-  state=await until(s=>s.cut.ready&&Object.values(s.cut.handles).some(Boolean),120000,'the surroundings to load');
-  await frames(10);
-  state=await vrState();
-  assert.equal(state.cut.active,true);
-  assert.ok(Object.values(state.cut.handles).filter(Boolean).length>=4,`The cut has handles: ${JSON.stringify(state.cut)}`);
-  const start=state.cut.frame;
-  // The surroundings stand on the ground map, north up, at the cut's scale.
-  assert.equal(state.ground.parent,'Scene');assert.equal(state.ground.rotation,0,'Under the surroundings the map is north up');
-  near(state.ground.scale,state.cut.scale,1e-9,'and scaled like the surroundings');
-  state=await until(s=>s.ground.layers.length===2,30000,'the ground map layers');
-  assert.ok(state.ground.layers.every(layer=>layer.tiles>0),'The ground map is made of map tiles');
+  assert.equal(state.watch.buttonLabel,'Generate');
+  const touchLeft=async point=>{
+    await place('left',[-.3,1.1,-.2]);await frames(4);
+    const s=await vrState(),tip=s.hands[0].indexTip,at=await handPosition('left');
+    await place('left',at.map((value,i)=>value+point[i]-tip[i]));await frames(4);
+    await place('left',[-.3,1.1,-.2]);await frames(4);
+  };
+  const wanted=state.pageSelection;
+  await touchLeft(state.watch.button);
+  state=await until(s=>s.mode==='model',120000,'the generated model');
+  for(const key of ['north','south','west','east'])near(state.area.bounds[key],wanted[key],1e-6,`The box's area was generated (${key})`);
+  assert.ok(state.tiles>0,'and shown as the model');
+  // The computer opens the same model by itself.
+  await computer.waitForFunction(()=>document.getElementById('selection-state').textContent==='Terrain generated',null,{timeout:30000});
+  assert.deepEqual(await selectionText(computer),await selectionText(page),'The computer shows the same cut');
 
-  async function dragHandle(name,move) {
-    const s=await vrState(),room=toRoom(s,s.cut.handles[name]);
-    await pinchAt('right',room);
-    await pinch('right',1);await frames();
-    assert.equal((await vrState()).hands[1].mode,'handle',`Pinching the ${name} handle takes it`);
-    for(let step=1;step<=4;step++){await pinchAt('right',room.map((value,i)=>value+move[i]*step/4));}
-    await pinch('right',0);await frames(8);
-    return (await vrState()).cut.frame;
-  }
-  // Each drag finishes by setting the page's selection; the fence then follows the page (cut.frame is read back from it).
-  let moved=await dragHandle('move',[.08,0,0]);
-  assert.ok(moved.cx-start.cx>0,`Moving the middle handle east moves the cut east (${moved.cx-start.cx} m)`);
-  near(moved.w,start.w,start.w*.01,'Moving keeps the width');
-  const wider=await dragHandle('width',[.05,0,0]);
-  assert.ok(wider.w>moved.w*1.05,`The side handle widens the cut (${moved.w} → ${wider.w} m)`);
-  near(wider.h,moved.h,moved.h*.01,'Widening keeps the height');
-  const scaled=await dragHandle('scale',[.04,0,.04]);
-  assert.ok(scaled.w>wider.w*1.05&&scaled.h>wider.h*1.05,'The corner handle scales both sides');
-  near(scaled.w/scaled.h,wider.w/wider.h,.02,'Scaling keeps the proportions');
-  // The ring sits north of the middle; pulling it east turns the cut clockwise, as on the map.
-  const turned=await dragHandle('rotate',[.06,0,0]);
-  assert.ok(Math.abs(turned.angle)>=5,`The ring turns the cut (${turned.angle}°)`);
-  const selection=await page.evaluate(()=>document.getElementById('selection-rotation').textContent);
-  assert.match(selection,new RegExp(`${Math.abs(turned.angle)}`),`The page's own selection is turned too (${selection})`);
-  // The computer's map frame follows the cut live, before anything is generated.
-  await computer.waitForFunction(text=>document.getElementById('selection-rotation').textContent===text,selection,{timeout:10000});
-  assert.equal(await computer.locator('#selection-size').innerText(),await page.locator('#selection-size').innerText(),'The computer shows the same cut size');
+  // ◀ Map on the same button goes back to Map Selection.
+  await place('right',[.12,1.32,-.32]);await frames(6);
+  assert.equal((await vrState()).watch.buttonLabel,'◀ Map');
+  await touchLeft((await vrState()).watch.button);
+  assert.equal((await vrState()).mode,'map','◀ Map returns to Map Selection');
 
-  // Scale: the elevation multiplier raises the surroundings while you watch.
-  await tap('right','^cut:exaggeration:plus$');
-  await page.screenshot({path:path.join(output,'vr-hands-cut.png')});
-
-  // Generate this cut: the new model replaces the surroundings.
-  const generate=(await vrState()).regions.find(r=>/^cut:button\d+$/.test(r.id)&&!r.disabled);
-  assert.ok(generate,'Generate this cut is available');
-  await tap('right',`^${generate.id}$`);
-  await until(s=>s.menuTab==='terrain'&&!s.cut.active,120000,'the generated cut to replace the surroundings');
-  await page.waitForFunction(()=>document.getElementById('selection-state').textContent==='Terrain generated',null,{timeout:30000});
-  assert.match(await page.locator('#scene-detail').innerText(),new RegExp(`${Math.abs(turned.angle)}° selection`));
-  // Under the model, the map turns with the cut, so the model sits on it in its real place.
-  state=await until(s=>Math.abs(s.ground.rotation-turned.angle*Math.PI/180)<1e-6,10000,'the ground map to turn with the model');
-  for(const label of ['terrain','off','streets']) {
-    await tap('right','^terrain:ground-map$');
-    state=await vrState();assert.equal(state.ground.style,label,`The Ground map switch cycles to ${label}`);
-  }
-
-  // The computer's page followed along: same cut, same model, without touching it.
-  const mirrored=async()=>({rotation:await computer.locator('#selection-rotation').innerText(),detail:await computer.locator('#scene-detail').innerText(),
-    exaggeration:await computer.locator('#exaggeration').inputValue()});
-  await computer.waitForFunction(text=>document.getElementById('scene-detail').textContent===text,await page.locator('#scene-detail').innerText(),{timeout:30000});
-  assert.deepEqual(await mirrored(),{rotation:await page.locator('#selection-rotation').innerText(),detail:await page.locator('#scene-detail').innerText(),
-    exaggeration:await page.locator('#exaggeration').inputValue()},'The computer mirrors the headset as you edit');
-  assert.equal(await computer.locator('#live-offer').isHidden(),true,'Following needs no Continue here');
-
-  // Not following: the computer keeps its own view and offers the headset's work instead.
-  await computer.locator('#follow-headset').uncheck();
-  const kept=await computer.locator('#exaggeration').inputValue();
-  await tap('right','^tab:terrain$');
-  await tap('right','^terrain:exaggeration:plus$');
-  await computer.waitForFunction(()=>!document.getElementById('live-offer').hidden,null,{timeout:10000});
-  assert.equal(await computer.locator('#exaggeration').inputValue(),kept,'Unfollowed, the computer keeps its own settings');
-  assert.equal(await computer.locator('#live-offer-open').innerText(),'Continue here');
-
-  // Taking off the headset: Continue here brings the latest work over.
-  await tap('right','^exit-vr$');
+  // Leaving VR returns to the page; the computer exports the model with the page's usual export.
+  await page.evaluate(async()=>(await import('/static/vr.js')).currentVR().exit());
   await page.waitForTimeout(500);
-  assert.equal(await page.evaluate(async()=>(await import('/static/vr.js')).currentVR().presenting),false,'Exit VR leaves the headset view');
-  await computer.click('#live-offer-open');
-  await computer.waitForFunction(()=>/Continued from the headset/.test(document.getElementById('toast').textContent),null,{timeout:30000});
-  assert.equal(await computer.locator('#exaggeration').inputValue(),await page.locator('#exaggeration').inputValue(),'Continue here brings the latest settings');
-  assert.equal(await computer.locator('#scene-detail').innerText(),await page.locator('#scene-detail').innerText(),'and the same model');
-  // Exporting on the computer is the ordinary page export.
+  assert.equal(await page.evaluate(async()=>(await import('/static/vr.js')).currentVR().presenting),false,'Leaving VR returns to the page');
+  assert.equal(await computer.locator('#scene-detail').innerText(),await page.locator('#scene-detail').innerText(),'The computer has the headset\'s model');
   await computer.click('#export-button');
   const download=computer.waitForEvent('download',{timeout:60000});
   await computer.locator('[data-export="stl"]').click();
-  assert.match((await download).suggestedFilename(),/\.stl$/);
+  assert.match((await download).suggestedFilename(),/\.stl$/,'and exports it');
 
   for(const [name,p] of [['headset',page],['computer',computer]])assert.deepEqual(p.errors,[],`No ${name} page errors: ${p.errors.join('; ')}`);
   await browser.close();

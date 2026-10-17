@@ -180,7 +180,8 @@ function setupMap(config) {
     if(!zip&&parts.length===2&&parts.every(Number.isFinite)) {
       if(Math.abs(parts[0])>85||Math.abs(parts[1])>180)return notify('Latitude must be within ±85° and longitude within ±180°.',true);
       placeRequest?.abort();placeRequest=null;status.hidden=true;
-      selectionFrame.cancelAlignment();map.setView(parts,12);return;
+      // Centered in the frame, and the selection set at once (a headset in VR runs no page animation frames).
+      selectionFrame.cancelAlignment();selectionFrame.centerOn(parts,12);return;
     }
     placeRequest?.abort();const controller=new AbortController();placeRequest=controller;
     const button=$('place-form').querySelector('button');button.disabled=true;
