@@ -54,6 +54,9 @@ export function createHandSkin(xrHand) {
     update(pinching) {
       if(!model)return false;
       const joints=xrHand.joints||{};
+      // A hand that has lost tracking is hidden, not left frozen where it was last seen (the joint dots show instead).
+      model.visible=JOINTS.every(name=>joints[name]?.visible);
+      if(!model.visible)return false;
       bones.forEach((bone,index)=>{
         const joint=joints[JOINTS[index]];
         if(bone&&joint?.visible){bone.position.copy(joint.position);bone.quaternion.copy(joint.quaternion);}
@@ -63,6 +66,6 @@ export function createHandSkin(xrHand) {
       material.userData.uniforms.rimWidth.value+=((pinching?.62:.45)-material.userData.uniforms.rimWidth.value)*.35;
       return true;
     },
-    get ready(){return Boolean(model);},get failed(){return failed;},
+    get ready(){return Boolean(model&&model.visible);},get failed(){return failed;},
   };
 }
