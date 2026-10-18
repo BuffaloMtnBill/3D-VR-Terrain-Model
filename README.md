@@ -936,7 +936,8 @@ Optional environment variables:
 
 By default the server listens on every interface over HTTPS, and every device other than this computer must pair
 with the PIN first. This is a home-network workstation app, not a multi-user hosted service. `--local` binds to
-loopback over plain HTTP instead, with no pairing.
+loopback over plain HTTP instead, with no pairing. In local mode, `--host` accepts only a loopback IP address
+or `localhost`; network addresses such as `0.0.0.0` are rejected. Omit `--local` when connecting a headset over Wi-Fi.
 
 To refresh the bundled terrain for the first famous landscape from the live elevation service:
 
