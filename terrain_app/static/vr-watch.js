@@ -11,6 +11,7 @@ const fire=(el,type)=>el.dispatchEvent(new Event(type,{bubbles:true}));
 const UI={ink:'#fff6d6',muted:'#a9ae99',accent:'#e9c890',fill:'#101b14eb',raised:'#223329',hover:'#35503a',active:'#4b6d46',line:'#5c6448',
   sans:'Inter,"Segoe UI",Arial,sans-serif'};
 const POKE={touch:.012,release:.025,hover:.07};   // fingertip distance (m) from a surface that presses it, lets it go, lights it
+const title=word=>word[0].toUpperCase()+word.slice(1);
 const short=text=>text.replace(/\s*·.*$/,'').replace(/\s*\(.*\)\s*$/,'').trim();
 const shown=el=>Boolean(el)&&!el.closest('[hidden]');
 function labelOf(el) {
@@ -50,40 +51,78 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
       el.value=String(Number(snapped.toFixed(6)));fire(el,'input');fire(el,'change');};
     // Spoken as words: "plus", "minus ten", …
     const said={'−−':['minus ten','down ten','much less'],'−':['minus','down','less'],'+':['plus','up','more'],'++':['plus ten','up ten','much more']};
-    return [['−−',-10],['−',-1],['+',1],['++',10]].map(([label,steps])=>({label,aliases:said[label],press:()=>set(Number(el.value)+steps*step)}));
+    return [['−−',-10],['−',-1],['+',1],['++',10]].map(([label,steps])=>({label,aliases:said[label],local:true,press:()=>set(Number(el.value)+steps*step)}));
   };
   const SPOKEN={'feature-at':['appalachian trail']};   // labels too short to listen for as they are
   const features=()=>[...document.querySelectorAll('#style-editor input[type=checkbox][id^="feature-"]')].filter(shown).map(el=>({
     key:el.id.replace('feature-',''),label:short(labelOf(el)),aliases:SPOKEN[el.id],active:el.checked,press:()=>el.click()}));
+  const chosen=el=>el?short([...el.options].find(option=>option.value===el.value)?.textContent||''):'';
+  const onCount=items=>`${items.filter(item=>item.active).length} on`;
+  // Layers come in groups of switches; any not in a group (Buildings, and any added later) sit beside the groups.
+  const GROUPS=[['transport','Roads & rail',['roads','railways'],['roads and rail','transport']],['boundaries','Boundaries',['borders','cities','parks'],[]],
+    ['outdoors','Outdoors',['water','at','trails'],['outdoor']]];
+  const grouped=GROUPS.flatMap(([, ,keys])=>keys),inGroup=keys=>features().filter(f=>keys.includes(f.key));
+  // The menus, a few options to a ring. An item with `open` opens that menu; `local` items (steps, Exit's confirm)
+  // can be said only while on show. `detail` is the current value, shown under the label.
   const MENUS={
     root:{title:'Map options',items:()=>[
       {key:'search',label:'Search',press:()=>openKeyboard()},
-      {key:'source',label:'Source',press:()=>open('source')},{key:'detail',label:'Detail',press:()=>open('detail')},{key:'profile',label:'Profile',press:()=>open('profile')},
-      {key:'multiplier',label:'Multiplier',press:()=>open('multiplier')},{key:'base',label:'Base',press:()=>open('base')},
-      {key:'shape',label:'Shape',press:()=>openEditor()},{key:'features',label:'Features',press:()=>open('features')},
-      {key:'exit',label:'Exit VR',press:()=>exit()},
-      {key:'relief',label:relief.on?'Flat map':'3D relief',press:()=>relief.toggle()},
-      {key:'voice',label:voiceCommands.on?'Voice: on':'Voice: off',aliases:['voice'],active:voiceCommands.on,press:()=>voiceCommands.toggle()}]},
-    // The model view's own menu: the sky around the model, and what is drawn on the model.
-    model:{title:'Model view',items:()=>[
-      ...backgrounds.list.map(b=>({key:b.key,label:b.label,active:backgrounds.current===b.key,press:()=>backgrounds.set(b.key)})),
-      {key:'display',label:'On the model',aliases:['on the model','display','features'],press:()=>open('display')}]},
-    display:{title:'On the model',items:()=>[...features(),
-      {key:'contours',label:'Contour lines',aliases:['contours'],active:$('contours').checked,press:()=>$('contours').click()}]},
+      {key:'shape',label:'Area',aliases:['shape'],detail:title(ctx.state.selection?.shape||'rectangle'),press:()=>openEditor()},
+      {key:'terrain',label:'Terrain',open:'terrain',detail:chosen($('resolution'))},
+      {key:'layers',label:'Layers',aliases:['features','map features'],open:'layers',detail:onCount(features())},
+      {key:'settings',label:'Settings',open:'settings',detail:relief.on?'3D relief':'Flat map'}]},
+    terrain:{title:'Terrain',items:()=>[
+      {key:'source',label:'Source',aliases:['elevation source'],open:'source',detail:chosen($('elevation-source'))},
+      {key:'detail',label:'Detail',aliases:['terrain detail'],open:'detail',detail:chosen($('resolution'))},
+      {key:'profile',label:'Profile',aliases:['elevation profile'],open:'profile',detail:chosen($('relief-method'))},
+      {key:'multiplier',label:'Multiplier',open:'multiplier',detail:$('exaggeration-value')?.textContent||$('exaggeration').value},
+      {key:'base',label:'Base',aliases:['base thickness'],open:'base',detail:$('base-value')?.textContent||$('base').value}]},
     source:{title:'Elevation source',items:()=>selectItems($('elevation-source'))},
     detail:{title:'Terrain detail',items:()=>selectItems($('resolution'))},
     profile:{title:'Elevation profile',items:()=>selectItems($('relief-method'))},
     multiplier:{title:'Elevation multiplier',value:()=>$('exaggeration-value')?.textContent||$('exaggeration').value,items:()=>rangeItems($('exaggeration'))},
     base:{title:'Base thickness',value:()=>$('base-value')?.textContent||$('base').value,items:()=>rangeItems($('base'))},
-    features:{title:'Map features',items:features},
+    // Shared by both modes; the model view adds its contour lines.
+    layers:{title:'Layers',items:()=>[
+      ...GROUPS.filter(([, ,keys])=>inGroup(keys).length).map(([key,label,keys,aliases])=>({key,label,aliases,open:key,detail:onCount(inGroup(keys))})),
+      ...features().filter(f=>!grouped.includes(f.key)),
+      ...(mode()==='model'?[{key:'contours',label:'Contour lines',aliases:['contours'],active:$('contours').checked,press:()=>$('contours').click()}]:[])]},
+    ...Object.fromEntries(GROUPS.map(([key,label,keys])=>[key,{title:label,items:()=>inGroup(keys)}])),
+    settings:{title:'Settings',items:()=>[
+      ...(mode()==='map'?[{key:'relief',label:relief.on?'Flat map':'3D relief',aliases:['flat map','3d relief','relief'],press:()=>relief.toggle()}]:[]),
+      {key:'voice',label:voiceCommands.on?'Voice: on':'Voice: off',aliases:['voice'],active:voiceCommands.on,press:()=>voiceCommands.toggle()},
+      {key:'exit',label:'Exit VR',aliases:['exit'],open:'exit'}]},
+    // Leaving VR takes a second, deliberate choice.
+    exit:{title:'Leave VR?',items:()=>[{key:'confirm',label:'Yes, exit',aliases:['yes','exit','exit vr'],local:true,press:()=>exit()},
+      {key:'stay',label:'Stay',aliases:['no','cancel'],local:true,press:()=>back()}]},
+    // The model view's own menu: the sky around the model, what is drawn on it, and the settings.
+    model:{title:'Model view',items:()=>[
+      {key:'background',label:'Background',aliases:['backgrounds','sky'],open:'background',detail:backgrounds.list.find(b=>b.key===backgrounds.current)?.label},
+      {key:'layers',label:'Layers',aliases:['on the model','display','features'],open:'layers',detail:onCount([...features(),{active:$('contours').checked}])},
+      {key:'settings',label:'Settings',open:'settings',detail:voiceCommands.on?'Voice on':'Voice off'}]},
+    background:{title:'Background',items:()=>backgrounds.list.map(b=>({key:b.key,label:b.label,active:backgrounds.current===b.key,press:()=>backgrounds.set(b.key)}))},
   };
-  function open(key){menu=key;radial.signature='';}
-  function openMenu() {
+  // A menu's items, with each `open` item opening its menu.
+  const itemsOf=key=>MENUS[key].items().map(item=>item.open?{...item,press:()=>open(item.open)}:item);
+  // The open menus, first to last: Back returns to the one before.
+  let stack=[];
+  const top=()=>mode()==='model'?'model':'root';
+  function open(key){stack.push(key);menu=key;radial.signature='';}
+  function back(){stack.pop();menu=stack.at(-1)||null;radial.signature='';if(!menu)closeMenu();}
+  function openMenu(path=[]) {
     keyboard.mesh.visible=false;editor.mesh.visible=false;
     // Fixed in the room in front of you (not on the moving wrist), a little below eye level.
-    place(radial.mesh,.38,-.16);radial.mesh.visible=true;open(mode()==='model'?'model':'root');   // a comfortable reach in front of you
+    place(radial.mesh,.38,-.16);radial.mesh.visible=true;   // a comfortable reach in front of you
+    stack=[top(),...path];menu=stack.at(-1);radial.signature='';
   }
-  function closeMenu(){radial.mesh.visible=false;menu=null;}
+  function closeMenu(){radial.mesh.visible=false;menu=null;stack=[];}
+  // "Open terrain", "show layers", …: a menu by name, from wherever the watch is.
+  function openNamed(name) {
+    const key={backgrounds:'background',area:'shape'}[name]||name,item=itemsOf(top()).find(i=>i.key===key);
+    if(!item)return false;
+    if(item.open)openMenu([item.open]);else{closeMenu();item.press();}
+    return true;
+  }
   function openKeyboard() {
     closeMenu();editor.mesh.visible=false;text=$('place-search')?.value||'';
     place(keyboard.mesh,.4,-.24);keyboard.mesh.visible=true;keyboard.signature='';
@@ -220,8 +259,8 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
   }
   function drawRadial() {
     if(!radial.mesh.visible)return;
-    const spec=MENUS[menu],items=spec.items(),value=spec.value?.()||'',state=status();
-    const signature=JSON.stringify([menu,items.map(item=>[item.label,item.active]),value,state,[...hovered]]);
+    const spec=MENUS[menu],items=itemsOf(menu),value=spec.value?.()||'',state=status();
+    const signature=JSON.stringify([stack,items.map(item=>[item.label,item.active,item.detail]),value,state,[...hovered]]);
     if(signature===radial.signature)return;radial.signature=signature;
     const c=radial.context,S=radial.canvas.width,C=S/2,outer=500,inner=175,n=Math.max(items.length,1),slice=Math.PI*2/n;
     c.clearRect(0,0,S,S);radial.regions=[];
@@ -231,21 +270,24 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
       c.fillStyle=item.active?UI.active:hovered.has(id)?UI.hover:UI.fill;c.fill();c.lineWidth=4;c.strokeStyle=UI.line;c.stroke();
       const mid=(start+end)/2,r=(outer+inner)/2;
       c.fillStyle=item.active?'#fffbe8':UI.ink;c.font=`600 ${n>8?40:46}px ${UI.sans}`;c.textAlign='center';c.textBaseline='middle';
-      const lines=wrapText(c,item.label,Math.min(250,2*r*Math.sin(slice/2)*.9),2);
-      lines.forEach((line,k)=>c.fillText(line,C+Math.cos(mid)*r,C+Math.sin(mid)*r+(k-(lines.length-1)/2)*48));
+      const width=Math.min(250,2*r*Math.sin(slice/2)*.9),lines=wrapText(c,item.open?`${item.label} ▸`:item.label,width,2),x=C+Math.cos(mid)*r,y=C+Math.sin(mid)*r-(item.detail?20:0);
+      lines.forEach((line,k)=>c.fillText(line,x,y+(k-(lines.length-1)/2)*48));
+      if(item.detail){c.font=`500 30px ${UI.sans}`;c.fillStyle=item.active?'#fffbe8':UI.muted;c.fillText(wrapText(c,item.detail,width,1)[0]||'',x,y+lines.length*24+22);}
       radial.regions.push({id,press:item.press,contains:(x,y)=>{
         const dx=x-C,dy=y-C,distance=Math.hypot(dx,dy);if(distance<inner||distance>outer)return false;
         const angle=((Math.atan2(dy,dx)+Math.PI/2+slice/2)%(Math.PI*2)+Math.PI*2)%(Math.PI*2);
         return Math.floor(angle/slice)===i;}});
     });
     // The middle: the menu's name and value, and Back (or Close at the top level).
-    const top=menu==='root'||menu==='model',back=top?'Close':'‹ Back',hot=hovered.has('radial:center');
+    const first=stack.length<2,backLabel=first?'Close':'‹ Back',hot=hovered.has('radial:center');
     c.beginPath();c.arc(C,C,inner-12,0,Math.PI*2);c.fillStyle=hot?UI.hover:'#0b140ef2';c.fill();c.lineWidth=4;c.strokeStyle=UI.accent;c.stroke();
     c.fillStyle=UI.accent;c.font=`650 30px ${UI.sans}`;c.textAlign='center';
     wrapText(c,spec.title.toUpperCase(),280,2).forEach((line,k)=>c.fillText(line,C,C-70+k*34));
+    // Where this menu sits: the menus it was opened from.
+    if(stack.length>2){c.fillStyle=UI.muted;c.font=`500 22px ${UI.sans}`;c.fillText(stack.slice(1,-1).map(key=>MENUS[key].title).join(' › ').slice(0,30),C,C-112);}
     if(value){c.fillStyle=UI.ink;c.font=`600 ${value.length>8?32:52}px ${UI.sans}`;c.fillText(value,C,C+5);}
-    c.fillStyle=UI.muted;c.font=`600 34px ${UI.sans}`;c.fillText(back,C,C+72);
-    radial.regions.push({id:'radial:center',press:()=>top?closeMenu():open(mode()==='model'?'model':'root'),contains:(x,y)=>Math.hypot(x-C,y-C)<inner-12});
+    c.fillStyle=UI.muted;c.font=`600 34px ${UI.sans}`;c.fillText(backLabel,C,C+72);
+    radial.regions.push({id:'radial:center',press:back,contains:(x,y)=>Math.hypot(x-C,y-C)<inner-12});
     if(state){c.font=`28px ${UI.sans}`;c.fillStyle=UI.ink;c.fillText(state.slice(0,70),C,S-6);}
     radial.texture.needsUpdate=true;
   }
@@ -355,13 +397,25 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
   }
 
   // What can be said while a menu is open: each option on show, by its label (and any spoken names), and Back or
-  // Close. Pressing it does exactly what tapping it would.
-  function voiceOptions() {
-    const options=[];
+  // Close. Pressing it does exactly what tapping it would. With `everywhere`, any option in this mode's menus too
+  // ("Fine", "Water", "Multiplier", …): the menu moves to where that option lives, then presses it.
+  function voiceOptions(everywhere=false) {
+    const options=[],press=fn=>()=>{fn();radial.signature='';};
+    if(everywhere) {
+      if(!radial.mesh.visible)return options;
+      const seen=new Set();
+      const walk=(key,path)=>{if(seen.has(key))return;seen.add(key);
+        for(const item of itemsOf(key)) {
+          if(item.local)continue;
+          options.push({label:item.label,aliases:item.aliases||[],press:press(()=>{stack=[...path];menu=stack.at(-1);item.press();})});
+          if(item.open)walk(item.open,[...path,item.open]);
+        }};
+      walk(top(),[top()]);
+      return options;
+    }
     if(radial.mesh.visible&&menu) {
-      for(const item of MENUS[menu].items())options.push({label:item.label,aliases:item.aliases||[],press:()=>{item.press();radial.signature='';}});
-      const top=menu==='root'||menu==='model';
-      options.push(top?{label:'Close',aliases:['close menu','close the menu'],press:closeMenu}:{label:'Back',aliases:['go back'],press:()=>open(mode()==='model'?'model':'root')});
+      for(const item of itemsOf(menu))options.push({label:item.label,aliases:item.aliases||[],press:press(item.press)});
+      options.push(stack.length<2?{label:'Close',aliases:['close menu','close the menu'],press:closeMenu}:{label:'Back',aliases:['go back'],press:press(back)});
     }
     if(editor.mesh.visible) {
       for(const [key,label] of SHAPES)options.push({label,aliases:[],press:()=>{draft.shape=key;if(key==='circle')draft.ratio=1;applyDraft();}});
@@ -372,14 +426,14 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     return options;
   }
 
-  return {update,pointer,close,dragStart,dragMove,dragEnd,say,voiceOptions,
+  return {update,pointer,close,dragStart,dragMove,dragEnd,say,voiceOptions,openNamed,
     openMenu:()=>{if(!radial.mesh.visible)openMenu();},
     get searching(){return voice.state!=='idle';},   // the keyboard's microphone is in use
     // Any menu up: the map is not gripped meanwhile.
     get busy(){return radial.mesh.visible||keyboard.mesh.visible||editor.mesh.visible;},
     get state(){
       const regions=s=>s.mesh.visible?s.regions.map(({id})=>id):[];
-      return {caption:caption.mesh.visible,voice:voice.state,voiceNote,editor:editor.mesh.visible?{...draft,dragging:dragging?.name||null}:null,face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,keyboard:keyboard.mesh.visible,text,
+      return {caption:caption.mesh.visible,voice:voice.state,voiceNote,editor:editor.mesh.visible?{...draft,dragging:dragging?.name||null}:null,face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,path:radial.mesh.visible?[...stack]:[],keyboard:keyboard.mesh.visible,text,
         regions:{watch:regions(face),radial:regions(radial),keyboard:regions(keyboard),wrist:regions(wrist),editor:regions(editor)},
         surfaces:Object.fromEntries(surfaces.map(s=>[s.name,{visible:s.mesh.visible,matrix:s.mesh.matrixWorld.toArray(),width:s.width,height:s.height,canvas:[s.canvas.width,s.canvas.height]}]))};
     },

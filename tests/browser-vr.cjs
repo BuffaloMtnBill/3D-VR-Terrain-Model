@@ -100,7 +100,7 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   }
   const press=id=>tapWith('right',id);
   await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);
-  await press('watch:face');await press('radial:root:relief');await press('radial:center');
+  await press('watch:face');await press('radial:root:settings');await press('radial:settings:relief');await press('watch:face');
   state=await vrState();
   assert.equal(state.map.relief,false,'Flat map from the watch');
   await page.waitForFunction(()=>window.testVR().state.map.tiles.reliefSpan===0);
@@ -163,7 +163,7 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
 
   // Relief back on; gripping moves it just the same (the trigger grips too).
   await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);
-  await press('watch:face');await press('radial:root:relief');await press('radial:center');
+  await press('watch:face');await press('radial:root:settings');await press('radial:settings:relief');await press('watch:face');
   await page.waitForFunction(()=>window.testVR().state.map.relief&&window.testVR().state.map.tiles.reliefSpan>0,null,{timeout:60000});
   const reliefFrom=(await vrState()).pageSelection;
   await pose('right',[.2,1.1,-.4]);await frames();
@@ -196,11 +196,15 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   };
   // Elevation multiplier: + adds one step.
   const multiplier=Number(await page.inputValue('#exaggeration'));
-  await press('radial:root:multiplier');assert.equal((await vrState()).watch.menu,'multiplier');
+  assert.deepEqual((await vrState()).watch.regions.radial,['radial:root:search','radial:root:shape','radial:root:terrain','radial:root:layers','radial:root:settings','radial:center'],
+    'Five options to the first ring');
+  await press('radial:root:terrain');await press('radial:terrain:multiplier');
+  assert.deepEqual((await vrState()).watch.path,['root','terrain','multiplier'],'Terrain ▸ Multiplier');
   await press(await item('multiplier','+'));
   near(Number(await page.inputValue('#exaggeration')),multiplier+.1,1e-9,'Multiplier + adds a step to the page\'s multiplier');
   await page.waitForFunction(m=>Math.abs(window.testVR().state.map.tiles.lift-m)<1e-9,multiplier+.1);   // the relief rises with it
-  await press('radial:center');assert.equal((await vrState()).watch.menu,'root','The middle goes back');
+  await press('radial:center');assert.equal((await vrState()).watch.menu,'terrain','The middle goes back one menu');
+  await press('radial:center');assert.equal((await vrState()).watch.menu,'root','and again to the first');
   // While a menu is up the map stays put: a grip and a sweep leave the selection alone.
   const lockedFrom=(await vrState()).pageSelection;
   await pose('right',[.35,1,-.3]);await frames();await button('right','trigger',1);await frames();
@@ -257,16 +261,20 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   state=await vrState();
   assert.equal(state.watch.editor,null);assert.equal(state.watch.menu,'root','OK returns to the menu');
   // Map features: the first switch is the page's own checkbox.
-  await press('radial:root:features');
+  await press('radial:root:layers');
   const firstFeature=await page.evaluate(()=>[...document.querySelectorAll('#style-editor input[type=checkbox][id^="feature-"]')].filter(el=>!el.closest('[hidden]'))[0].id);
   const wasOn=await page.isChecked(`#${firstFeature}`);
-  await press(`radial:features:${firstFeature.replace('feature-','')}`);
+  // Most switches sit in a group (Roads & rail, Boundaries, Outdoors); Buildings stands alone.
+  const firstKey=firstFeature.replace('feature-',''),groupOf={roads:'transport',railways:'transport',borders:'boundaries',cities:'boundaries',parks:'boundaries',water:'outdoors',at:'outdoors',trails:'outdoors'}[firstKey];
+  if(groupOf)await press(`radial:layers:${groupOf}`);
+  await press(`radial:${groupOf||'layers'}:${firstKey}`);
   assert.equal(await page.isChecked(`#${firstFeature}`),!wasOn,'A feature switch toggles the page\'s checkbox');
+  if(groupOf)await press('radial:center');
   await press('radial:center');
   // Elevation source.
-  await press('radial:root:source');await press(await item('source','usgs3dep'));
+  await press('radial:root:terrain');await press('radial:terrain:source');await press(await item('source','usgs3dep'));
   assert.equal(await page.inputValue('#elevation-source'),'usgs3dep','Source chosen from the watch');
-  await press(await item('source','mapzen'));await press('radial:center');
+  await press(await item('source','mapzen'));await press('radial:center');await press('radial:center');
   // Search: a keyboard; coordinates (or an address or ZIP) move the map there.
   await press('radial:root:search');
   assert.equal((await vrState()).watch.keyboard,true,'Search opens the keyboard');
@@ -316,23 +324,26 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await press('watch:face');
   state=await vrState();
   assert.equal(state.watch.menu,'model',`The watch opens the model view's menu (${JSON.stringify({menu:state.watch.menu,hands:state.hands,caption:state.watch.caption,keyboard:state.watch.keyboard,editor:state.watch.editor})})`);
-  assert.deepEqual(state.watch.regions.radial,['radial:model:gradient','radial:model:forest','radial:model:desert','radial:model:lake','radial:model:display','radial:center'],
-    'Only the backgrounds and what is drawn on the model');
-  await press('radial:model:lake');
+  assert.deepEqual(state.watch.regions.radial,['radial:model:background','radial:model:layers','radial:model:settings','radial:center'],
+    'Background, what is drawn on the model, and the settings');
+  await press('radial:model:background');await press('radial:background:lake');
   state=await vrState();
   assert.equal(state.background,'lake');assert.equal(state.backgroundShown,'lake.jpg','The moonlit lake surrounds the model');
   await page.waitForFunction(()=>window.testVR().state.backgroundShown==='lake.jpg');
   await page.screenshot({path:path.join(output,'vr-model-lake.png')});
-  await press('radial:model:gradient');assert.equal((await vrState()).backgroundShown,'gradient');
+  await press('radial:background:gradient');assert.equal((await vrState()).backgroundShown,'gradient');
+  await press('radial:center');
   // On the model: the map features and contour lines, each the page's own switch.
-  await press('radial:model:display');assert.equal((await vrState()).watch.menu,'display');
+  await press('radial:model:layers');assert.equal((await vrState()).watch.menu,'layers');
+  assert.equal((await vrState()).watch.regions.radial.includes('radial:layers:contours'),true,'Contour lines are in the model view\'s Layers');
   const contours=await page.isChecked('#contours');
-  await press('radial:display:contours');
+  await press('radial:layers:contours');
   assert.equal(await page.isChecked('#contours'),!contours,'Contour lines switched from the model view');
   const roads=await page.isChecked('#feature-roads');
-  await press('radial:display:roads');
+  await press('radial:layers:transport');await press('radial:transport:roads');
   assert.equal(await page.isChecked('#feature-roads'),!roads,'Roads switched from the model view');
-  await press('radial:center');assert.equal((await vrState()).watch.menu,'model','Back to the model view\'s menu');
+  assert.deepEqual((await vrState()).watch.path,['model','layers','transport']);
+  await press('radial:center');await press('radial:center');assert.equal((await vrState()).watch.menu,'model','Back to the model view\'s menu');
   await press('radial:center');assert.equal((await vrState()).watch.menu,null,'Close');
   await pose('right',[.15,1.2,-.3]);await pose('left',[-.3,1.1,-.1]);await frames(6);
   state=await vrState();
@@ -407,7 +418,11 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   // Leaving VR returns to the page.
   await page.screenshot({path:path.join(output,'vr-page.png')});
   await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);
-  await press('watch:face');await press('radial:root:exit');   // Exit VR, on the watch
+  // Exit VR, on the watch: Settings ▸ Exit VR asks first; Stay goes back, Yes leaves.
+  await press('watch:face');await press('radial:root:settings');await press('radial:settings:exit');
+  assert.equal((await vrState()).watch.menu,'exit','Exit VR asks first');
+  await press('radial:exit:stay');assert.equal((await vrState()).watch.menu,'settings','Stay goes back');assert.equal(await page.evaluate(()=>window.testVR().presenting),true);
+  await press('radial:settings:exit');await press('radial:exit:confirm');
   await page.waitForFunction(()=>!window.testVR().presenting,null,{timeout:5000});
   const left=await vrState();
   assert.equal(left.tiles,0,'The VR tiles are gone after leaving VR');

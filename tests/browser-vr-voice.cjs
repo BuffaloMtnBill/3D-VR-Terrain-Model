@@ -42,8 +42,9 @@ const segmentSeconds=body=>Buffer.from(body.samples,'base64').length/32000;
 
 (async()=>{
   // "Open menu": the watch's menu opens, with a caption saying what was heard.
-  // With the menu open, its options can be said: here the next clips are heard as "Multiplier", "Plus", and "Back".
-  let {browser,page}=await session('open-menu',real?'Open menu.':['Open menu.','Multiplier.','Plus.','Back.']);
+  // With the menu open, its options can be said, even those in other menus: here the next clips are heard as
+  // "Multiplier" (in Terrain), "Plus", "Back", and "Fine" (Terrain ▸ Detail).
+  let {browser,page}=await session('open-menu',real?'Open menu.':['Open menu.','Multiplier.','Plus.','Back.','Fine.']);
   await page.waitForFunction(()=>window.testVR().state.watch.menu==='root',null,{timeout:20000});
   assert.equal((await page.evaluate(()=>window.testVR().state.watch.caption)),true,'A caption shows what was heard');
   const first=page.sent[0];
@@ -52,25 +53,46 @@ const segmentSeconds=body=>Buffer.from(body.samples,'base64').length/32000;
   if(!real) {
     const multiplier=Number(await page.inputValue('#exaggeration'));
     await page.waitForFunction(()=>window.testVR().state.watch.menu==='multiplier',null,{timeout:20000});
-    assert.ok(page.sent.at(-1).vocabulary.includes('Multiplier'),'Whisper is told the names on show');
+    assert.deepEqual(await page.evaluate(()=>window.testVR().state.watch.path),['root','terrain','multiplier'],'The menu moves to where the option lives');
+    assert.ok(page.sent.at(-1).vocabulary.includes('Multiplier'),'Whisper is told the names in the menus');
     await page.waitForFunction(m=>Math.abs(Number(document.getElementById('exaggeration').value)-(m+.1))<1e-9,multiplier,{timeout:20000});
     assert.ok(page.sent.at(-1).vocabulary.includes('+'),'and the new menu\'s names after it changes');
-    await page.waitForFunction(()=>window.testVR().state.watch.menu==='root',null,{timeout:20000});   // "Back"
+    await page.waitForFunction(()=>window.testVR().state.watch.menu==='terrain',null,{timeout:20000});   // "Back": one menu up
+    await page.waitForFunction(()=>document.getElementById('resolution').value==='256',null,{timeout:20000});   // "Fine"
+    assert.equal(await page.evaluate(()=>window.testVR().state.watch.menu),'detail','and shows Terrain ▸ Detail');
   }
   // The watch switches listening off.
   await page.evaluate(()=>{window.xrDevice.controllers.left.position.set(-.15,1.2,-.3);window.xrDevice.controllers.right.position.set(.3,1.1,-.1);});
-  const point=await page.evaluate(()=>window.testVR().watchPoint('radial:root:voice'));
-  await page.evaluate(([p])=>window.xrDevice.controllers.right.position.set(p[0],p[1],p[2]+.12),[point]);await page.waitForTimeout(150);
-  await page.evaluate(([p])=>window.xrDevice.controllers.right.position.set(p[0],p[1],p[2]+.06),[point]);await page.waitForTimeout(150);
-  await page.evaluate(()=>window.xrDevice.controllers.right.position.set(.3,1.1,-.1));await page.waitForTimeout(300);
+  const tap=async id=>{
+    const point=await page.evaluate(id=>window.testVR().watchPoint(id),id);assert.ok(point,`${id} is on show`);
+    await page.evaluate(([p])=>window.xrDevice.controllers.right.position.set(p[0],p[1],p[2]+.12),[point]);await page.waitForTimeout(150);
+    await page.evaluate(([p])=>window.xrDevice.controllers.right.position.set(p[0],p[1],p[2]+.06),[point]);await page.waitForTimeout(150);
+    await page.evaluate(()=>window.xrDevice.controllers.right.position.set(.3,1.1,-.1));await page.waitForTimeout(300);
+  };
+  await page.evaluate(()=>window.testVR().state.watch.path).then(async path=>{for(let i=1;i<path.length;i++)await tap('radial:center');});
+  await tap('radial:root:settings');await tap('radial:settings:voice');
   const off=await page.evaluate(()=>window.testVR().state.commands);
   assert.equal(off.on,false);assert.equal(off.state,'off','Voice: off on the watch stops listening');
   assert.deepEqual(page.errors,[],`No page errors: ${page.errors.join('; ')}`);
   await browser.close();
 
-  // "Generate terrain": the box's area is generated and shown as the model.
-  ({browser,page}=await session('generate','Generate terrain.'));
+  // "Show layers": the watch's menu opens at Layers.
+  if(!real) {
+    ({browser,page}=await session('open-menu','Show layers.'));
+    await page.waitForFunction(()=>window.testVR().state.watch.menu==='layers',null,{timeout:20000});
+    assert.deepEqual(await page.evaluate(()=>window.testVR().state.watch.path),['root','layers']);
+    assert.deepEqual(page.errors,[],`No page errors: ${page.errors.join('; ')}`);
+    await browser.close();
+  }
+
+  // "Generate terrain": the box's area is generated and shown as the model; then "Back to map" returns to the map.
+  ({browser,page}=await session('generate',real?'Generate terrain.':['Generate terrain.']));
   await page.waitForFunction(()=>window.testVR().state.mode==='model',null,{timeout:120000});
+  if(!real) {
+    await page.unroute('**/api/transcribe');
+    await page.route('**/api/transcribe',route=>{page.sent.push(route.request().postDataJSON());route.fulfill({json:{text:'Back to map.'}});});
+    await page.waitForFunction(()=>window.testVR().state.mode==='map',null,{timeout:20000});
+  }
   assert.deepEqual(page.errors,[],`No page errors: ${page.errors.join('; ')}`);
   await browser.close();
 

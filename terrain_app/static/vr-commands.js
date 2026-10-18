@@ -22,12 +22,20 @@ export function matchOption(text,options) {
   }
   return best;
 }
+// Said at any time in VR. "Open terrain" (and "show layers", "open settings", …) opens the watch's menu at that
+// menu; `menu` is the name heard. "Open menu" is matched first, so "open the menu" never reads as a menu named "the".
 export const COMMANDS=[
   {name:'open-menu',label:'Open menu',pattern:/\b(open|show)( the)? menu\b/},
+  {name:'open-named',label:'Open terrain',pattern:/\b(?:open|show)(?: the)? (terrain|layers|settings|backgrounds?|search|area|shape)\b/},
   {name:'generate',label:'Generate terrain',pattern:/\bgenerate( the)? terrain\b/},
+  {name:'show-map',label:'Back to map',pattern:/\b(back to|show|open)( the)? map\b/},
   {name:'exit',label:'Exit program',pattern:/\b(exit|quit|close)( the)? (program|vr)\b/},
 ];
-export const matchCommand=text=>COMMANDS.find(command=>command.pattern.test(words(text)))||null;
+export function matchCommand(text) {
+  const heard=words(text);
+  for(const command of COMMANDS){const found=heard.match(command.pattern);if(found)return {...command,menu:command.name==='open-named'?found[1]:null};}
+  return null;
+}
 
 function toBase64(samples) {
   const pcm=new Int16Array(samples.length);

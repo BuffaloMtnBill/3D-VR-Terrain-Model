@@ -180,19 +180,23 @@ export function createVR(ctx) {
   // Generate from the right wrist (or by voice): when the new terrain arrives, show it in the model view.
   let generating=null;   // the terrain showing when Generate was pressed
   function generate(){const button=document.getElementById('generate');if(button.disabled||ctx.state.loading)return false;generating={from:ctx.state.id};button.click();return true;}
-  // Voice commands, on by default while in VR: "Open menu", "Generate terrain", "Exit program".
+  // Voice commands, on by default while in VR: "Open menu", "Open terrain" (or layers, settings, …), "Generate terrain",
+  // "Back to map", "Exit program".
   let voiceOn=true;
-  // With a menu open, any option on show can be said too ("Multiplier", "plus", "Moonlit lake", "Back", …); Whisper is
-  // told which names to expect.
+  // With a menu open, any option on show can be said ("Multiplier", "plus", "Moonlit lake", "Back", …), and so can any
+  // option elsewhere in this mode's menus ("Fine", "Water"): the menu moves to it. What is on show wins a tie. Whisper
+  // is told which names to expect, those on show first.
   const commands=createCommands({api:ctx.api,
-    vocabulary:()=>[...COMMANDS.map(command=>command.label),...watch.voiceOptions().map(option=>option.label)],
+    vocabulary:()=>[...new Set([...watch.voiceOptions(),...COMMANDS,...watch.voiceOptions(true)].map(option=>option.label))],
     onHeard:text=>{
       if(!session)return;
-      const option=watch.busy?matchOption(text,watch.voiceOptions()):null;
+      const option=watch.busy?matchOption(text,watch.voiceOptions())||matchOption(text,watch.voiceOptions(true)):null;
       if(option){option.press();watch.say(`🎤 ${option.label}`);return;}
       const command=matchCommand(text);
       if(command?.name==='open-menu'){watch.openMenu();watch.say('🎤 Open menu');}
+      else if(command?.name==='open-named'){watch.say(watch.openNamed(command.menu)?`🎤 Open ${command.menu}`:`🎤 No ${command.menu} here`);}
       else if(command?.name==='generate'){watch.say(generate()?'🎤 Generate terrain':'🎤 Generate: already busy, or the area needs adjusting');}
+      else if(command?.name==='show-map'){if(mode==='model'){watch.close();setMode('map');watch.say('🎤 Back to map');}else watch.say('🎤 Already on the map');}
       else if(command?.name==='exit'){watch.say('🎤 Exit');session.end();}
     },
     onError:message=>watch?.say(`🎤 ${message}`)});

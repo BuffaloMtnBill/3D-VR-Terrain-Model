@@ -244,23 +244,19 @@ move). When the selection changes another way (a search, a shape or aspect chang
 
 **The watch on your left wrist** (on top of the left controller): tap its dial with your right index finger and a
 large radial menu (42 cm across) opens in front of you, within reach. Tap a segment to choose it (it lights as your
-fingertip comes near); each one is the page's own control:
+fingertip comes near); each one is the page's own control. The menu is nested, a few segments to a ring: a segment
+marked ▸ opens the next ring, and every segment shows its current value under its name.
 
 | Segment | Choices |
 | --- | --- |
 | Search | A keyboard: type (or say) an address, place, US ZIP code, or "latitude longitude" and press Search; the map goes there |
-| Source | Elevation source |
-| Detail | Terrain detail |
-| Profile | Elevation profile (standard, local, lowland, …) |
-| Multiplier | Elevation multiplier: − and + one step, −− and ++ ten steps |
-| Base | Base thickness, the same way |
-| Shape | The shape editor (below): shape, proportions, and turn in one window |
-| Features | The map features shown on the model, each a switch |
-| Exit VR | Back to the page |
-| Flat map / 3D relief | Switch the map's relief off or on |
-| Voice: on / off | Listen for the voice commands (below), or not |
+| Area | The shape editor (below): shape, proportions, and turn in one window |
+| Terrain ▸ | **Source** ▸ elevation source · **Detail** ▸ terrain detail · **Profile** ▸ elevation profile (standard, local, lowland) · **Multiplier** ▸ − and + one step, −− and ++ ten steps · **Base** ▸ base thickness, the same way |
+| Layers ▸ | The map features drawn on the model, each a switch, in groups: **Roads & rail** ▸ (roads, train tracks), **Boundaries** ▸ (borders, city, park), **Outdoors** ▸ (water, AT, other trails), and **Buildings** |
+| Settings ▸ | **Flat map / 3D relief** · **Voice: on / off** (listen for the voice commands below, or not) · **Exit VR** ▸ asks first: **Yes, exit** or **Stay** |
 
-The middle of the menu goes back (or closes it); tapping the watch again closes it too. The keyboard's keys are tapped
+The middle of the menu shows where you are (Terrain › Detail) and goes back one ring (or closes the menu on the first
+ring); tapping the watch again closes it from anywhere. The keyboard's keys are tapped
 the same way. While any menu is up the map stays put: grips do not move it.
 
 **The shape editor** floats upright in front of you: tap Rectangle, Circle, or Oval and a proportion (1:1, 4:3, 3:4,
@@ -282,23 +278,33 @@ smaller, less accurate one, about 140 MB); after that a search takes well under 
 VR switches to the **model view**, the new model as a 1 m tabletop model to grab, zoom, and turn (grip it with one hand
 to move it, with both to zoom and turn it; controller sticks fly over it). There the button reads **◀ Map** and goes back.
 
-**The model view's menu** is its own: tapping the watch there opens just the backgrounds and **On the model**. The
-model sits in front of a dark gradient by default; the menu changes it, in one tap, to a 360° mellow forest, sandy
+**The model view's menu** is its own: tapping the watch there opens **Background** ▸, **Layers** ▸, and **Settings** ▸. The
+model sits in front of a dark gradient by default; Background changes it to a 360° mellow forest, sandy
 desert, or moonlit lake (in `static/backgrounds/`, made with OpenAI's image generation and joined seamlessly where the
-panorama wraps around; the headset's browser remembers the choice). **On the model** has a switch for each map
-feature drawn on the model (roads, water, trails, …) and for the contour lines. Map Selection keeps its light sky.
+panorama wraps around; the headset's browser remembers the choice). **Layers** is Map Selection's Layers ring plus
+**Contour lines**, and **Settings** has Voice and Exit VR. Map Selection keeps its light sky.
 
-**Voice commands.** While you are in VR the microphone stays open for three commands: **"Open menu"** (or "show
-menu") opens the watch's menu, **"Generate terrain"** generates the box's area as the wrist button does, and **"Exit
-program"** (or "exit VR") leaves VR. A caption in front of you shows what was heard. The headset finds where speech
-starts and stops by itself, so only those short moments go to the computer (to the same Whisper, told to expect the
-commands); nothing is sent while you are quiet, and nothing is saved. Listening pauses while you use the keyboard's
-Speak key, and **Voice: on / off** on the watch's menu switches it off and on.
+**Voice commands.** While you are in VR the microphone stays open for these commands:
 
-While a menu is open, its options can be said too: any name on show ("Source", "Multiplier", "Moonlit lake",
-"Roads", "Contour lines"), the stepper's "plus", "minus", "plus ten", and "minus ten", "Back" and "Close", and in the
-shape editor "Circle", "Sixteen by nine", or "OK" (and "Search" or "Cancel" at the keyboard). Each does exactly what
-tapping it would. The names on show are sent along with the speech, so Whisper expects them.
+| Say | Does |
+| --- | --- |
+| "Open menu" / "show menu" | Opens the watch's menu |
+| "Open terrain", "show layers", "open settings", "open background" | Opens the menu at that ring ("open search" and "open area" open the keyboard and the shape editor) |
+| "Generate terrain" | Generates the box's area, as the wrist button does |
+| "Back to map" / "show map" | From the model view, back to Map Selection |
+| "Exit program" / "exit VR" | Leaves VR |
+
+A caption in front of you shows what was heard. The headset finds where speech starts and stops by itself, so only
+those short moments go to the computer (to the same Whisper, told to expect the commands); nothing is sent while you
+are quiet, and nothing is saved. Listening pauses while you use the keyboard's Speak key, and **Voice: on / off**
+(watch menu ▸ Settings) switches it off and on.
+
+While a menu is open, its options can be said too, and not only those on show: any option in the current mode's menus
+("Fine", "Water", "Multiplier", "Moonlit lake", "Contour lines") works from any ring. The menu moves to the ring where
+that option lives, then does exactly what tapping it would. On a tie, the option on show wins. The stepper's "plus",
+"minus", "plus ten" and "minus ten", Exit's "Yes, exit" and "Stay", and "Back" and "Close" work only while on show.
+In the shape editor say "Circle", "Sixteen by nine" or "OK" (and "Search" or "Cancel" at the keyboard). The names
+are sent along with the speech, those on show first, so Whisper expects them.
 
 **From the headset to the computer.** While you work in VR, the headset hands its workspace to the server a few
 times a second: the cut (even mid-drag), its name, the elevation source and detail, every model and map-layer

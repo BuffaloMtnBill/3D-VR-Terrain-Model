@@ -130,12 +130,12 @@ async function openPage(browser,headset) {
     assert.ok(point,`${id} is on show`);
     await touch(point);
   };
-  await choose('radial:root:multiplier');assert.equal((await vrState()).watch.menu,'multiplier');
+  await choose('radial:root:terrain');await choose('radial:terrain:multiplier');assert.equal((await vrState()).watch.menu,'multiplier');
   await choose('radial:multiplier:2');
   near(Number(await page.inputValue('#exaggeration')),multiplier+.1,1e-9,'Tapping + raises the multiplier');
   assert.deepEqual((await vrState()).pageSelection,beforeMenu,'Tapping the menu leaves the map alone');
   // The keyboard takes fingertip presses too.
-  await choose('radial:center');await choose('radial:root:search');
+  await choose('radial:center');await choose('radial:center');await choose('radial:root:search');
   assert.equal((await vrState()).watch.keyboard,true);
   await touch(await page.evaluate(async()=>(await import('/static/vr.js')).currentVR().watchPoint('key:7')));
   assert.equal((await vrState()).watch.text.endsWith('7'),true,'Touching a key types it');
