@@ -233,7 +233,13 @@ button or the trigger, and each controller taps with the small dot just in front
 | Both hands, apart / together | Zoom in / out: the box covers less / more ground (its proportions stay) |
 | Both hands, turn them | Turn the map, which turns the selection |
 
-Every drag, zoom, and turn sets the page's selection when you let go (and the computer's page follows it while you
+Let go of a one-hand drag while still moving and the map glides on, slowing to a stop over about a second (hold
+still before letting go for a precise stop; gripping again stops a glide). With hands, a pinch is decided by your
+fingertips alone: it ends the moment they part (the headset's own pinch signal lingers after the fingers open, which
+used to jerk the map back), and while gripping, the map follows your wrist rather than the fingertips, so opening
+them to let go cannot move it.
+
+Every drag, zoom, and turn sets the page's selection when you let go (a glide sets it where the map comes to rest) (and the computer's page follows it while you
 move). When the selection changes another way (a search, a shape or aspect change) the map moves to match.
 
 **The watch on your left wrist** (on top of the left controller): tap its dial with your right index finger and a

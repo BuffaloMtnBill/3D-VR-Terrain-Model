@@ -114,11 +114,37 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await button('right','squeeze',1);await frames();
   assert.equal((await vrState()).hands[1].mode,'grab','The grip button takes the map');
   for(const x of [.23,.26,.3]){await pose('right',[x,1.1,-.4]);await frames();}
+  await page.waitForTimeout(400);   // held still before letting go: a precise drag, no glide
   await button('right','squeeze',0);await frames(6);
+  assert.equal((await vrState()).gliding,false,'Letting go of a map held still does not glide');
   const moved=(await vrState()).pageSelection;
   near((center(moved).x-center(start).x)*metersPerDegree,-.1*state.scale,.1*state.scale*.05,'Dragging the map 10 cm east moves the selection 10 cm of ground west');
   near(center(moved).y,center(start).y,1e-6,'and not north or south');
   near(widthOf(moved),widthOf(start),widthOf(start)*1e-6,'Dragging keeps the size');
+
+  // Momentum: let go while still moving and the map glides on in the same direction, slowing to a stop; the
+  // selection is set where it comes to rest.
+  await pose('right',[.2,1.1,-.4]);await frames();
+  await button('right','trigger',1);await frames();
+  // A flick, moved from inside the headset's own frame loop so that every frame sees the hand move (the test's own
+  // steps can arrive late while the page is busy): 0.6 m/s for 12 frames, letting go on the last one, still moving.
+  const handStopped=await page.evaluate(()=>new Promise(resolve=>{
+    const session=window.xrDevice.activeSession,controller=window.xrDevice.controllers.right;let frame=0,last=null,x=.2;
+    const step=time=>{
+      if(last!==null)x+=.6*(time-last)/1000;last=time;controller.position.set(x,1.1,-.4);
+      if(++frame>=12){controller.updateButtonValue('trigger',0);resolve(window.testVR().state.position[0]);return;}
+      session.requestAnimationFrame(step);
+    };
+    session.requestAnimationFrame(step);}));
+  await frames(2);
+  state=await vrState();
+  assert.equal(state.gliding,true,`A quick drag glides on after letting go (${JSON.stringify(state.lastGlide)})`);
+  await page.waitForFunction(()=>!window.testVR().state.gliding,null,{timeout:15000});
+  state=await vrState();
+  assert.ok(state.position[0]<handStopped,'The glide carried on the way the map was going');
+  const glided=state.pageSelection;
+  assert.ok(center(glided).x<center(moved).x,'and the selection was set where it came to rest');
+  await pose('right',[.4,1,.1]);await frames(4);
 
   // Both hands: apart zooms in (the box covers less ground), turning turns the selection.
   await pose('left',[-.1,1.1,-.5]);await pose('right',[.1,1.1,-.5]);await frames();
@@ -143,6 +169,7 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await pose('right',[.2,1.1,-.4]);await frames();
   await button('right','trigger',1);await frames();
   for(const x of [.23,.26,.3]){await pose('right',[x,1.1,-.4]);await frames();}
+  await page.waitForTimeout(400);
   await button('right','trigger',0);await frames(6);
   const reliefTo=(await vrState()).pageSelection,scaleNow=(await vrState()).scale;
   // The map is turned by now, so check the distance: the 10 cm the hand moved.

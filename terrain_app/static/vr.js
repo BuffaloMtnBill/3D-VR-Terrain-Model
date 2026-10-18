@@ -14,7 +14,9 @@ const Y=new THREE.Vector3(0,1,0);
 
 const SPEED=1.6;              // meters per second at full stick, in the room: the same at every zoom level
 const DEADZONE=.15;
-const PINCH={press:.018,release:.03};   // thumb-to-index distance (m) that starts and ends a pinch
+const PINCH={press:.018,release:.025};  // thumb-to-index distance (m) that starts and ends a pinch
+// Momentum: a one-hand drag of the map glides on when you let go, slowing to a stop.
+const GLIDE={skipMs:50,spanMs:100,minSpeed:.05,stopSpeed:.01,fade:.35};   // speeds in room meters per second; fade in s
 const TABLE={width:1,height:.75,distance:.8};   // where Reset view puts the model: 1 m wide at table height
 const UI={paper:'#101b14',surface:'#19281e',raised:'#223329',line:'#414633',ink:'#fff6d6',muted:'#a9ae99',
   accent:'#e9c890',green:'#426746',hover:'#2f4834',error:'#d2a36c',sans:'Inter,"Segoe UI",Arial,sans-serif',serif:'Georgia,"Times New Roman",serif'};
@@ -142,11 +144,12 @@ export function createVR(ctx) {
       if(j.userData.dot)j.userData.dot.visible=shown;
     }
   }
-  // A pinch: the system's own (select button) or thumb and index tips touching, with a little hysteresis.
+  // A pinch: thumb and index tips together, with a little hysteresis. The fingertips decide whenever they are tracked:
+  // the system's own pinch (its select button) is reported for a while after the fingers have opened, and following
+  // it made the end of a drag jerk the map back. It is used only when the joints are not available.
   function pinching(hand) {
-    if(hand.source?.gamepad?.buttons[0]?.pressed)return true;
     const thumb=joint(hand,'thumb-tip'),index=joint(hand,'index-finger-tip');
-    if(!thumb||!index)return false;
+    if(!thumb||!index)return Boolean(hand.source?.gamepad?.buttons[0]?.pressed);
     return thumb.position.distanceTo(index.position)<(hand.trigger?PINCH.release:PINCH.press);
   }
   // A fist: index, middle, and ring fingertips curled in to the wrist (an index finger held out to tap is no fist).
@@ -164,9 +167,14 @@ export function createVR(ctx) {
     return Boolean(buttons[0]?.pressed||buttons[1]?.pressed);
   }
   // Where a hand acts in the room: between thumb and index tips, or the controller itself.
+  // While gripping, the point follows the wrist from where the pinch began: opening the fingers to let go moves the
+  // fingertips (and their midpoint) but not the wrist, so letting go never drags the map back.
   function handPoint(hand) {
-    const thumb=joint(hand,'thumb-tip'),index=joint(hand,'index-finger-tip');
-    if(hand.tracked&&thumb&&index)return hand.point.copy(thumb.position).add(index.position).multiplyScalar(.5);
+    const thumb=joint(hand,'thumb-tip'),index=joint(hand,'index-finger-tip'),wrist=joint(hand,'wrist');
+    if(hand.tracked&&thumb&&index) {
+      if(hand.gripStart&&wrist)return hand.point.copy(hand.gripStart.pinch).add(wrist.position).sub(hand.gripStart.wrist);
+      return hand.point.copy(thumb.position).add(index.position).multiplyScalar(.5);
+    }
     return hand.point.copy(hand.controller.position);
   }
   // Generate from the right wrist (or by voice): when the new terrain arrives, show it in the model view.
@@ -245,7 +253,7 @@ export function createVR(ctx) {
 
   // ---------- modes ----------
   function setMode(next) {
-    mode=next;
+    mode=next;glide=null;trail.length=0;
     hands.forEach(hand=>{hand.mode=null;});
     if(ctx.grid)ctx.grid.visible=false;   // the page's floor grid does not move with the world
     showBackdrop();
@@ -308,6 +316,12 @@ export function createVR(ctx) {
     const other=hands.find(h=>h!==hand);
     if(hand.source) {
       const grip=gripping(hand);
+      if(grip&&!hand.trigger) {
+        const wrist=hand.tracked&&joint(hand,'wrist');
+        hand.gripStart=wrist?{pinch:hand.point.clone(),wrist:wrist.position.clone()}:null;
+        if(glide){glide=null;trail.length=0;}   // taking the map again stops its glide (the next release sets the selection)
+      }
+      if(!grip&&hand.trigger)hand.gripStart=null;
       // Tapping the watch, its menus, and the wrist button: fingertips only. A hand on them never grips the map.
       const ui=watch.pointer(hand,{fingertip:fingertipOf(hand)});
       if(grip&&!hand.trigger&&watch.busy) {
@@ -324,7 +338,7 @@ export function createVR(ctx) {
         if(was==='handle')watch.dragEnd(hand);
         // Still holding with the other hand: it carries on alone, from where it is now.
         if(other.mode==='grab')regrab();
-        if(was==='grab'&&mode==='map'&&!busy(other))mapMode.commit(view);
+        if(was==='grab'&&mode==='map'&&!busy(other)){glide=startGlide();if(!glide)mapMode.commit(view);}
       }
       hand.trigger=grip;
     }
@@ -332,6 +346,35 @@ export function createVR(ctx) {
     if(hand.tracked)dressJoints(hand,!hand.skin.update(hand.trigger));
     hand.dot.material.color.set(hand.uiHover?0xffffff:hand.mode==='grab'?0x8fae78:0xe9c890);
   }
+  // ---------- momentum ----------
+  let glide=null,lastGlide=null;const trail=[];
+  // The speed of the drag just before letting go: over 100 ms, leaving out the last 50 ms (where letting go happens).
+  // (Frames can come slowly or unevenly, so the span is whatever pair of samples lies closest to 100 ms apart, from 30
+  // to 400 ms.)
+  function startGlide() {
+    const now=performance.now(),end=[...trail].reverse().find(sample=>sample.t<=now-GLIDE.skipMs);
+    const start=end&&trail.filter(sample=>end.t-sample.t>=30&&end.t-sample.t<=400)
+      .sort((a,b)=>Math.abs(end.t-a.t-GLIDE.spanMs)-Math.abs(end.t-b.t-GLIDE.spanMs))[0];
+    lastGlide={samples:trail.length,span:start?end.t-start.t:null,speed:null};
+    trail.length=0;
+    if(!start)return null;
+    const seconds=(end.t-start.t)/1000,vx=(end.x-start.x)/seconds,vz=(end.z-start.z)/seconds;
+    lastGlide.speed=Math.hypot(vx,vz)/view.scale;
+    return lastGlide.speed<GLIDE.minSpeed?null:{vx,vz};
+  }
+  function updateGlide(delta) {
+    const grabbing=hands.filter(busy);
+    if(mode==='map'&&grabbing.length===1) {
+      const now=performance.now();trail.push({t:now,x:view.position.x,z:view.position.z});
+      while(trail.length&&trail[0].t<now-600)trail.shift();
+    } else if(grabbing.length)trail.length=0;
+    if(!glide)return;
+    if(mode!=='map'||watch.busy){glide=null;if(mode==='map')mapMode.commit(view);return;}
+    view.position.x+=glide.vx*delta;view.position.z+=glide.vz*delta;
+    const fade=Math.exp(-delta/GLIDE.fade);glide.vx*=fade;glide.vz*=fade;
+    if(Math.hypot(glide.vx,glide.vz)/view.scale<GLIDE.stopSpeed){glide=null;mapMode.commit(view);}   // at rest: the selection is set
+  }
+
   function update(delta) {
     // A new terrain from Generate: show it. If generating failed (the same terrain is still showing), stay on the map.
     if(generating&&!ctx.state.loading){if(ctx.state.id!==generating.from&&mode==='map')setMode('model');generating=null;}
@@ -345,7 +388,8 @@ export function createVR(ctx) {
     if(watch.busy&&hands.some(busy)){hands.forEach(hand=>{if(busy(hand))hand.mode=null;});if(mode==='map')mapMode.commit(view);}
     watch.update();
     if(!updateGrab())fly(delta);
-    if(mode==='map')mapMode.update(view,toWorld(camera.position),{interacting:hands.some(busy),camera});
+    updateGlide(delta);
+    if(mode==='map')mapMode.update(view,toWorld(camera.position),{interacting:hands.some(busy)||Boolean(glide),camera});
     applyView();
   }
 
@@ -383,7 +427,7 @@ export function createVR(ctx) {
 
   instance={update,attachButton,camera,setMode,exit:()=>session?.end(),watchPoint:id=>watch.regionPoint(id),get live(){return ctx.live;},get presenting(){return Boolean(session);},
     get state(){return {scale:view.scale,yaw:view.yaw,position:view.position.toArray(),minScale:view.minScale,maxScale:view.maxScale,
-      mode,background:session?backdrop:null,backgroundShown:scene.background?.isTexture?scene.background.image?.src?.split('/').pop()||'gradient':null,watch:watch.state,commands:{...commands.state,on:voiceOn},map:{...mapMode.state,selection:mapMode.active?mapMode.boundsFrom(view):null},pageSelection:ctx.state.selection,flownSeconds,area:ctx.state.data?{bounds:ctx.state.data.bounds,width_m:ctx.state.data.width_m,height_m:ctx.state.data.height_m}:null,
+      mode,gliding:Boolean(glide),lastGlide,background:session?backdrop:null,backgroundShown:scene.background?.isTexture?scene.background.image?.src?.split('/').pop()||'gradient':null,watch:watch.state,commands:{...commands.state,on:voiceOn},map:{...mapMode.state,selection:mapMode.active?mapMode.boundsFrom(view):null},pageSelection:ctx.state.selection,flownSeconds,area:ctx.state.data?{bounds:ctx.state.data.bounds,width_m:ctx.state.data.width_m,height_m:ctx.state.data.height_m}:null,
       hands:hands.map(hand=>({tracked:hand.tracked,model:hand.skin.ready,touching:Boolean(hand.poking),over:hand.uiHover||null,pinching:hand.trigger,mode:hand.mode,point:hand.point.toArray(),indexTip:joint(hand,'index-finger-tip')?.position.toArray()||null})),tiles:tiles?tiles.children.length:0,
       tileTriangles:tiles?tiles.children.reduce((sum,part)=>sum+part.geometry.index.count/3,0):0,surfaceHidden:ctx.surface?!ctx.surface.visible:false};}};
   return instance;

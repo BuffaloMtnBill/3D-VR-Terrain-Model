@@ -95,7 +95,17 @@ async function openPage(browser,headset) {
   await place('right',[.25,1.3,-.35]);await frames();
   await pinch('right',1);await frames();
   for(const x of [.28,.31,.35]){await place('right',[x,1.3,-.35]);await frames();}
+  // Held still, then letting go the way fingers do: they open part way while the pinch still counts, then fully.
+  // The map follows the knuckle, not the opening fingertips, so it does not jerk back as they open.
+  await page.waitForTimeout(400);
+  const heldAt=(await vrState()).position;
+  await pinch('right',.55);await frames(4);
+  // Half open, the fingertips are already 4 cm apart while the headset still reports its pinch: the grip lets go now.
+  assert.equal((await vrState()).hands[1].mode,null,'Fingers apart let go, whatever the headset still reports');
+  assert.deepEqual((await vrState()).position,heldAt,'Opening the fingers does not move the map');
   await pinch('right',0);await frames(6);
+  assert.deepEqual((await vrState()).position,heldAt,'nor does letting go');
+  assert.equal((await vrState()).gliding,false);
   const panned=(await vrState()).pageSelection;
   assert.ok((panned.west+panned.east)/2<(startSelection.west+startSelection.east)/2,'Moving the gripped map east moves the selection west');
   await place('right',[.25,1.3,-.35]);await frames();
