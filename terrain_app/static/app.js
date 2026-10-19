@@ -8,6 +8,7 @@ import {createProfileModes} from './profile-modes.js';
 import {buildFeatures,buildRoute,disposeFeatures,featureLabels,filterFeatures} from './feature-layers.js';
 import {paintSurface,coverLabels} from './print-palette.js';
 import {createStudio} from './print-studio.js';
+import {horn} from './sounds.js';
 import {createSilhouette} from './silhouette.js';
 import {createVR} from './vr.js';
 import {createLive} from './live.js';
@@ -1357,7 +1358,7 @@ function wireControls() {
   $('feature-retry').addEventListener('click',()=>ensureFeatures(true).catch(()=>{}));
   featuresChanged();
   featureStatus();
-  $('generate').addEventListener('click',generateTerrain);
+  $('generate').addEventListener('click',()=>{horn();generateTerrain();});
   $('help-button').addEventListener('click',()=>$('help-dialog').showModal());
   $('restart-server').addEventListener('click',restartServer);
   studio=createStudio(studioContext);

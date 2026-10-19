@@ -107,7 +107,14 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   }
   const press=id=>tapWith('right',id);
   await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);
-  await press('watch:face');await press('radial:root:settings');await press('radial:settings:relief');await press('watch:face');
+  const sounds=async()=>page.evaluate(async()=>(await import('/static/sounds.js')).played.splice(0));
+  await sounds();
+  await press('watch:face');await press('radial:root:settings');
+  // Menu sounds: a tick (and the lightest buzz) as the laser comes onto an option, a click (and a firmer buzz) as it is chosen.
+  const menuSounds=await sounds();
+  assert.ok(menuSounds.includes("tick")&&menuSounds.includes("click"),`The menu ticks and clicks (${menuSounds.join(', ')})`);
+  assert.ok(menuSounds.includes('buzz 0.15')&&menuSounds.includes('buzz 0.6'),'and the controller buzzes lightly on an option, firmly as it is chosen');
+  await press('radial:settings:relief');await press('watch:face');
   state=await vrState();
   assert.equal(state.map.relief,false,'Flat map from the watch');
   await page.waitForFunction(()=>window.testVR().state.map.tiles.reliefSpan===0);
@@ -348,7 +355,9 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   // The map features are held back for a moment here, to see the loading sign.
   const slowFeatures=route=>route.request().method()==='GET'?route.fulfill({json:{state:'loading',message:'Loading map features…'}}):route.continue();
   await page.route('**/api/features/**',slowFeatures);
+  await sounds();
   await pressWrist();
+  assert.ok((await sounds()).includes('horn'),'Generate sounds a horn blast');
   await page.waitForFunction(()=>window.testVR().state.mode==='model',null,{timeout:120000});
   await page.waitForFunction(()=>window.testVR().state.loadingSign,null,{timeout:10000});   // floating behind the model
   await page.unroute('**/api/features/**',slowFeatures);

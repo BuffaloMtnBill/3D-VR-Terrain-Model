@@ -5,11 +5,13 @@
 import * as THREE from 'three';
 import {mercatorPixel,rotationAngle} from './selection-geometry.js';
 import {createVoice} from './vr-voice.js';
+import {buzz,click,tick} from './sounds.js';
 
 const $=id=>document.getElementById(id);
 const fire=(el,type)=>el.dispatchEvent(new Event(type,{bubbles:true}));
 const UI={ink:'#fff6d6',muted:'#a9ae99',accent:'#e9c890',fill:'#101b14eb',raised:'#223329',hover:'#35503a',active:'#4b6d46',line:'#5c6448',
   sans:'Inter,"Segoe UI",Arial,sans-serif'};
+const STALK=.06;   // how far (m) the watch and the wrist button stand out from the back of the wrist
 const POKE={touch:.012,release:.025,hover:.07};   // fingertip distance (m) from a surface that presses it, lets it go, lights it
 // The menus, the keyboard, and the shape editor: large, about five feet (1.5 m) away, chosen with the lasers.
 const FAR={distance:1.52,scale:3,laser:4};   // m; how much larger than their drawn size; laser length (m) with nothing hit
@@ -381,17 +383,28 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
   // ---------- the watch on your left wrist, the button on your right ----------
   const handOf=side=>hands.find(hand=>hand.source?.handedness===side);
   const left=()=>handOf('left');
+  function stalk() {
+    const line=new THREE.Line(new THREE.BufferGeometry(),new THREE.LineBasicMaterial({color:0xe9c890,transparent:true,opacity:.7,depthTest:false}));
+    line.renderOrder=1150;line.name='VR wrist stalk';rig.add(line);return line;
+  }
   function wear(s,hand,side) {
     s.mesh.visible=Boolean(hand);
-    if(!hand)return;
+    if(!hand){if(s.stem)s.stem.visible=false;return;}
     const wristJoint=hand.tracked&&joint(hand,'wrist'),index=hand.tracked&&joint(hand,'index-finger-metacarpal'),little=hand.tracked&&joint(hand,'pinky-finger-metacarpal');
     if(wristJoint&&index&&little) {
-      // On the back of the wrist, facing out of it (the palm of the left hand faces b × a, of the right a × b).
+      // Standing out from the back of the wrist on a short stalk (the palm of the left hand faces b × a, of the right
+      // a × b), well clear of the wrist itself, so a fingertip reaches it even when the tracked wrist angle is a little
+      // off. It faces halfway between straight out of the wrist and your eyes, so it is easy to see and to tap.
       const a=index.position.clone().sub(wristJoint.position),b=little.position.clone().sub(wristJoint.position);
       const back=(side==='left'?a.clone().cross(b):b.clone().cross(a)).normalize();
-      s.mesh.position.copy(wristJoint.position).addScaledVector(back,.022);
-      s.mesh.lookAt(s.mesh.position.clone().add(back));
+      s.mesh.position.copy(wristJoint.position).addScaledVector(back,STALK);
+      const eyes=camera.getWorldPosition(new THREE.Vector3());rig.worldToLocal(eyes);
+      const facing=back.clone().add(eyes.sub(s.mesh.position).normalize()).normalize();
+      s.mesh.lookAt(rig.localToWorld(s.mesh.position.clone().add(facing)));
+      s.stem??=stalk();s.stem.visible=true;
+      s.stem.geometry.setFromPoints([wristJoint.position.clone().addScaledVector(back,.012),s.mesh.position.clone()]);s.stem.geometry.computeBoundingSphere();
     } else {
+      if(s.stem)s.stem.visible=false;
       // On top of the controller.
       hand.grip.updateMatrixWorld();
       s.mesh.position.copy(hand.grip.localToWorld(new THREE.Vector3(0,.035,.04)));
@@ -439,20 +452,31 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
   // The watch and wrist button: a region lights as the fingertip comes near and is pressed when it touches; it presses
   // again only after the fingertip lifts off. The far panels: the region under the laser lights, and a pinch presses
   // it. onUI is true while the hand is at the watch or pointing at a panel, so it never grips the map meanwhile.
+  // A soft tick and the lightest buzz as the hand comes onto an option; a click and a firmer buzz as it is chosen.
+  function light(hand,region) {
+    const id=region?.id||null;
+    if(id&&id!==hand.uiHover&&region.press&&!region.disabled){tick();buzz(hand,.15,12);}
+    hand.uiHover=id;
+  }
+  function choose(hand,region) {
+    if(!region?.press)return;
+    if(!region.disabled){click();buzz(hand,.6,35);}
+    region.press();
+  }
   function pointer(hand,{fingertip,select=false}) {
     const touch=fingertip?pokeBy(fingertip,hand):null,near=touch&&touch.depth<POKE.hover;
     if(near) {
       drawLaser(hand,null);
       const region=touch.surface.regionAt(touch.x,touch.y);
-      hand.uiHover=region?.id||null;
-      if(touch.depth<POKE.touch){if(!hand.poking){hand.poking=true;region?.press?.();}}
+      light(hand,region);
+      if(touch.depth<POKE.touch){if(!hand.poking){hand.poking=true;choose(hand,region);}}
       else if(touch.depth>POKE.release)hand.poking=false;
       return {onUI:true};
     }
     hand.poking=false;
     const aim=aimAt(hand);drawLaser(hand,aim);
-    hand.uiHover=aim?.region?.id||null;
-    if(select&&aim?.region?.press)aim.region.press();
+    light(hand,aim?.region);
+    if(select)choose(hand,aim?.region);
     return {onUI:Boolean(aim?.point)};
   }
 
@@ -518,7 +542,8 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     get busy(){return radial.mesh.visible||keyboard.mesh.visible||editor.mesh.visible;},
     get state(){
       const regions=s=>s.mesh.visible?s.regions.map(({id})=>id):[];
-      return {caption:caption.mesh.visible?captionText:null,lasers:lasers.map(l=>l.line.visible),voice:voice.state,voiceNote,editor:editor.mesh.visible?{...draft,dragging:dragging?.name||null}:null,face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,path:radial.mesh.visible?[...stack]:[],keyboard:keyboard.mesh.visible,text,
+      const stalk=s=>{if(!s.stem?.visible)return null;const p=s.stem.geometry.attributes.position;return Math.hypot(p.getX(1)-p.getX(0),p.getY(1)-p.getY(0),p.getZ(1)-p.getZ(0));};
+      return {stalks:{face:stalk(face),button:stalk(wrist)},caption:caption.mesh.visible?captionText:null,lasers:lasers.map(l=>l.line.visible),voice:voice.state,voiceNote,editor:editor.mesh.visible?{...draft,dragging:dragging?.name||null}:null,face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,path:radial.mesh.visible?[...stack]:[],keyboard:keyboard.mesh.visible,text,
         regions:{watch:regions(face),radial:regions(radial),keyboard:regions(keyboard),wrist:regions(wrist),editor:regions(editor)},
         surfaces:Object.fromEntries(surfaces.map(s=>[s.name,{visible:s.mesh.visible,matrix:s.mesh.matrixWorld.toArray(),width:s.width,height:s.height,canvas:[s.canvas.width,s.canvas.height]}]))};
     },

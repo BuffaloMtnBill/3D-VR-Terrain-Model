@@ -61,6 +61,9 @@ async function openPage(browser,headset) {
   assert.deepEqual(state.hands.map(hand=>hand.tracked),[true,true],'Both hands are tracked');
   // Drawn as the outlined hand model (from static/vendor/hands), not joint dots.
   state=await until(s=>s.hands.every(hand=>hand.model),15000,'the hand models to load');
+  // The watch and the wrist button stand out from the backs of the wrists on short stalks, clear of the wrist itself.
+  state=await until(s=>s.watch.stalks.face&&s.watch.stalks.button,5000,'the watch and wrist button on their stalks');
+  assert.ok(state.watch.stalks.face>.04&&state.watch.stalks.button>.04,`They stand well out from the wrist (${JSON.stringify(state.watch.stalks)})`);
 
   // A pinch in open air grabs the world, and moving the pinched hand drags it.
   await place('right',[.25,1.3,-.35]);await frames();

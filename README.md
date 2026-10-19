@@ -223,7 +223,8 @@ hides the cracks between tiles of different detail. The box gets low glowing wal
 drag glides at the height where it took the map. **Flat map** on the watch switches the relief off (**3D relief**
 switches it back).
 
-You grip the map, and tap the watch and the wrist button with a fingertip; the menus, which open about five feet away,
+You grip the map, and tap the watch and the wrist button with a fingertip (with hands, both stand 6 cm out from the
+back of the wrist on a short stalk, turned partly toward your eyes, so the wrist never blocks them); the menus, which open about five feet away,
 are chosen with a laser from each hand (shown only while a menu is up). A grip is a pinch or a fist (with the index
 finger curled too, so a finger held out to tap is never a grip); with controllers it is the grip button or the
 trigger, and each controller taps with the small dot just in front of it.
@@ -246,7 +247,8 @@ move). When the selection changes another way (a search, a shape or aspect chang
 **The watch on your left wrist** (on top of the left controller): tap its dial with your right index finger and a
 large radial menu (1.26 m across) opens about five feet (1.5 m) in front of you. Point either hand at a segment (its
 laser lights it) and pinch to choose it; with controllers, point and pull the trigger. Each one is the page's own
-control. The menu is nested, a few segments to a ring: a segment
+control. A soft tick (and, with controllers, the lightest buzz) sounds as an option lights, and a click with a firmer
+buzz as it is chosen; pressing Generate, here or on the page, sounds a horn blast. The sounds are made in the browser; there are no sound files. The menu is nested, a few segments to a ring: a segment
 marked ▸ opens the next ring, and every segment shows its current value under its name.
 
 | Segment | Choices |
