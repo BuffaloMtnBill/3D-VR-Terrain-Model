@@ -230,6 +230,8 @@ export function createVR(ctx) {
     vocabulary:()=>[...new Set([...watch.voiceOptions(),...COMMANDS,...watch.voiceOptions(true)].map(option=>option.label))],
     onHeard:text=>{
       if(!session)return;
+      // "Close menu" closes whatever is open, before any option named Close is matched.
+      if(matchCommand(text)?.name==='close-menu'){const open=watch.busy;watch.close();watch.say(open?'🎤 Close menu':'🎤 No menu open');return;}
       const option=watch.busy?matchOption(text,watch.voiceOptions())||matchOption(text,watch.voiceOptions(true)):null;
       if(option){option.press();watch.say(`🎤 ${option.label}`);return;}
       const command=matchCommand(text);
@@ -297,7 +299,7 @@ export function createVR(ctx) {
     view.scale=clamp(view.size/TABLE.width,view.minScale,view.maxScale);view.yaw=0;
     const center=new THREE.Vector3((box.min.x+box.max.x)/2,box.min.y,(box.min.z+box.max.z)/2);
     view.position.copy(center).sub(new THREE.Vector3(0,TABLE.height,-TABLE.distance).multiplyScalar(view.scale));
-    hands.forEach(hand=>{if(hand.mode==='grab'||hand.mode==='spin')hand.mode=null;});
+    hands.forEach(hand=>{if(['grab','spin','hold'].includes(hand.mode))hand.mode=null;});
     applyView();
   }
 
@@ -344,6 +346,30 @@ export function createVR(ctx) {
     spin.turn.copy(yawTurn).multiply(handTurn).multiply(yawTurn.clone().invert()).multiply(hand.spinStart.spin).normalize();
   }
 
+  // ---------- holding the model: a pinch on the model itself carries it as if in your hand, moving and turning with it ----------
+  const modelBox=new THREE.Box3();
+  function onModel(point) {
+    ctx.model.updateMatrixWorld(true);
+    return modelBox.setFromObject(ctx.model).expandByScalar(.02).containsPoint(point);   // within 2 cm of it, in the room
+  }
+  // The model is fixed to the hand as a rigid body: it follows the hand's whole pose (the wrist's place and turn, or the
+  // controller's), so it turns about the hand itself, as a held thing does, and the pinched spot stays in the fingers.
+  const handPivot=(hand,out)=>hand.tracked&&hand.gripStart?out.copy(hand.point).sub(hand.gripStart.pinch).add(hand.gripStart.wrist):out.copy(hand.point);
+  function startHold(hand) {
+    const center=spin.center.clone().applyMatrix4(ctx.model.matrixWorld);   // the model's center, in the room
+    hand.holdStart={hand:hand.turn.clone(),point:handPivot(hand,new THREE.Vector3()),spin:spin.turn.clone(),center};
+  }
+  function updateHold() {
+    const hand=hands.find(h=>h.mode==='hold');if(!hand)return;
+    const start=hand.holdStart;
+    handTurn.copy(hand.turn).multiply(start.hand.clone().invert());
+    yawTurn.setFromAxisAngle(Y,view.yaw);
+    spin.turn.copy(yawTurn).multiply(handTurn).multiply(yawTurn.clone().invert()).multiply(start.spin).normalize();
+    // The center keeps its place relative to the hand; the view puts it there (yaw and scale unchanged).
+    const center=start.center.clone().sub(start.point).applyQuaternion(handTurn).add(handPivot(hand,raw));
+    view.position.copy(spin.center).sub(center.applyAxisAngle(Y,view.yaw).multiplyScalar(view.scale));
+  }
+
   // ---------- flying: the sticks move where each hand points, at one room speed ----------
   function fly(delta) {
     const velocity=new THREE.Vector3();
@@ -383,20 +409,25 @@ export function createVR(ctx) {
         if(glide){glide=null;trail.length=0;}   // taking the map again stops its glide (the next release sets the selection)
       }
       if(!grip&&hand.trigger)hand.gripStart=null;
-      // Tapping the watch, its menus, and the wrist button: fingertips only. A hand on them never grips the map.
-      const ui=watch.pointer(hand,{fingertip:fingertipOf(hand)});
+      // The watch and the wrist button are touched with a fingertip. A hand on them, or pointing at a menu, never grips the map.
+      // The menus: a pinch (or the trigger) chooses what the hand's laser points at.
+      const ui=watch.pointer(hand,{fingertip:fingertipOf(hand),select:grip&&!hand.trigger&&hand.kind==='pinch'});
       if(grip&&!hand.trigger&&watch.busy) {
-        // While a menu is up the map stays put; a grip can only take one of the shape editor's handles.
-        if(watch.dragStart(hand,hand.tracked?hand.point:fingertipOf(hand)))hand.mode='handle';
-      } else if(grip&&!hand.trigger&&!ui.onUI&&mode==='model'&&hand.kind==='fist'&&other.mode!=='spin') {
+        // While a menu is up the map stays put; a pinch can only take one of the shape editor's handles.
+        if(hand.kind==='pinch'&&watch.dragStart(hand))hand.mode='handle';
+      } else if(grip&&!hand.trigger&&!ui.onUI&&mode==='model'&&hand.kind==='fist'&&!['spin','hold'].includes(other.mode)) {
         // In the model view a fist turns the model where it stands.
         hand.mode='spin';hand.spinStart={hand:hand.turn.clone(),spin:spin.turn.clone()};
+      } else if(grip&&!hand.trigger&&!ui.onUI&&mode==='model'&&hand.kind==='pinch'&&!other.mode&&onModel(hand.point)) {
+        // A pinch on the model itself (with the other hand free) picks it up.
+        hand.mode='hold';startHold(hand);
       } else if(grip&&!hand.trigger&&!ui.onUI) {
-        // One hand moves the map; with the other already gripping, the two zoom and turn it.
-        hand.mode='grab';
+        // One hand moves the map; with the other already gripping, the two zoom and turn it (a hand holding the model
+        // joins in).
+        hand.mode='grab';if(other.mode==='hold')other.mode='grab';
         regrab();
       } else if(grip&&hand.mode==='handle') {
-        watch.dragMove(hand,hand.tracked?hand.point:fingertipOf(hand));
+        watch.dragMove(hand);
       } else if(!grip&&hand.trigger) {
         const was=hand.mode;hand.mode=null;
         if(was==='handle')watch.dragEnd(hand);
@@ -450,10 +481,10 @@ export function createVR(ctx) {
     hands.forEach(hand=>updateHand(hand,delta));
     // A menu opened while the map was held: let go of it there (the selection is set as on any release).
     if(watch.busy&&hands.some(busy)){hands.forEach(hand=>{if(busy(hand))hand.mode=null;});if(mode==='map')mapMode.commit(view);}
-    if(watch.busy)hands.forEach(hand=>{if(hand.mode==='spin')hand.mode=null;});
+    if(watch.busy)hands.forEach(hand=>{if(hand.mode==='spin'||hand.mode==='hold')hand.mode=null;});
     watch.update();
     if(!updateGrab())fly(delta);
-    updateSpin();
+    updateSpin();updateHold();
     updateGlide(delta);
     if(mode==='map')mapMode.update(view,toWorld(camera.position),{interacting:hands.some(busy)||Boolean(glide),camera});
     applyView();
@@ -493,9 +524,10 @@ export function createVR(ctx) {
   }
 
   instance={update,attachButton,camera,setMode,exit:()=>session?.end(),watchPoint:id=>watch.regionPoint(id),get live(){return ctx.live;},get presenting(){return Boolean(session);},
-    get state(){return {scale:view.scale,yaw:view.yaw,spin:spin.turn.toArray(),position:view.position.toArray(),minScale:view.minScale,maxScale:view.maxScale,
+    get state(){return {scale:view.scale,yaw:view.yaw,spin:spin.turn.toArray(),modelCenter:spin.center.clone().applyMatrix4(ctx.model.matrix).toArray(),modelMatrix:ctx.model.matrix.toArray(),position:view.position.toArray(),minScale:view.minScale,maxScale:view.maxScale,
       mode,gliding:Boolean(glide),lastGlide,background:session?backdrop:null,backgroundShown:scene.background?.isTexture?scene.background.image?.src?.split('/').pop()||'gradient':null,watch:watch.state,commands:{...commands.state,on:voiceOn},map:{...mapMode.state,selection:mapMode.active?mapMode.boundsFrom(view):null},pageSelection:ctx.state.selection,flownSeconds,area:ctx.state.data?{bounds:ctx.state.data.bounds,width_m:ctx.state.data.width_m,height_m:ctx.state.data.height_m}:null,
-      hands:hands.map(hand=>({tracked:hand.tracked,kind:hand.kind,model:hand.skin.ready,touching:Boolean(hand.poking),over:hand.uiHover||null,pinching:hand.trigger,mode:hand.mode,point:hand.point.toArray(),indexTip:joint(hand,'index-finger-tip')?.position.toArray()||null})),tiles:tiles?tiles.children.length:0,
+      hands:hands.map(hand=>({tracked:hand.tracked,kind:hand.kind,ray:hand.controller.matrixWorld.toArray(),model:hand.skin.ready,touching:Boolean(hand.poking),over:hand.uiHover||null,pinching:hand.trigger,mode:hand.mode,point:hand.point.toArray(),indexTip:joint(hand,'index-finger-tip')?.position.toArray()||null,
+        pinchTip:joint(hand,'thumb-tip')&&joint(hand,'index-finger-tip')?joint(hand,'thumb-tip').position.clone().add(joint(hand,'index-finger-tip').position).multiplyScalar(.5).toArray():null})),tiles:tiles?tiles.children.length:0,
       tileTriangles:tiles?tiles.children.reduce((sum,part)=>sum+part.geometry.index.count/3,0):0,surfaceHidden:ctx.surface?!ctx.surface.visible:false};}};
   return instance;
 }

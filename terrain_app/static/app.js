@@ -171,6 +171,8 @@ function setupMap(config) {
     const preset=presets[event.target.value];
     if(preset) { state.name=preset.name; updateSelection(preset.bounds,true,false,preset.zoom); applyRenderingSettings(preset.settings); }
   });
+  // VR asks for a wider, city-scale view of a place it searched for (data-zoom on the form, the closest zoom it wants).
+  const searchZoom=zoom=>{const most=Number($('place-form').dataset.zoom);return Number.isFinite(most)&&most>0?Math.min(zoom,most):zoom;};
   // One search box: a US ZIP code (or ZIP+4), a "latitude, longitude" pair, or an address or place name.
   $('place-form').addEventListener('submit',async event=>{
     event.preventDefault();
@@ -181,7 +183,7 @@ function setupMap(config) {
       if(Math.abs(parts[0])>85||Math.abs(parts[1])>180)return notify('Latitude must be within ±85° and longitude within ±180°.',true);
       placeRequest?.abort();placeRequest=null;status.hidden=true;
       // Centered in the frame, and the selection set at once (a headset in VR runs no page animation frames).
-      selectionFrame.cancelAlignment();selectionFrame.centerOn(parts,12);return;
+      selectionFrame.cancelAlignment();selectionFrame.centerOn(parts,searchZoom(12));return;
     }
     placeRequest?.abort();const controller=new AbortController();placeRequest=controller;
     const button=$('place-form').querySelector('button');button.disabled=true;
@@ -191,14 +193,14 @@ function setupMap(config) {
         const location=await api(`/api/location/zip/${encodeURIComponent(query)}`,{signal:controller.signal});
         if(placeRequest!==controller)return;
         state.name=`${location.city}, ${location.state} · ZIP ${location.zip}`;$('place').value='custom';
-        selectionFrame.centerOn([location.latitude,location.longitude],12);
+        selectionFrame.centerOn([location.latitude,location.longitude],searchZoom(12));
         status.textContent=`${location.city}, ${location.state} · ZIP ${location.zip}`;
         return;
       }
       const place=await api(`/api/location/search?q=${encodeURIComponent(query)}`,{signal:controller.signal});
       if(placeRequest!==controller)return;
       const {south,west,north,east}=place.bounds;
-      const zoom=Math.min(15,Math.max(8,map.getBoundsZoom([[south,west],[north,east]])));
+      const zoom=searchZoom(Math.min(15,Math.max(8,map.getBoundsZoom([[south,west],[north,east]]))));
       state.name=place.name.split(',').slice(0,2).join(',');$('place').value='custom';
       selectionFrame.centerOn([place.latitude,place.longitude],zoom);
       status.textContent=place.name;

@@ -223,9 +223,10 @@ hides the cracks between tiles of different detail. The box gets low glowing wal
 drag glides at the height where it took the map. **Flat map** on the watch switches the relief off (**3D relief**
 switches it back).
 
-There are no lasers: you grip the map, and tap the menus and buttons with a fingertip. A grip is a pinch or a fist
-(with the index finger curled too, so a finger held out to tap is never a grip); with controllers it is the grip
-button or the trigger, and each controller taps with the small dot just in front of it.
+You grip the map, and tap the watch and the wrist button with a fingertip; the menus, which open about five feet away,
+are chosen with a laser from each hand (shown only while a menu is up). A grip is a pinch or a fist (with the index
+finger curled too, so a finger held out to tap is never a grip); with controllers it is the grip button or the
+trigger, and each controller taps with the small dot just in front of it.
 
 | Grip | Map Selection |
 | --- | --- |
@@ -243,25 +244,26 @@ Every drag, zoom, and turn sets the page's selection when you let go (a glide se
 move). When the selection changes another way (a search, a shape or aspect change) the map moves to match.
 
 **The watch on your left wrist** (on top of the left controller): tap its dial with your right index finger and a
-large radial menu (42 cm across) opens in front of you, within reach. Tap a segment to choose it (it lights as your
-fingertip comes near); each one is the page's own control. The menu is nested, a few segments to a ring: a segment
+large radial menu (1.26 m across) opens about five feet (1.5 m) in front of you. Point either hand at a segment (its
+laser lights it) and pinch to choose it; with controllers, point and pull the trigger. Each one is the page's own
+control. The menu is nested, a few segments to a ring: a segment
 marked ▸ opens the next ring, and every segment shows its current value under its name.
 
 | Segment | Choices |
 | --- | --- |
-| Search | A keyboard: type (or say) an address, place, US ZIP code, or "latitude longitude" and press Search; the map goes there, and a caption names the place found (if nothing is found, the keyboard comes back with your text and the reason) |
+| Search | A keyboard, empty each time (a search is not kept): type (or say) an address, place, US ZIP code, or "latitude longitude" and press Search; the map goes there at city scale (the page's map at zoom 11 at the closest, so the box covers roughly 15 km, about ten miles, across on a desktop-sized page), and a caption names the place found (if nothing is found, the keyboard comes back with your text and the reason) |
 | Area | The shape editor (below): shape, proportions, and turn in one window |
 | Terrain ▸ | **Source** ▸ elevation source · **Detail** ▸ terrain detail · **Profile** ▸ elevation profile (standard, local, lowland) · **Multiplier** ▸ − and + one step, −− and ++ ten steps · **Base** ▸ base thickness, the same way |
 | Layers ▸ | The map features drawn on the model, each a switch, in groups: **Roads & rail** ▸ (roads, train tracks), **Boundaries** ▸ (borders, city, park), **Outdoors** ▸ (water, AT, other trails), and **Buildings** |
 | Settings ▸ | **Flat map / 3D relief** · **Voice: on / off** (listen for the voice commands below, or not) · **Exit VR** ▸ asks first: **Yes, exit** or **Stay** |
 
 The middle of the menu shows where you are (Terrain › Detail) and goes back one ring (or closes the menu on the first
-ring); tapping the watch again closes it from anywhere. The keyboard's keys are tapped
-the same way. While any menu is up the map stays put: grips do not move it.
+ring); tapping the watch again (or saying "Close menu") closes it from anywhere. The keyboard's keys are chosen
+the same way, with the laser and a pinch. While any menu is up the map stays put: grips do not move it.
 
-**The shape editor** floats upright in front of you: tap Rectangle, Circle, or Oval and a proportion (1:1, 4:3, 3:4,
-16:9, 9:16), or grip the shape's handles (pinch, or the controller's grip or trigger with its dot on the handle) and
-drag them: the side handle sets the width, the top one the height, and the ring above turns the shape (it snaps back to
+**The shape editor** floats upright, large, about five feet in front of you: choose Rectangle, Circle, or Oval and a
+proportion (1:1, 4:3, 3:4, 16:9, 9:16) with the laser, or point at one of the shape's handles, pinch (or pull the
+trigger), and sweep the laser to drag it: the side handle sets the width, the top one the height, and the ring above turns the shape (it snaps back to
 north-up within 3°). The window shows the proportions and the turn as you go; each change is applied to the page's
 selection when you let go, keeping its middle and its area, and the map under the box follows. **OK** returns to the
 menu.
@@ -276,9 +278,11 @@ smaller, less accurate one, about 140 MB); after that a search takes well under 
 **The button on your right wrist** (on top of the right controller): tap it with your left index finger. It reads
 **Generate** in Map Selection: the box's area is generated (the button shows the progress), and
 VR switches to the **model view**, the new model as a 1 m tabletop model to grab, zoom, and turn (pinch it with one hand
-to move it, with both to zoom and turn it; controller sticks fly over it). **Clench a fist** to turn the model in any
+in the air to move it, with both to zoom and turn it; controller sticks fly over it). **Pinch the model itself** (within
+2 cm of it) to pick it up: it moves and turns with your hand as if you were holding it, and stays where you open your
+fingers (a second hand pinching turns that into the two-hand zoom and turn). **Clench a fist** to turn the model in any
 direction as your fist turns, about its own center, which stays where it is; open your hand to leave it turned (with
-controllers, the grip button turns it and the trigger moves it). Each return to the model view sets it level again. A
+controllers, the grip button turns it; the trigger on the model holds it, and in the air moves it). Each return to the model view sets it level again. A
 held hand is steadied (a One Euro filter), so the hand tracking's small jitter does not shake the model or the map, while
 quick moves still follow at once. There the button reads **◀ Map** and goes back.
 
@@ -293,6 +297,7 @@ panorama wraps around; the headset's browser remembers the choice). **Layers** i
 | Say | Does |
 | --- | --- |
 | "Open menu" / "show menu" | Opens the watch's menu |
+| "Close menu" | Closes whatever is open: the menu, the search keyboard, or the shape editor |
 | "Open terrain", "show layers", "open settings", "open background" | Opens the menu at that ring ("open search" and "open area" open the keyboard and the shape editor) |
 | "Generate terrain" | Generates the box's area, as the wrist button does |
 | "Back to map" / "show map" | From the model view, back to Map Selection |

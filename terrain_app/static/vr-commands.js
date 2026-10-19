@@ -22,10 +22,12 @@ export function matchOption(text,options) {
   }
   return best;
 }
-// Said at any time in VR. "Open terrain" (and "show layers", "open settings", …) opens the watch's menu at that
+// Said at any time in VR. "Close menu" puts away whatever is open (the menu, keyboard, or shape editor).
+// "Open terrain" (and "show layers", "open settings", …) opens the watch's menu at that
 // menu; `menu` is the name heard. "Open menu" is matched first, so "open the menu" never reads as a menu named "the".
 export const COMMANDS=[
   {name:'open-menu',label:'Open menu',pattern:/\b(open|show)( the)? menu\b/},
+  {name:'close-menu',label:'Close menu',pattern:/\b(close|hide)( the)? (menu|keyboard|editor)\b/},
   {name:'open-named',label:'Open terrain',pattern:/\b(?:open|show)(?: the)? (terrain|layers|settings|backgrounds?|search|area|shape)\b/},
   {name:'generate',label:'Generate terrain',pattern:/\bgenerate( the)? terrain\b/},
   {name:'show-map',label:'Back to map',pattern:/\b(back to|show|open)( the)? map\b/},

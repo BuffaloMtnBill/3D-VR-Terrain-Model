@@ -17,7 +17,7 @@ MAX_SECONDS = 20
 PROMPTS = {
     "search": "A place name, street address, city, or US ZIP code.",
     # Short clips heard while VR listens for its voice commands: told what to expect, Whisper hears them reliably.
-    "command": "Open menu. Generate terrain. Exit program.",
+    "command": "Open menu. Close menu. Generate terrain. Exit program.",
 }
 
 

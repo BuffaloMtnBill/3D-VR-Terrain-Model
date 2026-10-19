@@ -4,6 +4,7 @@
  */
 const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright-core');
 const assert=require('node:assert/strict');
+const {aim}=require('./vr-aim.cjs');
 const fs=require('node:fs/promises');
 const path=require('node:path');
 
@@ -61,7 +62,7 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await page.waitForFunction(()=>window.testVR().state.map.tiles.shown>20,null,{timeout:30000});
   let state=await vrState();
   assert.equal(state.mode,'map','VR starts in Map Selection');
-  assert.equal(await page.evaluate(()=>{let lines=0;window.testVR().camera.parent.traverse(o=>{if(o.isLine)lines++;});return lines;}),0,'There are no laser lines');
+  assert.equal(await page.evaluate(()=>{let lines=0;window.testVR().camera.parent.traverse(o=>{if(o.isLine&&o.visible)lines++;});return lines;}),0,'No lasers on the map: it is gripped');
   const C=state.map.center;
   near(C[1],1.55-.55,.03,'The box sits 55 cm below your eyes');
   near(C[2],.05-.55,.03,'and 55 cm ahead: 45° below your line of sight');
@@ -87,15 +88,21 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   assert.ok(state.map.tiles.triangles<400000,`and stays light enough for the headset (${state.map.tiles.triangles} triangles)`);
 
   // The watch's menu (more of it below) switches the relief off for a flat map: the precise drag checks run flat.
-  // There are no lasers: options are tapped. A controller taps with the dot 6 cm in front of it.
+  // The watch and the wrist button are tapped: a controller taps with the dot 6 cm in front of it. The menus, keyboard,
+  // and shape editor are pointed at with the controller's laser and chosen with the trigger.
   async function tapWith(hand,id) {
+    const rest=hand==='right'?[.3,1.1,-.1]:[-.3,1.1,-.1],index=hand==='left'?0:1;
+    if(!/^(watch|wrist):/.test(id)) {
+      await aim(page,'controller',hand,id);
+      await button(hand,'trigger',1);await frames(3);await button(hand,'trigger',0);await frames(3);
+      await pose(hand,rest);await frames(4);
+      return;
+    }
     const point=await page.evaluate(id=>window.testVR().watchPoint(id),id);
     assert.ok(point,`${id} is on show`);
-    const rest=hand==='right'?[.3,1.1,-.1]:[-.3,1.1,-.1];
     await pose(hand,[point[0],point[1],point[2]+.12]);await frames(3);    // coming in
     await pose(hand,[point[0],point[1],point[2]+.06]);                   // the dot touches it, held until VR has seen it
-    const index=hand==='left'?0:1;                                        // (frames come slowly in software rendering)
-    await page.waitForFunction(i=>window.testVR().state.hands[i].touching,index,{timeout:3000});await frames(2);
+    await page.waitForFunction(i=>window.testVR().state.hands[i].touching,index,{timeout:3000});await frames(2);   // (frames come slowly in software rendering)
     await pose(hand,rest);await frames(6);                                // and away
   }
   const press=id=>tapWith('right',id);
@@ -181,8 +188,14 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);
   assert.ok((await vrState()).watch.face,'The watch is on the left controller');
   await press('watch:face');
-  assert.equal((await vrState()).watch.menu,'root','The watch opens the radial menu');
-  assert.equal((await vrState()).watch.regions.radial.includes('radial:root:background'),false,'Background is for the model view only');
+  state=await vrState();
+  assert.equal(state.watch.menu,'root','The watch opens the radial menu');
+  assert.equal(state.watch.regions.radial.includes('radial:root:background'),false,'Background is for the model view only');
+  // Large, and about five feet away: chosen with the lasers, which show while it is up.
+  const radialAt=state.watch.surfaces['radial menu'].matrix,eyes=await page.evaluate(()=>[...window.xrDevice.position.vec3]);
+  near(Math.hypot(radialAt[12]-eyes[0],radialAt[14]-eyes[2]),1.52,.05,'The menu is about five feet in front of you');
+  near(Math.hypot(radialAt[0],radialAt[1],radialAt[2])*state.watch.surfaces['radial menu'].width,1.26,.01,'and 1.26 m across');
+  assert.deepEqual(state.watch.lasers,[true,true],'Both lasers show while a menu is up');
   const item=async(menu,label)=>{   // a menu's segment by its label, read from the page's own control
     const ids=(await vrState()).watch.regions.radial;
     const labels={multiplier:['−−','−','+','++']}[menu];
@@ -207,8 +220,9 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await press('radial:center');assert.equal((await vrState()).watch.menu,'root','and again to the first');
   // While a menu is up the map stays put: a grip and a sweep leave the selection alone.
   const lockedFrom=(await vrState()).pageSelection;
-  await pose('right',[.35,1,-.3]);await frames();await button('right','trigger',1);await frames();
-  await pose('right',[.45,1,-.3]);await frames();await button('right','trigger',0);await frames(4);
+  const down=[-Math.SQRT1_2,0,0,Math.SQRT1_2];   // pointing at the map, not at the menu
+  await pose('right',[.35,1,-.3],down);await frames();await button('right','trigger',1);await frames();
+  await pose('right',[.45,1,-.3],down);await frames();await button('right','trigger',0);await frames(4);
   assert.deepEqual((await vrState()).pageSelection,lockedFrom,'The map cannot be dragged while the menu is up');
   await pose('right',[.3,1.1,-.1]);await frames();
 
@@ -226,20 +240,22 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await page.waitForFunction(()=>{const b=window.testVR().state.map.box;return Math.abs(b.w/b.h-16/9)<.02;},null,{timeout:5000});
   // Handles: grip one (the controller's dot on it, then the trigger) and drag it in the window: outward from the
   // shape's middle, or for the ring, around it (the shape may already be turned, so directions come from the handle).
+  // Handles: point the laser at one and pull the trigger to take it, then move the laser across the window: outward from
+  // the shape's middle, or for the ring, around it (the shape may already be turned, so directions come from the handle).
   async function dragHandle(name,distance,around=false) {
     const point=await page.evaluate(id=>window.testVR().watchPoint(id),`editor:handle:${name}`);
     assert.ok(point,`The ${name} handle is on show`);
     const middle=await page.evaluate(()=>{const e=window.testVR().state.watch.surfaces['shape editor'];
-      // The preview's middle sits a little below the window's center (canvas 690 of 1219, on a 0.5 m tall window).
+      // The preview's middle sits a little below the window's center (canvas 690 of 1219); the matrix carries the scale.
       const m=e.matrix,up=[m[4],m[5],m[6]];return [m[12]-up[0]*(690/1219-.5)*.5,m[13]-up[1]*(690/1219-.5)*.5,m[14]-up[2]*(690/1219-.5)*.5];});
     let out=[point[0]-middle[0],point[1]-middle[1]];const length=Math.hypot(...out);out=out.map(v=>v/length);
     if(around)out=[out[1],-out[0]];
-    const [dx,dy]=out.map(v=>v*distance);
-    const at=[point[0],point[1],point[2]+.06];
-    await pose('right',at);await frames(3);
+    const [dx,dy]=out.map(v=>v*distance*3);   // the window is drawn three times its canvas size
+    await aim(page,'controller','right',`editor:handle:${name}`);
+    const at=await page.evaluate(()=>[...window.xrDevice.controllers.right.position.vec3]);
     await button('right','trigger',1);await frames();
-    assert.equal((await vrState()).watch.editor.dragging,name,`Gripping the ${name} handle takes it`);
-    for(const t of [.33,.66,1]){await pose('right',[at[0]+dx*t,at[1]+dy*t,at[2]]);await frames();}
+    assert.equal((await vrState()).watch.editor.dragging,name,`Pinching the ${name} handle with the laser takes it`);
+    for(const t of [.33,.66,1]){await pose('right',[at[0]+dx*t,at[1]+dy*t,at[2]],await page.evaluate(()=>[...window.xrDevice.controllers.right.quaternion.quat]));await frames();}
     await button('right','trigger',0);await frames(6);
     await pose('right',[.3,1.1,-.1]);await frames(4);
   }
@@ -288,12 +304,14 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   state=await vrState();
   assert.equal(state.watch.keyboard,false,'Searching puts the keyboard away');
   assert.equal(state.watch.caption,'📍 36.2 -81.9','and a caption says where the map went');
+  assert.equal(state.watch.text,'','The search is not kept');assert.equal(await page.inputValue('#place-search'),'','in VR or on the page');
+  assert.equal(await page.evaluate(()=>document.getElementById('place-form').dataset.zoom),undefined,'The wider VR search zoom is for VR searches only');
   // A search that finds nothing brings the keyboard back with your text and the reason (the computer's answer is
   // stood in for, so this needs no internet).
   const nowhere=route=>route.fulfill({status:404,json:{error:'No place matched that search. Try adding a city, state, or country.'}});
   await page.route('**/api/location/search**',nowhere);
   await press('watch:face');await press('radial:root:search');
-  for(let i=0;i<20&&(await vrState()).watch.text.length;i++)await press('key:back');
+  assert.equal((await vrState()).watch.text,'','Search opens empty');
   for(const key of 'qzx')await press(`key:${key}`);
   await press('key:search');
   await page.waitForFunction(()=>window.testVR().state.watch.keyboard,null,{timeout:10000});
@@ -346,8 +364,18 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await button('right','squeeze',0);await frames();
   await page.evaluate(()=>window.xrDevice.controllers.right.quaternion.set(0,0,0,1));
   await button('right','trigger',1);await frames();
-  assert.equal((await vrState()).hands[1].mode,'grab','The trigger moves the model');
+  assert.equal((await vrState()).hands[1].mode,'grab','The trigger in the air moves the model');
   await button('right','trigger',0);await frames();
+  // The trigger on the model itself picks it up: it moves and turns with the controller.
+  const held=(await vrState()).modelCenter;
+  await pose('right',held);await frames();
+  await button('right','trigger',1);await frames();
+  assert.equal((await vrState()).hands[1].mode,'hold','The trigger on the model holds it');
+  await pose('right',[held[0],held[1]+.1,held[2]],[0,Math.sin(Math.PI/8),0,Math.cos(Math.PI/8)]);await frames(6);
+  state=await vrState();
+  [held[0],held[1]+.1,held[2]].forEach((value,i)=>near(state.modelCenter[i],value,.002,`The held model goes with the controller (axis ${i})`));
+  await button('right','trigger',0);await frames();
+  assert.equal((await vrState()).hands[1].mode,null,'Letting go puts it down');
   // The model view has its own menu: the backgrounds (the dark gradient by default), and what is drawn on the model.
   assert.equal((await vrState()).backgroundShown,'gradient','The model view starts on the dark gradient');
   await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);

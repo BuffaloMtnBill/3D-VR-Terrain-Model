@@ -6,6 +6,7 @@
  */
 const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright-core');
 const assert=require('node:assert/strict');
+const {aim}=require('./vr-aim.cjs');
 const fs=require('node:fs/promises');
 const path=require('node:path');
 
@@ -64,6 +65,12 @@ const segmentSeconds=body=>Buffer.from(body.samples,'base64').length/32000;
   // The watch switches listening off.
   await page.evaluate(()=>{window.xrDevice.controllers.left.position.set(-.15,1.2,-.3);window.xrDevice.controllers.right.position.set(.3,1.1,-.1);});
   const tap=async id=>{
+    if(!/^(watch|wrist):/.test(id)) {   // the menus: the laser and the trigger
+      await aim(page,'controller','right',id);
+      await page.evaluate(()=>window.xrDevice.controllers.right.updateButtonValue('trigger',1));await page.waitForTimeout(150);
+      await page.evaluate(()=>window.xrDevice.controllers.right.updateButtonValue('trigger',0));await page.waitForTimeout(150);
+      return;
+    }
     const point=await page.evaluate(id=>window.testVR().watchPoint(id),id);assert.ok(point,`${id} is on show`);
     await page.evaluate(([p])=>window.xrDevice.controllers.right.position.set(p[0],p[1],p[2]+.12),[point]);await page.waitForTimeout(150);
     await page.evaluate(([p])=>window.xrDevice.controllers.right.position.set(p[0],p[1],p[2]+.06),[point]);await page.waitForTimeout(150);
@@ -76,11 +83,14 @@ const segmentSeconds=body=>Buffer.from(body.samples,'base64').length/32000;
   assert.deepEqual(page.errors,[],`No page errors: ${page.errors.join('; ')}`);
   await browser.close();
 
-  // "Show layers": the watch's menu opens at Layers.
+  // "Show layers": the watch's menu opens at Layers; then "Close menu" closes it.
   if(!real) {
-    ({browser,page}=await session('open-menu','Show layers.'));
+    ({browser,page}=await session('open-menu',['Show layers.','Close menu.']));
     await page.waitForFunction(()=>window.testVR().state.watch.menu==='layers',null,{timeout:20000});
     assert.deepEqual(await page.evaluate(()=>window.testVR().state.watch.path),['root','layers']);
+    // "Close menu": the menu goes away, from any ring.
+    await page.waitForFunction(()=>window.testVR().state.watch.menu===null,null,{timeout:20000});
+    assert.equal(await page.evaluate(()=>window.testVR().state.watch.caption),'🎤 Close menu');
     assert.deepEqual(page.errors,[],`No page errors: ${page.errors.join('; ')}`);
     await browser.close();
   }

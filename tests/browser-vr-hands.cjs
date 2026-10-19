@@ -5,6 +5,7 @@
  */
 const {chromium}=require(process.env.TERRAIN_PLAYWRIGHT_PATH||'playwright-core');
 const assert=require('node:assert/strict');
+const {aim:aimLaser}=require('./vr-aim.cjs');
 const fs=require('node:fs/promises');
 const path=require('node:path');
 
@@ -44,21 +45,6 @@ async function openPage(browser,headset) {
   const pinch=(hand,value)=>page.evaluate(([hand,value])=>window.xrDevice.hands[hand].updatePinchValue(value),[hand,value]);
   const handIndex={left:0,right:1};
   const handPosition=hand=>page.evaluate(hand=>{const p=window.xrDevice.hands[hand].position.vec3;return [p[0],p[1],p[2]];},hand);
-  // Point a hand's ray at a menu region from 35 cm in front of the panel, then pinch and release.
-  async function aim(hand,pattern) {
-    await page.evaluate(async([hand,pattern])=>{
-      const THREE=await import('three'),state=(await import('/static/vr.js')).currentVR().state;
-      const region=state.regions.find(r=>new RegExp(pattern).test(r.id));
-      if(!region)throw new Error(`No menu region matches ${pattern}: ${state.regions.map(r=>r.id).join(', ')}`);
-      const matrix=new THREE.Matrix4().fromArray(state.panel);
-      const target=new THREE.Vector3(((region.x+region.w/2)/1024-.5)*.62,(.5-(region.y+region.h/2)/1536)*.93,0).applyMatrix4(matrix);
-      const origin=target.clone().addScaledVector(new THREE.Vector3(0,0,1).transformDirection(matrix),.35);
-      const rotation=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,-1),target.clone().sub(origin).normalize());
-      const h=window.xrDevice.hands[hand];h.position.set(origin.x,origin.y,origin.z);h.quaternion.set(rotation.x,rotation.y,rotation.z,rotation.w);
-    },[hand,pattern]);
-    await frames();
-  }
-  async function tap(hand,pattern){await aim(hand,pattern);await pinch(hand,1);await frames();await pinch(hand,0);await frames(8);}
   // Move a hand so its pinch point (between thumb and index tips, pinched) lands on a room point.
   let pinchOffset=null;
   async function pinchAt(hand,room) {
@@ -123,34 +109,37 @@ async function openPage(browser,headset) {
   };
   await touch(state.watch.face);
   assert.equal((await vrState()).watch.menu,'root','Touching the watch opens the radial menu');
-  // Tap a segment with the fingertip: Multiplier, then +. Tapping the menu never moves the map.
+  // Point at a segment with the hand's laser and pinch: Multiplier, then +. Choosing never moves the map.
   const beforeMenu=(await vrState()).pageSelection,multiplier=Number(await page.inputValue('#exaggeration'));
+  assert.deepEqual((await vrState()).watch.lasers,[true,true],'The hands\' lasers show while the menu is up');
   const choose=async id=>{
-    const point=await page.evaluate(async id=>(await import('/static/vr.js')).currentVR().watchPoint(id),id);
-    assert.ok(point,`${id} is on show`);
-    await touch(point);
+    await aimLaser(page,'hand','right',id);
+    await pinch('right',1);await frames(3);await pinch('right',0);await frames(4);
   };
   await choose('radial:root:terrain');await choose('radial:terrain:multiplier');assert.equal((await vrState()).watch.menu,'multiplier');
   await choose('radial:multiplier:2');
   near(Number(await page.inputValue('#exaggeration')),multiplier+.1,1e-9,'Tapping + raises the multiplier');
   assert.deepEqual((await vrState()).pageSelection,beforeMenu,'Tapping the menu leaves the map alone');
-  // The keyboard takes fingertip presses too.
+  // The keyboard is chosen the same way.
   await choose('radial:center');await choose('radial:center');await choose('radial:root:search');
   assert.equal((await vrState()).watch.keyboard,true);
-  await touch(await page.evaluate(async()=>(await import('/static/vr.js')).currentVR().watchPoint('key:7')));
-  assert.equal((await vrState()).watch.text.endsWith('7'),true,'Touching a key types it');
+  await choose('key:7');
+  assert.equal((await vrState()).watch.text,'7','A pinch on a key types it');
   await choose('key:cancel');assert.equal((await vrState()).watch.keyboard,false,'Cancel puts the keyboard away');
-  // The shape editor: pinch a handle and drag it (here the side handle, outward: wider).
+  // The shape editor: point at a handle, pinch, and sweep the laser (here the side handle, outward: wider).
+  await place('right',[.3,1.1,-.2]);await frames(4);
   await touch((await vrState()).watch.face);await choose('radial:root:shape');
   assert.ok((await vrState()).watch.editor,'Shape opens the editor');
   const ratioFrom=(await vrState()).watch.editor.ratio;
-  const handle=await page.evaluate(async()=>(await import('/static/vr.js')).currentVR().watchPoint('editor:handle:width'));
-  await pinchAt('right',[handle[0],handle[1],handle[2]]);await pinch('right',1);await frames(3);
-  assert.equal((await vrState()).watch.editor.dragging,'width','A pinch on a handle takes it');
-  for(const x of [.02,.04,.05])await pinchAt('right',[handle[0]+x,handle[1],handle[2]]);
+  await aimLaser(page,'hand','right','editor:handle:width');
+  await pinch('right',1);await frames(3);
+  assert.equal((await vrState()).watch.editor.dragging,'width','A pinch with the laser on a handle takes it');
+  const aimedFrom=await handPosition('right'),aimedTurn=await page.evaluate(()=>[...window.xrDevice.hands.right.quaternion.quat]);
+  for(const x of [.05,.1,.15])await place('right',[aimedFrom[0]+x,aimedFrom[1],aimedFrom[2]],aimedTurn),await frames(3);
   await pinch('right',0);await frames(6);
   assert.ok((await vrState()).watch.editor.ratio>ratioFrom*1.15,'Dragging it out makes the shape wider');
   await choose('editor:ok');assert.equal((await vrState()).watch.menu,'root','OK returns to the menu');
+  await place('right',[.3,1.1,-.2]);await frames(4);
   await touch((await vrState()).watch.face);assert.equal((await vrState()).watch.menu,null);
   await place('left',[-.25,1.2,-.4]);await place('right',[.25,1.2,-.4]);await frames(4);
 
@@ -205,17 +194,41 @@ async function openPage(browser,headset) {
   state=await vrState();
   near(2*Math.acos(Math.min(1,Math.abs(state.spin[3]))),Math.PI/6,.02,`The model turns with the fist (${state.spin})`);
   near(Math.abs(state.spin[0]),Math.sin(Math.PI/12),.02,'about the same axis');
-  assert.deepEqual(state.position,unturned.position,'and stays where it is');
+  state.position.forEach((value,i)=>near(value,unturned.position[i],.001*state.scale,'and stays where it is (to a millimeter)'));
   assert.equal(state.scale,unturned.scale);
   await makeFist('right',false);await frames();
   state=await vrState();
   assert.equal(state.hands[1].mode,null,'Opening the fist lets go');
   await place('right',[.25,1.3,-.35]);await frames();
   near(2*Math.acos(Math.min(1,Math.abs((await vrState()).spin[3]))),Math.PI/6,.02,'and the model stays turned');
-  // A pinch in the model view still moves the model.
+  // A pinch in the air in the model view still moves the model.
   await pinch('right',1);await frames();
-  assert.equal((await vrState()).hands[1].mode,'grab','A pinch moves the model');
+  assert.equal((await vrState()).hands[1].mode,'grab','A pinch in the air moves the model');
   await pinch('right',0);await frames();
+  // A pinch on the model itself picks it up and it is held as a real thing would be: the spot pinched stays between the
+  // fingertips however the hand moves and turns, and the model turns with the hand.
+  const c0=(await vrState()).modelCenter;
+  await pinchAt('right',[c0[0]+.1,c0[1],c0[2]]);await pinch('right',1);await frames();
+  state=await vrState();
+  assert.equal(state.hands[1].mode,'hold',`A pinch on the model holds it (${JSON.stringify(state.hands[1])})`);
+  const spun=state.spin;
+  const pinched=await page.evaluate(async([matrix,tip])=>{const THREE=await import('three');
+    return new THREE.Vector3(...tip).applyMatrix4(new THREE.Matrix4().fromArray(matrix).invert()).toArray();},[state.modelMatrix,state.hands[1].pinchTip]);
+  const theta=Math.PI/6;
+  for(const step of [.25,.5,.75,1]) {
+    const half=theta*step/2;
+    await place('right',[c0[0]+.1-pinchOffset[0]-.1*step,c0[1]-pinchOffset[1]+.05*step,c0[2]-pinchOffset[2]],[Math.sin(half)*.6,Math.sin(half)*.8,0,Math.cos(half)]);await frames(2);
+  }
+  await frames(14);
+  state=await vrState();
+  const held=await page.evaluate(async([matrix,point])=>{const THREE=await import('three');
+    return new THREE.Vector3(...point).applyMatrix4(new THREE.Matrix4().fromArray(matrix)).toArray();},[state.modelMatrix,pinched]);
+  for(let i=0;i<3;i++)near(held[i],state.hands[1].pinchTip[i],.004,`The pinched spot stays between the fingertips (axis ${i})`);
+  assert.ok(Math.abs(state.spin[1]-spun[1])>.1,`and the model turns with the hand (${spun} → ${state.spin})`);
+  await pinch('right',0);await frames();
+  state=await vrState();
+  assert.equal(state.hands[1].mode,null,'Opening the fingers puts it down');
+  await place('right',[.25,1.3,-.35]);await frames();
 
   // ◀ Map on the same button goes back to Map Selection.
   await place('right',[.12,1.32,-.32]);await frames(6);

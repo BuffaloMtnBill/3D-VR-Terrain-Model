@@ -1,6 +1,6 @@
-// The left-wrist watch: tap its dial with a fingertip and a large radial menu opens in front of you, within reach,
-// with the map generator's options; tap the options the same way (there are no lasers). Every choice drives the page's own control, so the page (and the computer following
-// it) stays in step. Search opens a keyboard that types into the page's address / ZIP search.
+// The left-wrist watch: tap its dial with a fingertip and a large radial menu opens about five feet in front of you,
+// with the map generator's options; point at an option with either hand's laser and pinch (or pull the trigger) to
+// choose it. Every choice drives the page's own control, so the page (and the computer following it) stays in step. Search opens a keyboard that types into the page's address / ZIP search.
 // The right-wrist button: Generate in Map Selection (then the model view), Map in the model view.
 import * as THREE from 'three';
 import {mercatorPixel,rotationAngle} from './selection-geometry.js';
@@ -11,6 +11,9 @@ const fire=(el,type)=>el.dispatchEvent(new Event(type,{bubbles:true}));
 const UI={ink:'#fff6d6',muted:'#a9ae99',accent:'#e9c890',fill:'#101b14eb',raised:'#223329',hover:'#35503a',active:'#4b6d46',line:'#5c6448',
   sans:'Inter,"Segoe UI",Arial,sans-serif'};
 const POKE={touch:.012,release:.025,hover:.07};   // fingertip distance (m) from a surface that presses it, lets it go, lights it
+// The menus, the keyboard, and the shape editor: large, about five feet (1.5 m) away, chosen with the lasers.
+const FAR={distance:1.52,scale:3,laser:4};   // m; how much larger than their drawn size; laser length (m) with nothing hit
+const SEARCH_ZOOM=11;   // a place searched from VR opens at city scale: the map's zoom for the page's frame
 const title=word=>word[0].toUpperCase()+word.slice(1);
 const short=text=>text.replace(/\s*·.*$/,'').replace(/\s*\(.*\)\s*$/,'').trim();
 const shown=el=>Boolean(el)&&!el.closest('[hidden]');
@@ -41,6 +44,17 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
   // Voice search: the words heard replace the text in the box, to check (or fix) before tapping Search.
   const voice=createVoice({api:ctx.api,onText:heard=>{text=heard;voiceNote='';keyboard.signature='';},onError:message=>{voiceNote=message;keyboard.signature='';}});
   const surfaces=[face,radial,keyboard,wrist,editor];
+  const far=[radial,keyboard,editor];   // pointed at with the lasers; the watch and wrist button are touched
+  for(const s of far)s.mesh.scale.setScalar(FAR.scale);
+  // A laser from each hand (its pointing ray), shown while one of the far panels is up, with a dot where it lands.
+  const lasers=hands.map(hand=>{
+    const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3(0,0,-1)]),
+      new THREE.LineBasicMaterial({color:0xe9c890,transparent:true,opacity:.75,depthTest:false}));
+    const dot=new THREE.Mesh(new THREE.SphereGeometry(.012,12,8),new THREE.MeshBasicMaterial({color:0xffffff,depthTest:false}));
+    line.renderOrder=dot.renderOrder=1200;line.visible=dot.visible=false;line.name='VR laser';rig.add(line,dot);
+    return {hand,line,dot};
+  });
+  const raycaster=new THREE.Raycaster(),rayOrigin=new THREE.Vector3(),rayDirection=new THREE.Vector3();
 
   // ---------- menu contents, read live from the page ----------
   const selectItems=el=>[...el.options].filter(option=>!option.disabled&&!option.hidden&&option.value!=='custom').map(option=>({
@@ -112,7 +126,7 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
   function openMenu(path=[]) {
     keyboard.mesh.visible=false;editor.mesh.visible=false;
     // Fixed in the room in front of you (not on the moving wrist), a little below eye level.
-    place(radial.mesh,.38,-.16);radial.mesh.visible=true;   // a comfortable reach in front of you
+    place(radial.mesh,FAR.distance,-.15);radial.mesh.visible=true;
     stack=[top(),...path];menu=stack.at(-1);radial.signature='';
   }
   function closeMenu(){radial.mesh.visible=false;menu=null;stack=[];}
@@ -123,9 +137,10 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     if(item.open)openMenu([item.open]);else{closeMenu();item.press();}
     return true;
   }
-  function openKeyboard() {
-    closeMenu();editor.mesh.visible=false;text=$('place-search')?.value||'';
-    place(keyboard.mesh,.4,-.24);keyboard.mesh.visible=true;keyboard.signature='';
+  // Search starts empty every time: nothing from an earlier search is kept.
+  function openKeyboard(keep='') {
+    closeMenu();editor.mesh.visible=false;text=keep;
+    place(keyboard.mesh,FAR.distance,-.35);keyboard.mesh.visible=true;keyboard.signature='';
   }
   function place(mesh,distance,drop) {
     const forward=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);forward.y=0;
@@ -148,7 +163,7 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
   }
   function openEditor() {
     closeMenu();keyboard.mesh.visible=false;draft=draftFromPage();
-    place(editor.mesh,.4,-.1);editor.mesh.visible=true;editor.signature='';
+    place(editor.mesh,FAR.distance,0);editor.mesh.visible=true;editor.signature='';
   }
   function applyDraft() {applyShape({...draft});}
   const halves=d=>d.ratio>=1?{w:PREVIEW.half,h:PREVIEW.half/d.ratio}:{w:PREVIEW.half*d.ratio,h:PREVIEW.half};
@@ -196,21 +211,27 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     button('editor:ok',W/2-180,H-130,360,110,'OK',false,()=>{editor.mesh.visible=false;openMenu();},true);
     editor.texture.needsUpdate=true;
   }
-  // Grips on the editor's handles (the map is never gripped while a menu is up).
-  function canvasAt(point) {
-    const local=editor.mesh.worldToLocal(point.clone());
-    return {depth:Math.abs(local.z),...editor.toCanvas(local)};
+  // Pinching a handle with the laser on it takes it; the handle then follows where the laser crosses the editor's plane
+  // (the map is never gripped while a menu is up).
+  const plane=new THREE.Plane(),crossing=new THREE.Vector3();
+  function canvasAt(hand) {
+    if(!aimRay(hand))return null;
+    editor.mesh.updateMatrixWorld();
+    plane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0,0,1).transformDirection(editor.mesh.matrixWorld),editor.mesh.getWorldPosition(new THREE.Vector3()));
+    if(!raycaster.ray.intersectPlane(plane,crossing))return null;
+    return editor.toCanvas(editor.mesh.worldToLocal(crossing));
   }
-  function dragStart(hand,point) {
-    if(!editor.mesh.visible||!point)return false;
-    const p=canvasAt(point);if(p.depth>.06)return false;
+  function dragStart(hand) {
+    if(!editor.mesh.visible)return false;
+    const p=canvasAt(hand);if(!p)return false;
     const region=editor.regions.find(r=>r.handle&&r.contains(p.x,p.y));if(!region)return false;
     dragging={hand,name:region.handle,start:{...draft,...halves(draft)}};editor.signature='';
     return true;
   }
-  function dragMove(hand,point) {
-    if(dragging?.hand!==hand||!point)return;
-    const p=canvasAt(point),s=dragging.start,a=s.angle*Math.PI/180;
+  function dragMove(hand) {
+    if(dragging?.hand!==hand)return;
+    const p=canvasAt(hand);if(!p)return;
+    const s=dragging.start,a=s.angle*Math.PI/180;
     const v=turn(p.x-PREVIEW.x,p.y-PREVIEW.y,-a);   // in the shape's own frame
     if(dragging.name==='width')draft.ratio=Math.min(5,Math.max(.2,Math.abs(v.x)/s.h));
     else if(dragging.name==='height')draft.ratio=Math.min(5,Math.max(.2,s.w/Math.max(Math.abs(v.y),1)));
@@ -234,6 +255,7 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     if(!input||!form)return;
     if(text.trim().length<2){voiceNote='Type (or say) at least two letters.';keyboard.mesh.visible=true;keyboard.signature='';return;}
     input.value=text;searching={text,since:performance.now(),selection:JSON.stringify(ctx.state.selection)};
+    form.dataset.zoom=String(SEARCH_ZOOM);   // read by the page's search
     form.requestSubmit();
   }
   function followSearch() {
@@ -243,12 +265,14 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     if(waited<60)return;                         // give the page a moment to start
     const moved=JSON.stringify(ctx.state.selection)!==searching.selection,failed=status?.classList.contains('error');
     const found=()=>status&&!status.hidden&&status.textContent?status.textContent.split(',').slice(0,2).join(','):searching.text;
-    const again=()=>{text=searching.text;place(keyboard.mesh,.4,-.24);keyboard.mesh.visible=true;keyboard.signature='';};
+    const again=()=>openKeyboard(searching.text);   // to fix and try again
     if(failed){voiceNote=status.textContent;again();}
     else if(moved)say(`📍 ${found()}`);
     else if(!button?.disabled&&waited>400&&status&&!status.hidden&&status.textContent)say(`📍 ${found()}`);   // the same place again
     else if(waited>=20000){voiceNote='No answer from the search. Try again.';again();}
     else return;   // not there yet
+    if(!keyboard.mesh.visible){text='';const input=$('place-search');if(input)input.value='';}   // found: not kept
+    delete $('place-form')?.dataset.zoom;
     searching=null;
   }
 
@@ -375,10 +399,9 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     }
   }
 
-  // ---------- tapping with a fingertip ----------
-  const visible=()=>surfaces.filter(s=>s.mesh.visible);
+  // ---------- tapping with a fingertip (the watch and the wrist button) ----------
   function pokeBy(point,hand) {
-    for(const s of visible()) {
+    for(const s of [face,wrist].filter(s=>s.mesh.visible)) {
       if(s===face&&hand===left()||s===wrist&&hand===handOf('right'))continue;   // not pressed by their own wrist
       const local=s.mesh.worldToLocal(point.clone());
       if(Math.abs(local.x)>s.width/2||Math.abs(local.y)>s.height/2)continue;
@@ -386,19 +409,56 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     }
     return null;
   }
-  // Called for each hand every frame with its fingertip: a region lights as the fingertip comes near and is pressed
-  // when it touches; it presses again only after the fingertip lifts off. True while the hand is at the menus.
-  function pointer(hand,{fingertip}) {
+  // ---------- pointing with the lasers (the menus, keyboard, and shape editor) ----------
+  // A hand's pointing ray: the system's own for hands (steadied by the headset), or the controller's.
+  function aimRay(hand) {
+    if(!hand.source)return false;
+    hand.controller.updateMatrixWorld();
+    rayOrigin.setFromMatrixPosition(hand.controller.matrixWorld);
+    rayDirection.set(0,0,-1).transformDirection(hand.controller.matrixWorld);
+    raycaster.set(rayOrigin,rayDirection);
+    return true;
+  }
+  function aimAt(hand) {
+    const shown=far.filter(s=>s.mesh.visible);
+    if(!shown.length||!aimRay(hand))return null;
+    const hit=raycaster.intersectObjects(shown.map(s=>s.mesh),false)[0];if(!hit)return {point:null};
+    const s=shown.find(x=>x.mesh===hit.object),x=hit.uv.x*s.canvas.width,y=(1-hit.uv.y)*s.canvas.height;
+    return {point:hit.point,surface:s,region:s.regionAt(x,y)};
+  }
+  function drawLaser(hand,aim) {
+    const laser=lasers.find(l=>l.hand===hand);if(!laser)return;
+    laser.line.visible=Boolean(aim);laser.dot.visible=Boolean(aim?.point);
+    if(!aim)return;
+    const end=aim.point||rayOrigin.clone().addScaledVector(rayDirection,FAR.laser);
+    laser.line.geometry.setFromPoints([rayOrigin,end]);laser.line.geometry.computeBoundingSphere();
+    laser.dot.position.copy(end);laser.dot.material.color.set(aim.region?0xffffff:0xe9c890);
+    laser.line.material.color.set(aim.region?0xffffff:0xe9c890);
+  }
+  // Called for each hand every frame with its fingertip, and `select` on the frame a pinch (or the trigger) begins.
+  // The watch and wrist button: a region lights as the fingertip comes near and is pressed when it touches; it presses
+  // again only after the fingertip lifts off. The far panels: the region under the laser lights, and a pinch presses
+  // it. onUI is true while the hand is at the watch or pointing at a panel, so it never grips the map meanwhile.
+  function pointer(hand,{fingertip,select=false}) {
     const touch=fingertip?pokeBy(fingertip,hand):null,near=touch&&touch.depth<POKE.hover;
-    const region=near?touch.surface.regionAt(touch.x,touch.y):null;
-    hand.uiHover=region?.id||null;
-    if(touch&&touch.depth<POKE.touch){if(!hand.poking){hand.poking=true;region?.press?.();}}
-    else if(!touch||touch.depth>POKE.release)hand.poking=false;
-    return {onUI:Boolean(near)};
+    if(near) {
+      drawLaser(hand,null);
+      const region=touch.surface.regionAt(touch.x,touch.y);
+      hand.uiHover=region?.id||null;
+      if(touch.depth<POKE.touch){if(!hand.poking){hand.poking=true;region?.press?.();}}
+      else if(touch.depth>POKE.release)hand.poking=false;
+      return {onUI:true};
+    }
+    hand.poking=false;
+    const aim=aimAt(hand);drawLaser(hand,aim);
+    hand.uiHover=aim?.region?.id||null;
+    if(select&&aim?.region?.press)aim.region.press();
+    return {onUI:Boolean(aim?.point)};
   }
 
   function update() {
     wear(face,left(),'left');wear(wrist,handOf('right'),'right');
+    for(const laser of lasers)if(!laser.hand.source)laser.line.visible=laser.dot.visible=false;
     hovered=new Set(hands.map(hand=>hand.uiHover).filter(Boolean));
     // Between drags the editor shows the page's selection as it is (after a change is applied, or from the computer).
     if(editor.mesh.visible&&!dragging)draft=draftFromPage();
@@ -407,7 +467,7 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     if(caption.mesh.visible&&performance.now()>captionUntil)caption.mesh.visible=false;
     const now=status();if(now!==lastStatus){lastStatus=now;radial.signature='';}
   }
-  function close(){closeMenu();voice.cancel();keyboard.mesh.visible=false;editor.mesh.visible=false;dragging=null;}
+  function close(){closeMenu();voice.cancel();keyboard.mesh.visible=false;editor.mesh.visible=false;dragging=null;lasers.forEach(l=>{l.line.visible=l.dot.visible=false;});}
   // A short caption in front of you: what a voice command was heard as.
   let captionUntil=0;
   let captionText='';
@@ -458,7 +518,7 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     get busy(){return radial.mesh.visible||keyboard.mesh.visible||editor.mesh.visible;},
     get state(){
       const regions=s=>s.mesh.visible?s.regions.map(({id})=>id):[];
-      return {caption:caption.mesh.visible?captionText:null,voice:voice.state,voiceNote,editor:editor.mesh.visible?{...draft,dragging:dragging?.name||null}:null,face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,path:radial.mesh.visible?[...stack]:[],keyboard:keyboard.mesh.visible,text,
+      return {caption:caption.mesh.visible?captionText:null,lasers:lasers.map(l=>l.line.visible),voice:voice.state,voiceNote,editor:editor.mesh.visible?{...draft,dragging:dragging?.name||null}:null,face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,path:radial.mesh.visible?[...stack]:[],keyboard:keyboard.mesh.visible,text,
         regions:{watch:regions(face),radial:regions(radial),keyboard:regions(keyboard),wrist:regions(wrist),editor:regions(editor)},
         surfaces:Object.fromEntries(surfaces.map(s=>[s.name,{visible:s.mesh.visible,matrix:s.mesh.matrixWorld.toArray(),width:s.width,height:s.height,canvas:[s.canvas.width,s.canvas.height]}]))};
     },
