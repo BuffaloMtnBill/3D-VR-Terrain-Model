@@ -225,11 +225,31 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     dragging=null;editor.signature='';applyDraft();
   }
 
+  // The page does the search; the headset is told how it went: the place found as a caption, or, when nothing is
+  // found (or the search fails), the keyboard back with your text and the reason, to fix and try again.
+  let searching=null;
   function search() {
     keyboard.mesh.visible=false;
     const input=$('place-search'),form=$('place-form');
     if(!input||!form)return;
-    input.value=text;form.requestSubmit();
+    if(text.trim().length<2){voiceNote='Type (or say) at least two letters.';keyboard.mesh.visible=true;keyboard.signature='';return;}
+    input.value=text;searching={text,since:performance.now(),selection:JSON.stringify(ctx.state.selection)};
+    form.requestSubmit();
+  }
+  function followSearch() {
+    if(!searching)return;
+    const status=$('place-status'),button=$('place-form')?.querySelector('button'),waited=performance.now()-searching.since;
+    if(button?.disabled&&waited<20000)return;   // still asking
+    if(waited<60)return;                         // give the page a moment to start
+    const moved=JSON.stringify(ctx.state.selection)!==searching.selection,failed=status?.classList.contains('error');
+    const found=()=>status&&!status.hidden&&status.textContent?status.textContent.split(',').slice(0,2).join(','):searching.text;
+    const again=()=>{text=searching.text;place(keyboard.mesh,.4,-.24);keyboard.mesh.visible=true;keyboard.signature='';};
+    if(failed){voiceNote=status.textContent;again();}
+    else if(moved)say(`📍 ${found()}`);
+    else if(!button?.disabled&&waited>400&&status&&!status.hidden&&status.textContent)say(`📍 ${found()}`);   // the same place again
+    else if(waited>=20000){voiceNote='No answer from the search. Try again.';again();}
+    else return;   // not there yet
+    searching=null;
   }
 
   function status() {
@@ -310,12 +330,12 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     c.fillStyle=text&&!listening&&!working&&!voiceNote?UI.ink:listening?UI.accent:UI.muted;c.font=`500 ${shownText.length>40?40:52}px ${UI.sans}`;
     c.textAlign='left';c.textBaseline='middle';c.fillText(shownText,pad+24,pad+50);
     const top=pad+110,row=(H-top-pad)/5;
-    ROWS.forEach((keys,r)=>[...keys].forEach((k,i)=>button(`key:${k}`,pad+i*key+(r===2?key*.25:r===3?key*.5:0),top+r*row,key,row,k.toUpperCase(),()=>{text+=k;})));
+    ROWS.forEach((keys,r)=>[...keys].forEach((k,i)=>button(`key:${k}`,pad+i*key+(r===2?key*.25:r===3?key*.5:0),top+r*row,key,row,k.toUpperCase(),()=>{text+=k;voiceNote='';})));
     const y=top+4*row;
     button('key:cancel',pad,y,key*2,row,'Cancel',()=>{voice.cancel();keyboard.mesh.visible=false;});
     button('key:voice',pad+key*2,y,key*2,row,voice.state==='listening'?'■ Stop':voice.state==='working'?'…':'🎤 Speak',()=>{voiceNote='';voice.toggle();},voice.state==='listening');
-    button('key:space',pad+key*4,y,key*2,row,'Space',()=>{text+=' ';});
-    button('key:back',pad+key*6,y,key*2,row,'⌫',()=>{text=text.slice(0,-1);});
+    button('key:space',pad+key*4,y,key*2,row,'Space',()=>{text+=' ';voiceNote='';});
+    button('key:back',pad+key*6,y,key*2,row,'⌫',()=>{text=text.slice(0,-1);voiceNote='';});
     button('key:search',pad+key*8,y,key*2,row,'Search',search,true);
     keyboard.texture.needsUpdate=true;
   }
@@ -383,16 +403,21 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     // Between drags the editor shows the page's selection as it is (after a change is applied, or from the computer).
     if(editor.mesh.visible&&!dragging)draft=draftFromPage();
     drawFace();drawRadial();drawKeyboard();drawWrist();drawEditor();
+    followSearch();
     if(caption.mesh.visible&&performance.now()>captionUntil)caption.mesh.visible=false;
     const now=status();if(now!==lastStatus){lastStatus=now;radial.signature='';}
   }
   function close(){closeMenu();voice.cancel();keyboard.mesh.visible=false;editor.mesh.visible=false;dragging=null;}
   // A short caption in front of you: what a voice command was heard as.
   let captionUntil=0;
+  let captionText='';
   function say(text) {
+    captionText=text;
     const c=caption.context,W=caption.canvas.width,H=caption.canvas.height;
     c.clearRect(0,0,W,H);c.fillStyle=UI.fill;c.beginPath();c.roundRect(0,0,W,H,H/2);c.fill();
-    c.fillStyle=UI.accent;c.font=`600 ${Math.round(H*.5)}px ${UI.sans}`;c.textAlign='center';c.textBaseline='middle';c.fillText(text,W/2,H/2+2);
+    let size=Math.round(H*.5);c.font=`600 ${size}px ${UI.sans}`;
+    while(size>14&&c.measureText(text).width>W-H){size-=2;c.font=`600 ${size}px ${UI.sans}`;}   // long place names shrink to fit
+    c.fillStyle=UI.accent;c.textAlign='center';c.textBaseline='middle';c.fillText(text,W/2,H/2+2);
     caption.texture.needsUpdate=true;place(caption.mesh,.6,-.22);caption.mesh.visible=true;captionUntil=performance.now()+2500;
   }
 
@@ -433,7 +458,7 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     get busy(){return radial.mesh.visible||keyboard.mesh.visible||editor.mesh.visible;},
     get state(){
       const regions=s=>s.mesh.visible?s.regions.map(({id})=>id):[];
-      return {caption:caption.mesh.visible,voice:voice.state,voiceNote,editor:editor.mesh.visible?{...draft,dragging:dragging?.name||null}:null,face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,path:radial.mesh.visible?[...stack]:[],keyboard:keyboard.mesh.visible,text,
+      return {caption:caption.mesh.visible?captionText:null,voice:voice.state,voiceNote,editor:editor.mesh.visible?{...draft,dragging:dragging?.name||null}:null,face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,path:radial.mesh.visible?[...stack]:[],keyboard:keyboard.mesh.visible,text,
         regions:{watch:regions(face),radial:regions(radial),keyboard:regions(keyboard),wrist:regions(wrist),editor:regions(editor)},
         surfaces:Object.fromEntries(surfaces.map(s=>[s.name,{visible:s.mesh.visible,matrix:s.mesh.matrixWorld.toArray(),width:s.width,height:s.height,canvas:[s.canvas.width,s.canvas.height]}]))};
     },

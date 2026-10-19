@@ -11,12 +11,37 @@ const $=id=>document.getElementById(id);
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const fire=(el,type)=>el.dispatchEvent(new Event(type,{bubbles:true}));
 const Y=new THREE.Vector3(0,1,0);
+const smoothing=(cutoff,dt)=>1/(1+1/(2*Math.PI*cutoff*dt));
+
+// One Euro filters for a position and for a turn (a quaternion); reset() starts over from the next sample.
+function steadyPoint() {
+  let last=null,speed=0;const value=new THREE.Vector3();
+  return {reset(){last=null;},
+    filter(raw,dt) {
+      if(!last||!(dt>0)){last=value.copy(raw);speed=0;return value;}
+      speed+=(raw.distanceTo(value)/dt-speed)*smoothing(STEADY.derivative,dt);
+      return value.lerp(raw,smoothing(STEADY.cutoff+STEADY.beta*speed,dt));
+    }};
+}
+function steadyTurn() {
+  let last=null,speed=0;const value=new THREE.Quaternion();
+  return {reset(){last=null;},
+    filter(raw,dt) {
+      if(!last||!(dt>0)){last=value.copy(raw);speed=0;return value;}
+      speed+=(value.angleTo(raw)/dt-speed)*smoothing(STEADY.derivative,dt);
+      return value.slerp(raw,smoothing(STEADY.cutoff+STEADY.beta*speed,dt));
+    }};
+}
 
 const SPEED=1.6;              // meters per second at full stick, in the room: the same at every zoom level
 const DEADZONE=.15;
 const PINCH={press:.018,release:.025};  // thumb-to-index distance (m) that starts and ends a pinch
 // Momentum: a one-hand drag of the map glides on when you let go, slowing to a stop.
 const GLIDE={skipMs:50,spanMs:100,minSpeed:.05,stopSpeed:.01,fade:.35};   // speeds in room meters per second; fade in s
+// Steadying tracked hands while they hold something: a One Euro filter (Casiez et al. 2012) smooths the tracking's
+// millimeter jitter when the hand is nearly still and follows at once when it moves fast. cutoff in Hz; beta per m/s
+// (or per radian/s for a turn).
+const STEADY={cutoff:1.5,beta:12,derivative:1};
 const TABLE={width:1,height:.75,distance:.8};   // where Reset view puts the model: 1 m wide at table height
 const UI={paper:'#101b14',surface:'#19281e',raised:'#223329',line:'#414633',ink:'#fff6d6',muted:'#a9ae99',
   accent:'#e9c890',green:'#426746',hover:'#2f4834',error:'#d2a36c',sans:'Inter,"Segoe UI",Arial,sans-serif',serif:'Georgia,"Times New Roman",serif'};
@@ -120,7 +145,7 @@ export function createVR(ctx) {
     // Tracked hands: three.js keeps one object per joint up to date; the hand model follows them (dots until it loads).
     const xrHand=renderer.xr.getHand(index);
     const hand={controller,grip,xrHand,skin:createHandSkin(xrHand),dot,source:null,trigger:false,mode:null,anchor:null,fist:false,
-      point:new THREE.Vector3(),tracked:false};
+      point:new THREE.Vector3(),turn:new THREE.Quaternion(),tracked:false,steady:steadyPoint(),steadyTurn:steadyTurn(),kind:null};
     controller.addEventListener('connected',event=>{hand.source=event.data;});
     controller.addEventListener('disconnected',()=>{hand.source=null;hand.mode=null;hand.trigger=false;});
     rig.add(controller,grip,xrHand);
@@ -160,23 +185,38 @@ export function createVR(ctx) {
     hand.fist=['index','middle','ring'].every(name=>reach(name)<limit);
     return hand.fist;
   }
-  // Gripping the map: a pinch or a fist with hands; the grip (squeeze) button or the trigger with controllers.
+  // Gripping: a pinch or a fist with hands; the trigger or the grip (squeeze) button with controllers. Which kind it is
+  // (decided as the grip starts) matters in the model view, where a fist (or the grip button) turns the model.
   function gripping(hand) {
-    if(hand.tracked)return pinching(hand)||fist(hand);
+    if(hand.tracked) {
+      if(hand.trigger)return hand.kind==='fist'?fist(hand):pinching(hand)||fist(hand);
+      // A pinch first: a pinch with the other fingers curled can read as a fist too, and should not turn the model.
+      if(pinching(hand)){hand.kind='pinch';return true;}
+      if(fist(hand)){hand.kind='fist';return true;}
+      return false;
+    }
     const buttons=hand.source?.gamepad?.buttons||[];
+    if(!hand.trigger)hand.kind=buttons[0]?.pressed?'pinch':buttons[1]?.pressed?'fist':null;
     return Boolean(buttons[0]?.pressed||buttons[1]?.pressed);
   }
   // Where a hand acts in the room: between thumb and index tips, or the controller itself.
   // While gripping, the point follows the wrist from where the pinch began: opening the fingers to let go moves the
   // fingertips (and their midpoint) but not the wrist, so letting go never drags the map back.
-  function handPoint(hand) {
+  // Held, a tracked hand's point and turn are steadied (see STEADY); the hand's turn is its wrist's, or the controller's.
+  function handPoint(hand,dt) {
     const thumb=joint(hand,'thumb-tip'),index=joint(hand,'index-finger-tip'),wrist=joint(hand,'wrist');
+    hand.turn.copy((hand.tracked&&wrist||hand.controller).quaternion);
     if(hand.tracked&&thumb&&index) {
-      if(hand.gripStart&&wrist)return hand.point.copy(hand.gripStart.pinch).add(wrist.position).sub(hand.gripStart.wrist);
+      if(hand.gripStart&&wrist) {
+        hand.point.copy(hand.steady.filter(raw.copy(hand.gripStart.pinch).add(wrist.position).sub(hand.gripStart.wrist),dt));
+        hand.turn.copy(hand.steadyTurn.filter(wrist.quaternion,dt));
+        return hand.point;
+      }
       return hand.point.copy(thumb.position).add(index.position).multiplyScalar(.5);
     }
     return hand.point.copy(hand.controller.position);
   }
+  const raw=new THREE.Vector3();
   // Generate from the right wrist (or by voice): when the new terrain arrives, show it in the model view.
   let generating=null;   // the terrain showing when Generate was pressed
   function generate(){const button=document.getElementById('generate');if(button.disabled||ctx.state.loading)return false;generating={from:ctx.state.id};button.click();return true;}
@@ -227,11 +267,16 @@ export function createVR(ctx) {
 
   // The rig (your head and hands) stays at room scale; the world (model, map) gets the inverse transform instead.
   // A rig scaled thousands of times over would put your eyes a kilometer apart, and three.js would cull everything.
+  // In the model view the model may also be turned in any direction about its own center (spin; see updateSpin).
   const worldMatrix=new THREE.Matrix4(),turn=new THREE.Quaternion(),grow=new THREE.Vector3();
-  const worldObjects=()=>[ctx.model,mapMode.world];
+  const spin={turn:new THREE.Quaternion(),center:new THREE.Vector3()},pivot=new THREE.Matrix4(),shift=new THREE.Matrix4();
   function applyView() {
     worldMatrix.compose(view.position,turn.setFromAxisAngle(Y,view.yaw),grow.setScalar(view.scale)).invert();
-    for(const object of worldObjects()){object.matrixAutoUpdate=false;object.matrix.copy(worldMatrix);object.matrixWorldNeedsUpdate=true;}
+    pivot.makeTranslation(spin.center).multiply(shift.makeRotationFromQuaternion(spin.turn))
+      .multiply(shift.makeTranslation(-spin.center.x,-spin.center.y,-spin.center.z));
+    for(const [object,local] of [[ctx.model,pivot],[mapMode.world,null]]) {
+      object.matrixAutoUpdate=false;object.matrix.copy(worldMatrix);if(local)object.matrix.multiply(local);object.matrixWorldNeedsUpdate=true;
+    }
     // Keep the whole model inside the depth range at any zoom, with a near plane that never clips the hands.
     const far=2**Math.ceil(Math.log2(Math.max(30,4*view.size/view.scale)));
     if(camera.far!==far){camera.far=far;camera.near=clamp(far/1e5,.02,.1);}
@@ -244,6 +289,7 @@ export function createVR(ctx) {
     ctx.model.matrix.identity();ctx.model.updateMatrixWorld(true);
     const data=ctx.state.data,box=new THREE.Box3().setFromObject(ctx.model);
     if(box.isEmpty()||!data)return;
+    spin.turn.identity();box.getCenter(spin.center);
     view.size=Math.max(box.max.x-box.min.x,box.max.z-box.min.z,1e-6);
     // Zoom from life size (1 m in the room is 1 m of ground) to a model 8 cm across.
     view.minScale=ctx.SCALE/Math.max(data.width_m,data.height_m);
@@ -251,7 +297,7 @@ export function createVR(ctx) {
     view.scale=clamp(view.size/TABLE.width,view.minScale,view.maxScale);view.yaw=0;
     const center=new THREE.Vector3((box.min.x+box.max.x)/2,box.min.y,(box.min.z+box.max.z)/2);
     view.position.copy(center).sub(new THREE.Vector3(0,TABLE.height,-TABLE.distance).multiplyScalar(view.scale));
-    hands.forEach(hand=>{if(hand.mode==='grab')hand.mode=null;});
+    hands.forEach(hand=>{if(hand.mode==='grab'||hand.mode==='spin')hand.mode=null;});
     applyView();
   }
 
@@ -288,6 +334,16 @@ export function createVR(ctx) {
     return grabbing.length>0;
   }
 
+  // ---------- turning the model: a fist turns it as the fist turns, about the model's center, which stays put ----------
+  const yawTurn=new THREE.Quaternion(),handTurn=new THREE.Quaternion();
+  function updateSpin() {
+    const hand=hands.find(h=>h.mode==='spin');if(!hand)return;
+    // The hand's turn since the fist closed, in the room; carried into the world through the view's yaw.
+    handTurn.copy(hand.turn).multiply(hand.spinStart.hand.clone().invert());
+    yawTurn.setFromAxisAngle(Y,view.yaw);
+    spin.turn.copy(yawTurn).multiply(handTurn).multiply(yawTurn.clone().invert()).multiply(hand.spinStart.spin).normalize();
+  }
+
   // ---------- flying: the sticks move where each hand points, at one room speed ----------
   function fly(delta) {
     const velocity=new THREE.Vector3();
@@ -312,17 +368,18 @@ export function createVR(ctx) {
     hand.controller.updateMatrixWorld();
     return hand.controller.localToWorld(TIP.clone());
   }
-  function updateHand(hand) {
+  function updateHand(hand,dt) {
     hand.tracked=Boolean(hand.source?.hand);
     hand.grip.visible=!hand.tracked;   // the controller model (and its fingertip dot) only for controllers
     hand.dot.visible=!hand.tracked&&Boolean(hand.source);
-    handPoint(hand);
+    handPoint(hand,dt);
     const other=hands.find(h=>h!==hand);
     if(hand.source) {
       const grip=gripping(hand);
       if(grip&&!hand.trigger) {
         const wrist=hand.tracked&&joint(hand,'wrist');
         hand.gripStart=wrist?{pinch:hand.point.clone(),wrist:wrist.position.clone()}:null;
+        hand.steady.reset();hand.steadyTurn.reset();
         if(glide){glide=null;trail.length=0;}   // taking the map again stops its glide (the next release sets the selection)
       }
       if(!grip&&hand.trigger)hand.gripStart=null;
@@ -331,9 +388,12 @@ export function createVR(ctx) {
       if(grip&&!hand.trigger&&watch.busy) {
         // While a menu is up the map stays put; a grip can only take one of the shape editor's handles.
         if(watch.dragStart(hand,hand.tracked?hand.point:fingertipOf(hand)))hand.mode='handle';
+      } else if(grip&&!hand.trigger&&!ui.onUI&&mode==='model'&&hand.kind==='fist'&&other.mode!=='spin') {
+        // In the model view a fist turns the model where it stands.
+        hand.mode='spin';hand.spinStart={hand:hand.turn.clone(),spin:spin.turn.clone()};
       } else if(grip&&!hand.trigger&&!ui.onUI) {
         // One hand moves the map; with the other already gripping, the two zoom and turn it.
-        hand.mode='grab';if(busy(other))other.mode='grab';
+        hand.mode='grab';
         regrab();
       } else if(grip&&hand.mode==='handle') {
         watch.dragMove(hand,hand.tracked?hand.point:fingertipOf(hand));
@@ -387,11 +447,13 @@ export function createVR(ctx) {
       if(ctx.state.id!==lastId){lastId=ctx.state.id;frameModel();}
     }
     commands.paused=watch.searching;   // a search being spoken is not a command
-    hands.forEach(updateHand);
+    hands.forEach(hand=>updateHand(hand,delta));
     // A menu opened while the map was held: let go of it there (the selection is set as on any release).
     if(watch.busy&&hands.some(busy)){hands.forEach(hand=>{if(busy(hand))hand.mode=null;});if(mode==='map')mapMode.commit(view);}
+    if(watch.busy)hands.forEach(hand=>{if(hand.mode==='spin')hand.mode=null;});
     watch.update();
     if(!updateGrab())fly(delta);
+    updateSpin();
     updateGlide(delta);
     if(mode==='map')mapMode.update(view,toWorld(camera.position),{interacting:hands.some(busy)||Boolean(glide),camera});
     applyView();
@@ -410,7 +472,8 @@ export function createVR(ctx) {
     session.addEventListener('visibilitychange',()=>{if(session?.visibilityState==='visible')ctx.live?.now();else ctx.handoff?.(true);});
     session.addEventListener('end',()=>{
       dropTiles();mapMode.leave();watch.close();commands.stop();ctx.model.visible=true;
-      ctx.model.matrixAutoUpdate=true;ctx.model.updateMatrix();   // back to the page's own viewif(ctx.grid)ctx.grid.visible=ctx.state.view!=='elevation';
+      ctx.model.matrixAutoUpdate=true;ctx.model.updateMatrix();   // back to the page's own view
+      if(ctx.grid)ctx.grid.visible=ctx.state.view!=='elevation';
       ctx.handoff?.(true);   // you are taking the headset off: the computer's page can continue from here
       session=null;renderer.xr.enabled=false;scene.remove(rig);scene.background=background;
       hands.forEach(hand=>{hand.mode=null;hand.trigger=false;});ctx.requestRender();
@@ -430,9 +493,9 @@ export function createVR(ctx) {
   }
 
   instance={update,attachButton,camera,setMode,exit:()=>session?.end(),watchPoint:id=>watch.regionPoint(id),get live(){return ctx.live;},get presenting(){return Boolean(session);},
-    get state(){return {scale:view.scale,yaw:view.yaw,position:view.position.toArray(),minScale:view.minScale,maxScale:view.maxScale,
+    get state(){return {scale:view.scale,yaw:view.yaw,spin:spin.turn.toArray(),position:view.position.toArray(),minScale:view.minScale,maxScale:view.maxScale,
       mode,gliding:Boolean(glide),lastGlide,background:session?backdrop:null,backgroundShown:scene.background?.isTexture?scene.background.image?.src?.split('/').pop()||'gradient':null,watch:watch.state,commands:{...commands.state,on:voiceOn},map:{...mapMode.state,selection:mapMode.active?mapMode.boundsFrom(view):null},pageSelection:ctx.state.selection,flownSeconds,area:ctx.state.data?{bounds:ctx.state.data.bounds,width_m:ctx.state.data.width_m,height_m:ctx.state.data.height_m}:null,
-      hands:hands.map(hand=>({tracked:hand.tracked,model:hand.skin.ready,touching:Boolean(hand.poking),over:hand.uiHover||null,pinching:hand.trigger,mode:hand.mode,point:hand.point.toArray(),indexTip:joint(hand,'index-finger-tip')?.position.toArray()||null})),tiles:tiles?tiles.children.length:0,
+      hands:hands.map(hand=>({tracked:hand.tracked,kind:hand.kind,model:hand.skin.ready,touching:Boolean(hand.poking),over:hand.uiHover||null,pinching:hand.trigger,mode:hand.mode,point:hand.point.toArray(),indexTip:joint(hand,'index-finger-tip')?.position.toArray()||null})),tiles:tiles?tiles.children.length:0,
       tileTriangles:tiles?tiles.children.reduce((sum,part)=>sum+part.geometry.index.count/3,0):0,surfaceHidden:ctx.surface?!ctx.surface.visible:false};}};
   return instance;
 }

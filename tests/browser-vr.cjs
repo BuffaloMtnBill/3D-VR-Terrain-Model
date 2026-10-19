@@ -287,6 +287,21 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   near((found.north+found.south)/2,36.2,.05,'The map moved to the search: the box is over it');
   state=await vrState();
   assert.equal(state.watch.keyboard,false,'Searching puts the keyboard away');
+  assert.equal(state.watch.caption,'📍 36.2 -81.9','and a caption says where the map went');
+  // A search that finds nothing brings the keyboard back with your text and the reason (the computer's answer is
+  // stood in for, so this needs no internet).
+  const nowhere=route=>route.fulfill({status:404,json:{error:'No place matched that search. Try adding a city, state, or country.'}});
+  await page.route('**/api/location/search**',nowhere);
+  await press('watch:face');await press('radial:root:search');
+  for(let i=0;i<20&&(await vrState()).watch.text.length;i++)await press('key:back');
+  for(const key of 'qzx')await press(`key:${key}`);
+  await press('key:search');
+  await page.waitForFunction(()=>window.testVR().state.watch.keyboard,null,{timeout:10000});
+  state=await vrState();
+  assert.equal(state.watch.text,'qzx','Nothing found: the keyboard comes back with the text');
+  assert.match(state.watch.voiceNote,/No place matched/,'and says why');
+  await page.unroute('**/api/location/search**',nowhere);
+  await press('key:cancel');
   // Voice search: Speak records from the microphone, Stop sends 16 kHz samples to the computer, and the words heard
   // fill the box (the computer's speech recognition is stood in for here; tests/test_live.py covers the server).
   let heard=null;
@@ -318,6 +333,21 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   const turnedTo=Math.round(Math.abs((await vrState()).pageSelection.rotation_deg||0));
   assert.match(await page.locator('#scene-detail').innerText(),new RegExp(`${turnedTo}° selection`),'with the turned selection');
   await frames(10);
+  // In the model view the controller's grip button turns the model as the controller turns, in place; the trigger moves it.
+  await pose('right',[.3,1.1,-.4]);await frames();
+  const placed=await vrState();
+  await button('right','squeeze',1);await frames();
+  assert.equal((await vrState()).hands[1].mode,'spin','The grip button takes the model to turn it');
+  for(const step of [1,2,3,4])await page.evaluate(step=>window.xrDevice.controllers.right.quaternion.set(0,Math.sin(step*Math.PI/32),0,Math.cos(step*Math.PI/32)),step);
+  await frames(12);
+  state=await vrState();
+  near(2*Math.acos(Math.min(1,Math.abs(state.spin[3]))),Math.PI/4,.02,`The model turns with the controller (${state.spin})`);
+  assert.deepEqual(state.position,placed.position,'and stays where it is');
+  await button('right','squeeze',0);await frames();
+  await page.evaluate(()=>window.xrDevice.controllers.right.quaternion.set(0,0,0,1));
+  await button('right','trigger',1);await frames();
+  assert.equal((await vrState()).hands[1].mode,'grab','The trigger moves the model');
+  await button('right','trigger',0);await frames();
   // The model view has its own menu: the backgrounds (the dark gradient by default), and what is drawn on the model.
   assert.equal((await vrState()).backgroundShown,'gradient','The model view starts on the dark gradient');
   await pose('left',[-.15,1.2,-.3]);await pose('right',[.3,1.1,-.1]);await frames(6);

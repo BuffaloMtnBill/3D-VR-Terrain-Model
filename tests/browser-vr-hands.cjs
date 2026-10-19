@@ -178,6 +178,45 @@ async function openPage(browser,headset) {
   await computer.waitForFunction(()=>document.getElementById('selection-state').textContent==='Terrain generated',null,{timeout:30000});
   assert.deepEqual(await selectionText(computer),await selectionText(page),'The computer shows the same cut');
 
+  // A fist turns the model as the fist turns, about the model's center, which stays where it is. (IWER has no fist
+  // pose, so one is made from its relaxed pose with the index, middle, and ring fingertips curled in to the palm.)
+  const makeFist=(hand,on)=>page.evaluate(([hand,on])=>{
+    const h=window.xrDevice.hands[hand],inner=Object.getOwnPropertySymbols(h).map(key=>h[key]).find(value=>value?.poses);
+    if(!inner.poses.fist) {
+      const fist=structuredClone(inner.poses.default),wrist=fist.jointTransforms.wrist.offsetMatrix;
+      for(const finger of ['index','middle','ring']) {
+        const tip=fist.jointTransforms[`${finger}-finger-tip`].offsetMatrix;
+        for(let i=0;i<3;i++)tip[12+i]=wrist[12+i]+(tip[12+i]-wrist[12+i])*.35;
+      }
+      inner.poses.fist=fist;
+    }
+    h.poseId=on?'fist':'default';
+  },[hand,on]);
+  await place('right',[.25,1.3,-.35]);await frames();
+  const unturned=await vrState();
+  await makeFist('right',true);await frames();
+  state=await vrState();
+  assert.equal(state.hands[1].mode,'spin',`A fist takes the model to turn it (${JSON.stringify(state.hands[1])})`);
+  for(const step of [.25,.5,.75,1]) {
+    const half=Math.PI/12*step;
+    await place('right',[.25,1.3,-.35],[Math.sin(half),0,0,Math.cos(half)]);await frames(2);
+  }
+  await frames(10);
+  state=await vrState();
+  near(2*Math.acos(Math.min(1,Math.abs(state.spin[3]))),Math.PI/6,.02,`The model turns with the fist (${state.spin})`);
+  near(Math.abs(state.spin[0]),Math.sin(Math.PI/12),.02,'about the same axis');
+  assert.deepEqual(state.position,unturned.position,'and stays where it is');
+  assert.equal(state.scale,unturned.scale);
+  await makeFist('right',false);await frames();
+  state=await vrState();
+  assert.equal(state.hands[1].mode,null,'Opening the fist lets go');
+  await place('right',[.25,1.3,-.35]);await frames();
+  near(2*Math.acos(Math.min(1,Math.abs((await vrState()).spin[3]))),Math.PI/6,.02,'and the model stays turned');
+  // A pinch in the model view still moves the model.
+  await pinch('right',1);await frames();
+  assert.equal((await vrState()).hands[1].mode,'grab','A pinch moves the model');
+  await pinch('right',0);await frames();
+
   // ◀ Map on the same button goes back to Map Selection.
   await place('right',[.12,1.32,-.32]);await frames(6);
   assert.equal((await vrState()).watch.buttonLabel,'◀ Map');

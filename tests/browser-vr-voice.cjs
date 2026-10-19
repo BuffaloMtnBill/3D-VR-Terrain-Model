@@ -46,7 +46,7 @@ const segmentSeconds=body=>Buffer.from(body.samples,'base64').length/32000;
   // "Multiplier" (in Terrain), "Plus", "Back", and "Fine" (Terrain ▸ Detail).
   let {browser,page}=await session('open-menu',real?'Open menu.':['Open menu.','Multiplier.','Plus.','Back.','Fine.']);
   await page.waitForFunction(()=>window.testVR().state.watch.menu==='root',null,{timeout:20000});
-  assert.equal((await page.evaluate(()=>window.testVR().state.watch.caption)),true,'A caption shows what was heard');
+  assert.match(String(await page.evaluate(()=>window.testVR().state.watch.caption)),/🎤/,'A caption shows what was heard');
   const first=page.sent[0];
   assert.equal(first.purpose,'command','Voice commands are transcribed expecting commands');
   assert.ok(segmentSeconds(first)>.5&&segmentSeconds(first)<3.6,`Only the speech is sent, not the silence around it (${segmentSeconds(first).toFixed(2)} s)`);

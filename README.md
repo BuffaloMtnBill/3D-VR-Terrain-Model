@@ -249,7 +249,7 @@ marked ▸ opens the next ring, and every segment shows its current value under 
 
 | Segment | Choices |
 | --- | --- |
-| Search | A keyboard: type (or say) an address, place, US ZIP code, or "latitude longitude" and press Search; the map goes there |
+| Search | A keyboard: type (or say) an address, place, US ZIP code, or "latitude longitude" and press Search; the map goes there, and a caption names the place found (if nothing is found, the keyboard comes back with your text and the reason) |
 | Area | The shape editor (below): shape, proportions, and turn in one window |
 | Terrain ▸ | **Source** ▸ elevation source · **Detail** ▸ terrain detail · **Profile** ▸ elevation profile (standard, local, lowland) · **Multiplier** ▸ − and + one step, −− and ++ ten steps · **Base** ▸ base thickness, the same way |
 | Layers ▸ | The map features drawn on the model, each a switch, in groups: **Roads & rail** ▸ (roads, train tracks), **Boundaries** ▸ (borders, city, park), **Outdoors** ▸ (water, AT, other trails), and **Buildings** |
@@ -275,8 +275,12 @@ smaller, less accurate one, about 140 MB); after that a search takes well under 
 
 **The button on your right wrist** (on top of the right controller): tap it with your left index finger. It reads
 **Generate** in Map Selection: the box's area is generated (the button shows the progress), and
-VR switches to the **model view**, the new model as a 1 m tabletop model to grab, zoom, and turn (grip it with one hand
-to move it, with both to zoom and turn it; controller sticks fly over it). There the button reads **◀ Map** and goes back.
+VR switches to the **model view**, the new model as a 1 m tabletop model to grab, zoom, and turn (pinch it with one hand
+to move it, with both to zoom and turn it; controller sticks fly over it). **Clench a fist** to turn the model in any
+direction as your fist turns, about its own center, which stays where it is; open your hand to leave it turned (with
+controllers, the grip button turns it and the trigger moves it). Each return to the model view sets it level again. A
+held hand is steadied (a One Euro filter), so the hand tracking's small jitter does not shake the model or the map, while
+quick moves still follow at once. There the button reads **◀ Map** and goes back.
 
 **The model view's menu** is its own: tapping the watch there opens **Background** ▸, **Layers** ▸, and **Settings** ▸. The
 model sits in front of a dark gradient by default; Background changes it to a 360° mellow forest, sandy
