@@ -114,7 +114,7 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
       {key:'background',label:'Background',aliases:['backgrounds','sky'],open:'background',detail:backgrounds.list.find(b=>b.key===backgrounds.current)?.label},
       {key:'layers',label:'Layers',aliases:['on the model','display','features'],open:'layers',detail:onCount([...features(),{active:$('contours').checked}])},
       {key:'settings',label:'Settings',open:'settings',detail:voiceCommands.on?'Voice on':'Voice off'}]},
-    background:{title:'Background',items:()=>backgrounds.list.map(b=>({key:b.key,label:b.label,active:backgrounds.current===b.key,press:()=>backgrounds.set(b.key)}))},
+    background:{title:'Background',items:()=>backgrounds.list.map(b=>({key:b.key,label:b.label,aliases:b.aliases,active:backgrounds.current===b.key,press:()=>backgrounds.set(b.key)}))},
   };
   // A menu's items, with each `open` item opening its menu.
   const itemsOf=key=>MENUS[key].items().map(item=>item.open?{...item,press:()=>open(item.open)}:item);

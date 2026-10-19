@@ -284,11 +284,12 @@ fingers (a second hand pinching turns that into the two-hand zoom and turn). **C
 direction as your fist turns, about its own center, which stays where it is; open your hand to leave it turned (with
 controllers, the grip button turns it; the trigger on the model holds it, and in the air moves it). Each return to the model view sets it level again. A
 held hand is steadied (a One Euro filter), so the hand tracking's small jitter does not shake the model or the map, while
-quick moves still follow at once. There the button reads **◀ Map** and goes back.
+quick moves still follow at once. While the map features (roads, water, and the rest) are still downloading, a quiet
+**Loading map features…** sign floats well beyond the model, a little above eye level, and fades away once they are in. There the button reads **◀ Map** and goes back.
 
 **The model view's menu** is its own: tapping the watch there opens **Background** ▸, **Layers** ▸, and **Settings** ▸. The
 model sits in front of a dark gradient by default; Background changes it to a 360° mellow forest, sandy
-desert, or moonlit lake (in `static/backgrounds/`, made with OpenAI's image generation and joined seamlessly where the
+desert, moonlit lake, mountain peak above the clouds, space (a planet's edge under a nebula), or Times Square at dusk (in `static/backgrounds/`, made with OpenAI's image generation and joined seamlessly where the
 panorama wraps around; the headset's browser remembers the choice). **Layers** is Map Selection's Layers ring plus
 **Contour lines**, and **Settings** has Voice and Exit VR. Map Selection keeps its light sky.
 

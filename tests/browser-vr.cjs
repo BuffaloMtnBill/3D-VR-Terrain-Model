@@ -345,8 +345,14 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await pose('right',[.15,1.2,-.3]);await pose('left',[-.3,1.1,-.1]);await frames(6);
   assert.equal((await vrState()).watch.buttonLabel,'Generate');
   const generatedFrom=await page.locator('#scene-detail').innerText();
+  // The map features are held back for a moment here, to see the loading sign.
+  const slowFeatures=route=>route.request().method()==='GET'?route.fulfill({json:{state:'loading',message:'Loading map features…'}}):route.continue();
+  await page.route('**/api/features/**',slowFeatures);
   await pressWrist();
   await page.waitForFunction(()=>window.testVR().state.mode==='model',null,{timeout:120000});
+  await page.waitForFunction(()=>window.testVR().state.loadingSign,null,{timeout:10000});   // floating behind the model
+  await page.unroute('**/api/features/**',slowFeatures);
+  await page.waitForFunction(()=>!window.testVR().state.loadingSign,null,{timeout:20000});   // gone once they are in
   assert.notEqual(await page.locator('#scene-detail').innerText(),generatedFrom,'The box\'s area was generated');
   const turnedTo=Math.round(Math.abs((await vrState()).pageSelection.rotation_deg||0));
   assert.match(await page.locator('#scene-detail').innerText(),new RegExp(`${turnedTo}° selection`),'with the turned selection');
@@ -389,6 +395,10 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   assert.equal(state.background,'lake');assert.equal(state.backgroundShown,'lake.jpg','The moonlit lake surrounds the model');
   await page.waitForFunction(()=>window.testVR().state.backgroundShown==='lake.jpg');
   await page.screenshot({path:path.join(output,'vr-model-lake.png')});
+  assert.deepEqual((await vrState()).watch.regions.radial.filter(id=>id.startsWith('radial:background:')).map(id=>id.split(':')[2]),
+    ['gradient','forest','desert','lake','peak','space','times-square'],'Seven backgrounds');
+  await press('radial:background:times-square');
+  await page.waitForFunction(()=>window.testVR().state.backgroundShown==='times-square.jpg');
   await press('radial:background:gradient');assert.equal((await vrState()).backgroundShown,'gradient');
   await press('radial:center');
   // On the model: the map features and contour lines, each the page's own switch.

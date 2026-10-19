@@ -15,7 +15,7 @@ from shapely.strtree import STRtree
 
 from .buildings import building_dimensions, building_mesh, is_detailed
 from .elevation import Bounds, pixel_coordinates
-from .services import USER_AGENT, cache_json, cached_json, response_json
+from .services import USER_AGENT, SingleFlight, cache_json, cached_json, response_json
 
 LAYER_NAMES = ("roads", "railways", "borders", "water", "cities", "parks", "buildings", "at", "trails")
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
@@ -380,6 +380,7 @@ def overpass_query(bounds):
 class FeatureClient:
     def __init__(self, cache_dir: Path, url=OVERPASS_URL):
         self.cache_dir, self.url = Path(cache_dir), url
+        self.flight = SingleFlight()
 
     def fetch(self, bounds: Bounds):
         """Every layer except buildings."""
@@ -394,6 +395,9 @@ class FeatureClient:
             raise ValueError("Map features are available for areas up to 50 km per side. Select a smaller area and generate its terrain.")
         key = hashlib.sha256(json.dumps(bounds.to_dict(), sort_keys=True).encode()).hexdigest()
         path = self.cache_dir / f"{key}{suffix}.json"
+        return self.flight.do(str(path), lambda: self._download(bounds, query, suffix, path))
+
+    def _download(self, bounds, query, suffix, path):
         result = cached_json(path, 7*86400, MAX_RESPONSE_BYTES)
         if isinstance(result, dict) and result.get("schema_version") == 6 and result.get("bounds") == bounds.to_dict() and set(result.get("layers", {})) == set(LAYER_NAMES):
             return result

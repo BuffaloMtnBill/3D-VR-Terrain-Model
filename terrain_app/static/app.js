@@ -261,7 +261,7 @@ function setupScene() {
   // Draw only while something is changing; an idle model costs no GPU time.
   controls.addEventListener('change',requestRender);
   for(const type of ['input','change','click','keydown','pointerup'])document.addEventListener(type,requestRender,true);
-  vr=createVR({renderer,scene,SCALE,notify,requestRender,api,fetchSurface,handoff,mapStyles:()=>mapStyles,get grid(){return grid;},get model(){return model;},get surface(){return topMesh;},get state(){return state;},get live(){return live;},
+  vr=createVR({renderer,scene,SCALE,notify,requestRender,api,fetchSurface,handoff,mapStyles:()=>mapStyles,get grid(){return grid;},get model(){return model;},get surface(){return topMesh;},get state(){return state;},get live(){return live;},get featuresLoading(){return Boolean(featureRequest);},
     source:()=>$('elevation-source').value,exaggeration:()=>Number($('exaggeration').value),
     // The VR cut sets the page's selection, exactly as dragging the map frame would.
     setSelection:bounds=>{draftSelection=null;updateSelection(bounds,true,true);if(vr?.presenting)handoff();},
@@ -493,12 +493,7 @@ async function loadSurface(id, reset=false, loadedName=null) {
   const changedArea=state.id!==id;
   state.id=id; state.data=data;
   if(changedArea){
-    if(!waterSourceChosen) {
-      const b=data.bounds,lat=(b.north+b.south)/2,lon=(b.west+b.east)/2;
-      // Initial regional default; users can select either source at any location.
-      const us=(lon>=-125&&lon<=-66&&lat>=24&&lat<=49)||(lon>=-180&&lon<=-130&&lat>=51&&lat<=72)||(lon>=-161&&lon<=-154&&lat>=18&&lat<=23)||(lon>=-68&&lon<=-64&&lat>=17&&lat<=19);
-      $('water-source').value=us?'usgs':'osm';
-    }
+    if(!waterSourceChosen)$('water-source').value=waterSourceFor(data.bounds);
     featureData=featureCache.get(`${id}:${$('water-source').value}`)||null;featureError=null;updateWaterSource();
   }
   if(changedArea){coverData=coverCache.get(id)||null;coverError=null;}
@@ -581,6 +576,13 @@ function featureStyles() {
     ...(name==='buildings'?{detailed:$('buildings-detailed').checked}:{})}]));
 }
 
+// The water source an area gets: the one chosen, or by region at first (USGS in the US); either works anywhere.
+function waterSourceFor(b) {
+  if(waterSourceChosen)return $('water-source').value;
+  const lat=(b.north+b.south)/2,lon=(b.west+b.east)/2;
+  const us=(lon>=-125&&lon<=-66&&lat>=24&&lat<=49)||(lon>=-180&&lon<=-130&&lat>=51&&lat<=72)||(lon>=-161&&lon<=-154&&lat>=18&&lat<=23)||(lon>=-68&&lon<=-64&&lat>=17&&lat<=19);
+  return us?'usgs':'osm';
+}
 function featuresEnabled() {return Object.values(featureStyles()).some(style=>style.enabled);}
 
 function updateWaterSource() {
@@ -660,22 +662,32 @@ async function ensureFeatures(force=false) {
   };
   request.promise=(async()=>{
     try {
-      let result=!force&&state.id===id&&featureData?featureData:await loadFeatureLayers(id);
+      // The OpenStreetMap layers, USGS water, and buildings download at the same time; each is shown as it arrives.
+      const base=!force&&state.id===id&&featureData?featureData:null;
+      const osm=base?Promise.resolve(base):loadFeatureLayers(id);
+      const waterPart=water&&!base?.waterLoaded?loadFeatureLayers(id,'?layer=water&source=usgs'):null;
+      const buildingPart=buildings&&!base?.buildingsLoaded?loadFeatureLayers(id,'?layer=buildings'):null;
+      for(const part of [osm,waterPart,buildingPart])part?.catch(()=>{});   // each failure is reported once, below
+      let result=await osm,waterResult=null,buildingResult=null;
       if(!result)return null;
-      if(water&&!result.waterLoaded) {
-        const sea=result.layers.water.filter(feature=>feature.kind==='sea');
-        show({...result,layers:{...result.layers,water:sea},counts:{...result.counts,water:sea.length}});
-        const part=await loadFeatureLayers(id,'?layer=water&source=usgs');
-        if(!part)return null;
-        const features=[...result.layers.water.filter(feature=>feature.kind==='sea'),...part.water];
-        result={...result,layers:{...result.layers,water:features},counts:{...result.counts,water:features.length},waterLoaded:true,water_source:source,water_source_url:part.source_url};
+      const compose=()=>{
+        let next=result;
+        if(water&&!result.waterLoaded) {
+          const features=[...result.layers.water.filter(feature=>feature.kind==='sea'),...(waterResult?.water||[])];
+          next={...next,layers:{...next.layers,water:features},counts:{...next.counts,water:features.length},
+            ...(waterResult?{waterLoaded:true,water_source:source,water_source_url:waterResult.source_url}:{})};
+        }
+        if(buildingResult)next={...next,layers:{...next.layers,buildings:buildingResult.layers.buildings},counts:{...next.counts,buildings:buildingResult.counts.buildings},buildingsLoaded:true};
+        return next;
+      };
+      const pending=[waterPart?.then(part=>{waterResult=part;}),buildingPart?.then(part=>{buildingResult=part;})].filter(Boolean);
+      if(pending.length) {
+        show(compose());
+        pending.forEach(part=>part.then(()=>{if(state.id===id)show(compose());}).catch(()=>{}));
+        await Promise.all(pending);
+        if((waterPart&&!waterResult)||(buildingPart&&!buildingResult))return null;   // another terrain meanwhile
       }
-      if(buildings&&!result.buildingsLoaded) {
-        show(result);
-        const part=await loadFeatureLayers(id,'?layer=buildings');
-        if(!part)return null;
-        result={...result,layers:{...result.layers,buildings:part.layers.buildings},counts:{...result.counts,buildings:part.counts.buildings},buildingsLoaded:true};
-      }
+      result=compose();
       show(result);
       return result;
     } catch(error) {
@@ -710,7 +722,9 @@ async function generateTerrain() {
   $('progress').value=0; $('job-message').textContent='Preparing terrain…';
   const selectedName=state.name;
   try {
-    const result=await api('/api/terrain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bounds:state.selection,resolution:Number($('resolution').value),source:$('elevation-source').value,name:selectedName})});
+    // The map features this area will show start downloading on the server now, alongside the terrain.
+    const on=featuresEnabled(),features={osm:on,water:on&&$('feature-water').checked&&waterSourceFor(state.selection)==='usgs',buildings:on&&$('feature-buildings').checked};
+    const result=await api('/api/terrain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bounds:state.selection,resolution:Number($('resolution').value),source:$('elevation-source').value,name:selectedName,features})});
     state.jobId=result.id;
     await followJob(result.id);
     await loadSurface(result.id,true,selectedName);

@@ -10,7 +10,7 @@ from shapely.geometry import LineString, Polygon
 
 from .features import (CLIP, MAX_ELEMENTS, MAX_POINTS, MAX_RESPONSE_BYTES,
                        encode_polygons, encoded_line, parts, to_selection)
-from .services import USER_AGENT, cache_json, cached_json, response_json
+from .services import USER_AGENT, SingleFlight, cache_json, cached_json, response_json
 
 HYDROGRAPHY_URL = "https://3dhp.nationalmap.gov/arcgis/rest/services/usgs_3dhp_all/FeatureServer"
 SOURCE_URL = "https://www.usgs.gov/3d-hydrography-program"
@@ -76,6 +76,7 @@ def prepare_water(data, bounds):
 class HydrographyClient:
     def __init__(self, cache_dir, url=HYDROGRAPHY_URL):
         self.cache_dir, self.url = Path(cache_dir), url.rstrip("/")
+        self.flight = SingleFlight()
 
     def fetch(self, bounds):
         bounds.validate()
@@ -83,6 +84,9 @@ class HydrographyClient:
             raise ValueError("USGS waterways are available for areas up to 50 km per side. Select a smaller area.")
         key = hashlib.sha256(json.dumps([self.url, bounds.to_dict()], sort_keys=True).encode()).hexdigest()
         path = self.cache_dir / f"{key}.json"
+        return self.flight.do(str(path), lambda: self._download(bounds, path))
+
+    def _download(self, bounds, path):
         result = cached_json(path, 7*86400, MAX_RESPONSE_BYTES)
         if isinstance(result, dict) and result.get("schema_version") == 1 and result.get("bounds") == bounds.to_dict():
             return result

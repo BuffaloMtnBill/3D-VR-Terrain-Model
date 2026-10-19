@@ -6,7 +6,7 @@ from pathlib import Path
 import os
 import re
 import sys
-from threading import Lock
+from threading import Event, Lock
 import time
 import uuid
 
@@ -39,6 +39,35 @@ def response_json(response, max_bytes, kind=dict):
     if not isinstance(value, kind):
         raise ValueError("The map service returned an invalid response. Try again later.")
     return value
+
+
+class SingleFlight:
+    """One download per key at a time: a second caller for the same key waits for the first and shares its answer
+    (so the head start a download gets when Generate is pressed is never repeated by the page's own request)."""
+    def __init__(self):
+        self._lock, self._calls = Lock(), {}
+
+    def do(self, key, work):
+        with self._lock:
+            call = self._calls.get(key)
+            leader = call is None
+            if leader:
+                call = self._calls[key] = {"done": Event()}
+        if not leader:
+            call["done"].wait()
+            if "error" in call:
+                raise call["error"]
+            return call["result"]
+        try:
+            call["result"] = work()
+            return call["result"]
+        except BaseException as error:
+            call["error"] = error
+            raise
+        finally:
+            with self._lock:
+                del self._calls[key]
+            call["done"].set()
 
 
 def cached_json(path: Path, age: int, max_bytes: int):

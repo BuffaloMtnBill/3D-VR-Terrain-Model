@@ -617,3 +617,57 @@ def test_cache_lives_in_the_per_user_cache_folder(monkeypatch, tmp_path, platfor
         assert Path.cwd() not in Path(app.config["CACHE_DIR"]).parents
     finally:
         app.extensions["terrain"]["executor"].shutdown(wait=True)
+
+
+def test_single_flight_shares_one_download_between_callers():
+    from threading import Thread
+    from terrain_app.services import SingleFlight
+    flight, started, release, calls, answers = SingleFlight(), Event(), Event(), [], []
+    def work():
+        calls.append(1)
+        started.set()
+        assert release.wait(2)
+        return {"layers": "ready"}
+    first = Thread(target=lambda: answers.append(flight.do("area", work)))
+    first.start()
+    assert started.wait(2)
+    second = Thread(target=lambda: answers.append(flight.do("area", work)))
+    second.start()
+    time.sleep(.05)
+    release.set()
+    first.join(2)
+    second.join(2)
+    assert calls == [1] and answers == [{"layers": "ready"}] * 2
+    # Once finished, the next call works again (it reads the cache in practice), and an error reaches every waiter.
+    assert flight.do("area", lambda: "again") == "again"
+    def fail():
+        raise ValueError("busy")
+    with pytest.raises(ValueError, match="busy"):
+        flight.do("area", fail)
+
+
+def test_generate_gives_the_chosen_map_features_a_head_start(application, monkeypatch):
+    extension = application.extensions["terrain"]
+    started = {"osm": Event(), "water": Event(), "buildings": Event()}
+    terrain_done = Event()
+    def elevation(bounds, *_args):
+        assert terrain_done.wait(5)   # the features start while the terrain is still downloading
+        return load_example()
+    for client in extension["clients"].values():
+        monkeypatch.setattr(client, "fetch", elevation)
+    monkeypatch.setattr(extension["features"], "fetch", lambda bounds: started["osm"].set())
+    monkeypatch.setattr(extension["features"], "fetch_buildings", lambda bounds: started["buildings"].set())
+    monkeypatch.setattr(extension["hydrography"], "fetch", lambda bounds: started["water"].set())
+    client = application.test_client()
+    bounds = load_example().bounds.to_dict()
+    try:
+        response = client.post("/api/terrain", json={"bounds": bounds, "resolution": 64, "features": {"osm": True, "water": True, "buildings": False}})
+        assert response.status_code == 202
+        assert started["osm"].wait(2) and started["water"].wait(2)
+        assert not started["buildings"].is_set(), "Only the layers the page shows are fetched"
+        # A preview (the VR cut's surroundings) gets none.
+        started["osm"].clear()
+        client.post("/api/terrain", json={"bounds": bounds, "resolution": 64, "preview": True, "features": {"osm": True}})
+        assert not started["osm"].wait(.3)
+    finally:
+        terrain_done.set()

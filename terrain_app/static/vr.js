@@ -48,7 +48,8 @@ const UI={paper:'#101b14',surface:'#19281e',raised:'#223329',line:'#414633',ink:
 
 // Backgrounds for the model view: 360° skies around you (made with OpenAI's image generation), or the dark gradient.
 export const BACKGROUNDS=[{key:'gradient',label:'Dark gradient'},{key:'forest',label:'Mellow forest'},
-  {key:'desert',label:'Sandy desert'},{key:'lake',label:'Moonlit lake'}];
+  {key:'desert',label:'Sandy desert'},{key:'lake',label:'Moonlit lake'},{key:'peak',label:'Mountain peak',aliases:['mountain','mountain top']},
+  {key:'space',label:'Space',aliases:['outer space','stars']},{key:'times-square',label:'Times Square',aliases:['new york','city']}];
 const MAP_SKY=0xa9bfc6;
 
 const TILE_CELLS=48;          // grid cells per side of a VR surface tile; tiles out of view are not drawn
@@ -132,6 +133,34 @@ export function createVR(ctx) {
     try{localStorage.setItem('vr-background',key);}catch{/* Storage is optional. */}
   }
   const mapMode=createMapMode(ctx,{table:TABLE});rig.add(mapMode.room);
+
+  // ---------- "Loading map features…": a quiet sign floating far behind the model while they download ----------
+  const loading=canvasPlane(.9,.16,768,136);loading.mesh.name='VR loading sign';loading.mesh.visible=false;
+  loading.mesh.material.depthTest=true;loading.mesh.renderOrder=0;rig.add(loading.mesh);
+  {
+    const c=loading.context,W=loading.canvas.width,H=loading.canvas.height;
+    c.fillStyle='#101b1499';c.beginPath();c.roundRect(4,4,W-8,H-8,(H-8)/2);c.fill();
+    c.fillStyle=UI.accent;c.font=`500 54px ${UI.sans}`;c.textAlign='center';c.textBaseline='middle';c.fillText('Loading map features…',W/2,H/2+2);
+    loading.texture.needsUpdate=true;
+  }
+  let loadingSince=0,loadingY=0;
+  function updateLoading() {
+    const show=Boolean(session)&&mode==='model'&&ctx.featuresLoading;
+    if(show&&!loading.mesh.visible) {
+      // Placed once, straight ahead and well beyond the model, a little above eye level; it then stays put.
+      const forward=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);forward.y=0;
+      if(forward.lengthSq()<1e-6)forward.set(0,0,-1);
+      loading.mesh.position.copy(camera.position).addScaledVector(forward.normalize(),3.2);loadingY=camera.position.y+.45;
+      loadingSince=performance.now();
+    }
+    loading.mesh.visible=show;
+    if(!show)return;
+    // A slow breath and a gentle float, facing you.
+    const t=(performance.now()-loadingSince)/1000;
+    loading.mesh.material.opacity=.45+.25*Math.sin(t*2.2);
+    loading.mesh.position.y=loadingY+Math.sin(t*1.3)*.03;
+    loading.mesh.lookAt(camera.position);
+  }
 
   // ---------- controllers ----------
   // No lasers: a controller taps with a small fingertip dot just in front of it.
@@ -487,6 +516,7 @@ export function createVR(ctx) {
     updateSpin();updateHold();
     updateGlide(delta);
     if(mode==='map')mapMode.update(view,toWorld(camera.position),{interacting:hands.some(busy)||Boolean(glide),camera});
+    updateLoading();
     applyView();
   }
 
@@ -525,7 +555,7 @@ export function createVR(ctx) {
 
   instance={update,attachButton,camera,setMode,exit:()=>session?.end(),watchPoint:id=>watch.regionPoint(id),get live(){return ctx.live;},get presenting(){return Boolean(session);},
     get state(){return {scale:view.scale,yaw:view.yaw,spin:spin.turn.toArray(),modelCenter:spin.center.clone().applyMatrix4(ctx.model.matrix).toArray(),modelMatrix:ctx.model.matrix.toArray(),position:view.position.toArray(),minScale:view.minScale,maxScale:view.maxScale,
-      mode,gliding:Boolean(glide),lastGlide,background:session?backdrop:null,backgroundShown:scene.background?.isTexture?scene.background.image?.src?.split('/').pop()||'gradient':null,watch:watch.state,commands:{...commands.state,on:voiceOn},map:{...mapMode.state,selection:mapMode.active?mapMode.boundsFrom(view):null},pageSelection:ctx.state.selection,flownSeconds,area:ctx.state.data?{bounds:ctx.state.data.bounds,width_m:ctx.state.data.width_m,height_m:ctx.state.data.height_m}:null,
+      mode,gliding:Boolean(glide),loadingSign:loading.mesh.visible,lastGlide,background:session?backdrop:null,backgroundShown:scene.background?.isTexture?scene.background.image?.src?.split('/').pop()||'gradient':null,watch:watch.state,commands:{...commands.state,on:voiceOn},map:{...mapMode.state,selection:mapMode.active?mapMode.boundsFrom(view):null},pageSelection:ctx.state.selection,flownSeconds,area:ctx.state.data?{bounds:ctx.state.data.bounds,width_m:ctx.state.data.width_m,height_m:ctx.state.data.height_m}:null,
       hands:hands.map(hand=>({tracked:hand.tracked,kind:hand.kind,ray:hand.controller.matrixWorld.toArray(),model:hand.skin.ready,touching:Boolean(hand.poking),over:hand.uiHover||null,pinching:hand.trigger,mode:hand.mode,point:hand.point.toArray(),indexTip:joint(hand,'index-finger-tip')?.position.toArray()||null,
         pinchTip:joint(hand,'thumb-tip')&&joint(hand,'index-finger-tip')?joint(hand,'thumb-tip').position.clone().add(joint(hand,'index-finger-tip').position).multiplyScalar(.5).toArray():null})),tiles:tiles?tiles.children.length:0,
       tileTriangles:tiles?tiles.children.reduce((sum,part)=>sum+part.geometry.index.count/3,0):0,surfaceHidden:ctx.surface?!ctx.surface.visible:false};}};

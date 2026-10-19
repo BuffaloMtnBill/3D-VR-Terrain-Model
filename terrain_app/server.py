@@ -105,9 +105,10 @@ def create_app(test_config=None):
     cover_client = LandCoverClient(cache_root / "landcover", os.environ.get("TERRAIN_OVERPASS_URL", OVERPASS_URL))
     hydro_client = HydrographyClient(cache_root / "hydrography", os.environ.get("TERRAIN_3DHP_URL", HYDROGRAPHY_URL))
     route_store = RouteStore(cache_root / "routes")
-    # Slow map-feature services must not hold up elevation downloads.
+    # Slow map-feature services must not hold up elevation downloads. (Feature workers mostly wait on the network: a
+    # head start from Generate and the page's own requests for the same area can be in hand at once.)
     executor = WorkerPools(ThreadPoolExecutor(max_workers=2, thread_name_prefix="terrain-job"),
-                           ThreadPoolExecutor(max_workers=3, thread_name_prefix="feature-job"))
+                           ThreadPoolExecutor(max_workers=6, thread_name_prefix="feature-job"))
     lock = RLock()
     jobs = {}
     feature_jobs = {}
@@ -428,7 +429,19 @@ def create_app(test_config=None):
             jobs[identifier] = dict(state="queued", progress=0, message="Preparing elevation download…", accessed=time.monotonic(),
                                     name=name.strip()[:120] if isinstance(name, str) else "", preview=payload.get("preview") is True)
         executor.terrain.submit(run_job, identifier, bounds, resolution, source)
+        # A head start for the map features the page will ask for once the terrain is ready: they download meanwhile.
+        wanted = payload.get("features")
+        if isinstance(wanted, dict) and payload.get("preview") is not True:
+            for layer, fetch in (("osm", feature_client.fetch), ("water", hydro_client.fetch), ("buildings", feature_client.fetch_buildings)):
+                if wanted.get(layer) is True:
+                    executor.features.submit(prefetch, fetch, bounds)
         return jsonify(id=identifier), 202
+
+    def prefetch(fetch, bounds):
+        try:
+            fetch(bounds)
+        except Exception:   # the page's own request reports any problem when it asks
+            LOGGER.info("A map feature head start did not finish", exc_info=True)
 
     @app.get("/api/jobs/<identifier>")
     def job_status(identifier):
