@@ -444,6 +444,24 @@ def test_ridges_finds_separate_ridgelines_nearest_first():
     assert [round(ridge["distance_m"]/1000) for ridge in beyond] == [5, 8] and beyond[0]["near_m"] == 3000
 
 
+def test_a_ridge_behind_a_taller_one_is_hidden_not_its_back_slope():
+    """A far ridge behind a taller near one doesn't take on the near ridge's back slope (hidden, but nearly as high as
+    its crest): it starts past the low ground behind that crest, so there it stays below the near ridge, marked unseen."""
+    heights = np.full((80, 80), 100, dtype=np.float32)
+    heights[:40, 20:25] = 600  # a tall near ridge across half the view, sloping slowly down behind its crest
+    heights[:40, 25:40] = np.linspace(590, 120, 15)
+    heights[:, 64:67] = 500    # a lower far ridge across the whole view
+    terrain = Terrain(BOUNDS, heights, 11, 2, "2026-10-01T00:00:00Z")
+    view = viewpoint(terrain, to_point(.05, .5), bearing=90, fov=60, eye_m=2.0)
+    near, far = ridges(view, 2)
+    behind = np.isfinite(near["crest_m"]) & (near["angles"] > 5) & (far["angles"] > -90)  # the near ridge clearly stands in front
+    assert behind.any() and (~behind).any()
+    assert (far["angles"][behind] < near["angles"][behind]-1).all(), "Behind the near ridge, the far one is its own, lower line"
+    assert not far["visible"][behind].any() and far["visible"][~np.isfinite(near["crest_m"]) & (far["angles"] > -90)].all()
+    data = profile_json(terrain, profile_options({"mode": "viewpoint", "point": to_point(.05, .5), "bearing": 90, "fov": 60, "bands": 2, "ridges": True}))
+    assert data["ridges"][1]["visible"] == far["visible"].tolist()
+
+
 def test_cutoff_distance_ends_the_view():
     """Out to: terrain farther than the cutoff is gone from the skyline, the bands, the ridges, and the map wedge; 0 is the horizon."""
     terrain = three_ridges()

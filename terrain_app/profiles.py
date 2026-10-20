@@ -243,18 +243,44 @@ def ridges(view, count, prominence=.25):
         found[ray, index] = True
     result = []
     for index in range(count):
-        starts = ends[:, index-1] if index else np.zeros(total)
-        angles = np.full(total, -90.0)
+        starts = behind_crests(table, distances, ends[:, index-1], found[:, index-1]) if index else np.zeros(total)
+        angles, visible = np.full(total, -90.0), np.zeros(total, dtype=bool)
         for ray in range(total):
             values = table[ray, (distances > starts[ray]) & (distances <= ends[ray, index])]
             values = values[np.isfinite(values)]
             if len(values):
                 angles[ray] = values.max()
+                # Seen only where nothing nearer stands higher in that direction.
+                nearer = table[ray, distances <= starts[ray]]
+                nearer = nearer[np.isfinite(nearer)]
+                visible[ray] = not len(nearer) or angles[ray] >= nearer.max()
         result.append({"distance_m": float(np.exp(centers[index])), "near_m": float(middles[index-1]) if index else view["min_radius_m"],
                        "far_m": float(middles[index]) if index < count-1 else float(view["farthest"]),
-                       "angles": angles, "coverage": float(found[:, index].mean()),
+                       "angles": angles, "visible": visible, "coverage": float(found[:, index].mean()),
                        "crest_m": np.where(found[:, index], ends[:, index], np.nan)})
     return result
+
+
+def behind_crests(table, distances, crests, real, prominence=.25):
+    """Per direction, where the ridge behind a nearer one begins: at the foot of the hidden ground behind the nearer
+    crest, the low point before the terrain rises again (by at least the crest's own prominence), so the farther ridge
+    doesn't start with that crest's back slope (hidden, but nearly as high as the crest). With no rise behind the crest
+    the farther ridge has nothing there (infinity). Where the nearer ridge has no crest, it begins where that stretch ends."""
+    starts = np.array(crests, dtype=float)
+    for ray in np.flatnonzero(real):
+        step = int(np.searchsorted(distances, crests[ray]))
+        lowest, low_at, rise = np.inf, None, False
+        for at in range(step+1, len(distances)):
+            angle = table[ray, at]
+            if not np.isfinite(angle):
+                continue
+            if angle < lowest:
+                lowest, low_at = angle, at
+            elif angle-lowest >= max(prominence, math.degrees(math.atan(RIDGE_RELIEF_M/distances[at]))):
+                rise = True
+                break
+        starts[ray] = distances[low_at] if rise else np.inf
+    return starts
 
 
 def crest_paths(view, ridge, terrain):
@@ -350,7 +376,7 @@ def profile_json(terrain, request):
         bands = [np.round(band(view, edges[index], edges[index+1]), 3).tolist() for index in range(request["bands"])] if request["bands"] > 1 else []
     return {"mode": "viewpoint", "min_radius_m": request["min_radius_m"], "max_radius_m": request["max_radius_m"],
             "ridges": [{**{key: round(ridge[key], 3 if key == "coverage" else 1) for key in ("distance_m", "near_m", "far_m", "coverage")},
-                        "paths": crest_paths(view, ridge, terrain)} for ridge in found], "azimuths": np.round(view["azimuths"], 3).tolist(), "angles": np.round(view["angles"], 3).tolist(),
+                        "visible": ridge["visible"].tolist(), "paths": crest_paths(view, ridge, terrain)} for ridge in found], "azimuths": np.round(view["azimuths"], 3).tolist(), "angles": np.round(view["angles"], 3).tolist(),
             "skyline_m": np.round(view["skyline_m"], 1).tolist(), "bands": bands, "band_edges": edges,
             "farthest_m": round(view["farthest"], 1), "eye_elevation_m": round(view["eye_m"], 1),
             "point": np.round(view["start"], 6).tolist(), "rays": view_ray_ends(view, terrain),

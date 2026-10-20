@@ -211,11 +211,20 @@ export function createProfileModes(ctx) {
       const gradient=g.createLinearGradient(0,top,0,height-bottom);gradient.addColorStop(0,'#c3c87d30');gradient.addColorStop(1,'#58704708');area(ys,gradient);
       const placed=[];
       layers.forEach((values,index)=>{
-        g.beginPath();let drawing=false;
-        values.forEach((value,at)=>{if(value<=-90){drawing=false;return;}const x=px(xs[at]),y=py(value);drawing?g.lineTo(x,y):g.moveTo(x,y);drawing=true;});
-        g.strokeStyle=RIDGE_LINES[index%RIDGE_LINES.length];g.lineWidth=index?1.4:2;g.stroke();g.lineWidth=1;
-        // Each label sits over its ridge's highest point, which spreads them across the view.
-        const peak=values.reduce((best,value,at)=>value>-90&&(best<0||value>values[best])?at:best,-1);
+        // Solid where the ridge is seen; faint and dashed where a nearer ridge hides it.
+        const seen=result.ridges[index]?.visible||values.map(()=>true);
+        for(const shown of [false,true]) {
+          g.beginPath();let drawing=false;
+          values.forEach((value,at)=>{
+            const near=at>0&&seen[at-1]===shown;  // join each run to the sample before it, so runs meet
+            if(value<=-90||(seen[at]!==shown&&!near)){drawing=false;return;}
+            const x=px(xs[at]),y=py(value);drawing?g.lineTo(x,y):g.moveTo(x,y);drawing=seen[at]===shown;
+          });
+          g.strokeStyle=RIDGE_LINES[index%RIDGE_LINES.length];g.lineWidth=shown?(index?1.4:2):1;g.globalAlpha=shown?1:.3;
+          g.setLineDash(shown?[]:[3,3]);g.stroke();g.setLineDash([]);g.globalAlpha=1;g.lineWidth=1;
+        }
+        // Each label sits over its ridge's highest seen point, which spreads them across the view.
+        const peak=values.reduce((best,value,at)=>value>-90&&seen[at]&&(best<0||value>values[best])?at:best,-1);
         if(peak>=0) {
           const x=Math.max(left+20,Math.min(px(xs[peak]),width-right-20));let y=py(values[peak])-5;
           while(placed.some(label=>Math.abs(label.x-x)<44&&Math.abs(label.y-y)<10))y-=11;  // stack labels that would overlap

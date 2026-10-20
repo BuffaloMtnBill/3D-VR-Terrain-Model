@@ -1,4 +1,8 @@
-# 3D-VR-Terrain
+# 3D-VR-Terrain-Model
+
+The model-only version of [3D-VR-Terrain](https://github.com/BuffaloMtnBill/3D-VR-Terrain): the same VR map and model
+explorer, without VR silhouette mode (the viewer marker, ridge preview and sunset view). It branches from
+3D-VR-Terrain before silhouette mode was added, plus the viewpoint ridgeline fix.
 
 A fork of [Terrain Studio · 3D Map Extractor](https://github.com/BuffaloMtnBill/3D-Map-Extractor) built around an
 integrated 3D workflow: the terrain is explored and edited in a VR headset as well as on the page. For safety,
@@ -386,7 +390,8 @@ slant stays one), nearest first; the status lists their distances.
 
 **Viewpoint ridgeline** uses the same controls with ridge detection always on: the
 chart draws each ridgeline seen from the viewpoint as its own line, labeled with its
-distance, and the map draws where each ridge's crest runs on the ground. In both
+distance (solid where it is seen; faint and dashed where a nearer ridge hides it — a farther ridge starts
+past the low ground behind the ridge in front, never on that ridge's own back slope), and the map draws where each ridge's crest runs on the ground. In both
 viewpoint modes a click on the map moves the viewpoint; a viewpoint on the frame's
 edge sees no terrain in the directions that leave it.
 
