@@ -41,7 +41,7 @@ anyway**; the file is a short, readable script.
 To do the same by hand in PowerShell:
 
 ```powershell
-cd 3D-VR-Terrain
+cd 3D-VR-Terrain-Model
 py -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 .venv\Scripts\python app.py
@@ -50,7 +50,7 @@ py -m venv .venv
 ### macOS and Linux
 
 ```bash
-cd 3D-VR-Terrain
+cd 3D-VR-Terrain-Model
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
@@ -68,7 +68,7 @@ To install straight from GitHub without cloning, preferably into a virtual
 environment:
 
 ```bash
-pip install git+https://github.com/BuffaloMtnBill/3D-VR-Terrain
+pip install git+https://github.com/BuffaloMtnBill/3D-VR-Terrain-Model
 terrain-studio
 ```
 
@@ -79,7 +79,7 @@ From a cloned copy, `pip install .` does the same. On Windows, use
 To uninstall, use the package name rather than the command name:
 
 ```bash
-pip uninstall 3d-map-extractor
+pip uninstall 3d-vr-terrain
 ```
 
 This leaves the packages it depends on installed (deleting the virtual
