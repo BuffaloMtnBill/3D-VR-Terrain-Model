@@ -299,7 +299,10 @@ desert, moonlit lake, mountain peak above the clouds, space (a planet's edge und
 panorama wraps around; the headset's browser remembers the choice). **Layers** is Map Selection's Layers ring plus
 **Contour lines**, and **Settings** has Voice and Exit VR. Map Selection keeps its light sky.
 
-**Voice commands.** While you are in VR the microphone stays open for these commands:
+**Voice commands.** While you are in VR the microphone stays open for these commands. A cheat sheet of them lies on
+the back of your left forearm, a hand's width up from the watch: turn that side of your arm toward you, as if checking
+the watch, and it shows the commands for the mode you are in (and whether voice is on).
+
 
 | Say | Does |
 | --- | --- |

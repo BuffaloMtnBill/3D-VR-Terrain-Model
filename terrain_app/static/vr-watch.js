@@ -6,12 +6,16 @@ import * as THREE from 'three';
 import {mercatorPixel,rotationAngle} from './selection-geometry.js';
 import {createVoice} from './vr-voice.js';
 import {buzz,click,tick} from './sounds.js';
+import {COMMANDS} from './vr-commands.js';
 
 const $=id=>document.getElementById(id);
 const fire=(el,type)=>el.dispatchEvent(new Event(type,{bubbles:true}));
 const UI={ink:'#fff6d6',muted:'#a9ae99',accent:'#e9c890',fill:'#101b14eb',raised:'#223329',hover:'#35503a',active:'#4b6d46',line:'#5c6448',
   sans:'Inter,"Segoe UI",Arial,sans-serif'};
 const STALK=.06;   // how far (m) the watch and the wrist button stand out from the back of the wrist
+// The voice cheat sheet on the back of the left forearm: how far up the arm from the wrist and out from it (m), and how
+// squarely the back of the arm must face the eyes (cosine) for it to show, as when you turn your arm to read a watch.
+const SHEET={along:.13,out:.03,facing:.5};
 const POKE={touch:.012,release:.025,hover:.07};   // fingertip distance (m) from a surface that presses it, lets it go, lights it
 // The menus, the keyboard, and the shape editor: large, about five feet (1.5 m) away, chosen with the lasers.
 const FAR={distance:1.52,scale:3,laser:4};   // m; how much larger than their drawn size; laser length (m) with nothing hit
@@ -40,7 +44,8 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
   const face=surface('watch',.045,.045,256),radial=surface('radial menu',.42,.42,1024),keyboard=surface('keyboard',.62,.27,1600);
   const wrist=surface('wrist button',.075,.04,512),editor=surface('shape editor',.42,.5,1024);
   const caption=surface('caption',.3,.05,768);   // what a voice command was heard as, for a moment
-  for(const s of [face,radial,keyboard,wrist,editor,caption])rig.add(s.mesh);
+  const sheet=surface('voice cheat sheet',.16,.115,1024);   // the voice commands, on the back of the left forearm
+  for(const s of [face,radial,keyboard,wrist,editor,caption,sheet])rig.add(s.mesh);
   face.mesh.renderOrder=1050;
   let menu=null,text='',hovered=new Set(),lastStatus='',voiceNote='';
   // Voice search: the words heard replace the text in the box, to check (or fix) before tapping Search.
@@ -380,6 +385,32 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     wrist.texture.needsUpdate=true;
   }
 
+  // The voice commands for this mode: the spoken names of its menus come from the menu itself.
+  function sheetLines() {
+    const SAID={shape:'area'},menus=itemsOf(top()).filter(item=>item.open||item.key==='search'||item.key==='shape').map(item=>SAID[item.key]||item.key);
+    return COMMANDS.filter(command=>!command.when||command.when===mode()).map(command=>command.name==='open-named'
+      ?{say:'Open …',note:menus.join(', ')}:{say:command.label,note:''});
+  }
+  function drawSheet() {
+    if(!sheet.mesh.visible)return;
+    const lines=sheetLines(),on=voiceCommands.on,signature=JSON.stringify([lines,on]);
+    if(signature===sheet.signature)return;sheet.signature=signature;
+    const c=sheet.context,W=sheet.canvas.width,H=sheet.canvas.height;
+    c.clearRect(0,0,W,H);c.fillStyle=UI.fill;c.beginPath();c.roundRect(0,0,W,H,42);c.fill();c.lineWidth=6;c.strokeStyle=UI.line;c.stroke();
+    c.textBaseline='middle';c.textAlign='left';
+    c.font=`700 52px ${UI.sans}`;c.fillStyle=UI.accent;c.fillText('🎤 Say…',44,62);
+    c.textAlign='right';c.font=`600 38px ${UI.sans}`;c.fillStyle=on?'#9fd88f':UI.muted;c.fillText(on?'Voice on':'Voice off',W-44,62);
+    c.textAlign='left';const row=Math.min(96,(H-250)/lines.length);
+    lines.forEach((line,i)=>{
+      const y=150+i*row;c.globalAlpha=on?1:.45;
+      c.font=`600 46px ${UI.sans}`;c.fillStyle=UI.ink;c.fillText(`“${line.say}”`,44,y);
+      if(line.note){const x=44+c.measureText(`“${line.say}” `).width;c.font=`400 34px ${UI.sans}`;c.fillStyle=UI.muted;c.fillText(line.note,x,y+2);}
+    });
+    c.globalAlpha=1;c.font=`400 32px ${UI.sans}`;c.fillStyle=UI.muted;
+    c.fillText(on?'With a menu open: any option, “Back”, or “Close”':'Turn it on: Settings ▸ Voice',44,H-48);
+    sheet.texture.needsUpdate=true;
+  }
+
   // ---------- the watch on your left wrist, the button on your right ----------
   const handOf=side=>hands.find(hand=>hand.source?.handedness===side);
   const left=()=>handOf('left');
@@ -410,6 +441,36 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
       s.mesh.position.copy(hand.grip.localToWorld(new THREE.Vector3(0,.035,.04)));
       s.mesh.lookAt(camera.position);
     }
+  }
+
+  // The cheat sheet lies along the back of the left forearm, a hand's width up from the watch, and shows while the back
+  // of the arm is turned toward your eyes; its text stays level with your view. Holding a controller, it sits behind the
+  // controller, toward the forearm.
+  const eyesInRig=()=>rig.worldToLocal(camera.getWorldPosition(new THREE.Vector3()));
+  function wearSheet(hand) {
+    let wristAt,back,arm;
+    const wristJoint=hand?.tracked&&joint(hand,'wrist'),index=hand?.tracked&&joint(hand,'index-finger-metacarpal'),little=hand?.tracked&&joint(hand,'pinky-finger-metacarpal');
+    if(wristJoint&&index&&little) {
+      const a=index.position.clone().sub(wristJoint.position),b=little.position.clone().sub(wristJoint.position);
+      wristAt=wristJoint.position.clone();back=a.clone().cross(b).normalize();
+      arm=a.add(b).multiplyScalar(-1);   // from the wrist toward the elbow
+    } else if(hand?.grip) {
+      hand.grip.updateMatrixWorld();
+      wristAt=hand.grip.localToWorld(new THREE.Vector3(0,0,.05));
+      back=new THREE.Vector3(-1,0,0).transformDirection(hand.grip.matrixWorld);   // the back of the left hand holding it
+      arm=new THREE.Vector3(0,0,1).transformDirection(hand.grip.matrixWorld);
+    } else {sheet.mesh.visible=false;return;}
+    arm.addScaledVector(back,-arm.dot(back)).normalize();
+    const at=wristAt.addScaledVector(arm,SHEET.along).addScaledVector(back,SHEET.out),toEyes=eyesInRig().sub(at).normalize();
+    sheet.facing=back.dot(toEyes);
+    sheet.mesh.visible=sheet.facing>SHEET.facing;
+    if(!sheet.mesh.visible)return;
+    // Facing halfway between the back of the arm and your eyes, with its lines running level across your view.
+    const normal=back.clone().add(toEyes).normalize(),right=new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion);
+    right.addScaledVector(normal,-right.dot(normal)).normalize();
+    sheet.mesh.position.copy(at);
+    sheet.mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right,normal.clone().cross(right),normal));
+    sheet.at={wrist:wristAt.clone().addScaledVector(arm,-SHEET.along).addScaledVector(back,-SHEET.out),arm,back};
   }
 
   // ---------- tapping with a fingertip (the watch and the wrist button) ----------
@@ -481,12 +542,12 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
   }
 
   function update() {
-    wear(face,left(),'left');wear(wrist,handOf('right'),'right');
+    wear(face,left(),'left');wear(wrist,handOf('right'),'right');wearSheet(left());
     for(const laser of lasers)if(!laser.hand.source)laser.line.visible=laser.dot.visible=false;
     hovered=new Set(hands.map(hand=>hand.uiHover).filter(Boolean));
     // Between drags the editor shows the page's selection as it is (after a change is applied, or from the computer).
     if(editor.mesh.visible&&!dragging)draft=draftFromPage();
-    drawFace();drawRadial();drawKeyboard();drawWrist();drawEditor();
+    drawFace();drawRadial();drawKeyboard();drawWrist();drawEditor();drawSheet();
     followSearch();
     if(caption.mesh.visible&&performance.now()>captionUntil)caption.mesh.visible=false;
     const now=status();if(now!==lastStatus){lastStatus=now;radial.signature='';}
@@ -543,7 +604,10 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     get state(){
       const regions=s=>s.mesh.visible?s.regions.map(({id})=>id):[];
       const stalk=s=>{if(!s.stem?.visible)return null;const p=s.stem.geometry.attributes.position;return Math.hypot(p.getX(1)-p.getX(0),p.getY(1)-p.getY(0),p.getZ(1)-p.getZ(0));};
-      return {stalks:{face:stalk(face),button:stalk(wrist)},caption:caption.mesh.visible?captionText:null,lasers:lasers.map(l=>l.line.visible),voice:voice.state,voiceNote,editor:editor.mesh.visible?{...draft,dragging:dragging?.name||null}:null,face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,path:radial.mesh.visible?[...stack]:[],keyboard:keyboard.mesh.visible,text,
+      const along=sheet.mesh.visible&&sheet.at?sheet.mesh.position.clone().sub(sheet.at.wrist):null;
+      return {sheet:{shown:sheet.mesh.visible,facing:sheet.facing??null,lines:sheet.mesh.visible?sheetLines().map(line=>line.say+(line.note?` ${line.note}`:'')):[],
+          along:along?along.dot(sheet.at.arm):null,out:along?along.dot(sheet.at.back):null},
+        stalks:{face:stalk(face),button:stalk(wrist)},caption:caption.mesh.visible?captionText:null,lasers:lasers.map(l=>l.line.visible),voice:voice.state,voiceNote,editor:editor.mesh.visible?{...draft,dragging:dragging?.name||null}:null,face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,path:radial.mesh.visible?[...stack]:[],keyboard:keyboard.mesh.visible,text,
         regions:{watch:regions(face),radial:regions(radial),keyboard:regions(keyboard),wrist:regions(wrist),editor:regions(editor)},
         surfaces:Object.fromEntries(surfaces.map(s=>[s.name,{visible:s.mesh.visible,matrix:s.mesh.matrixWorld.toArray(),width:s.width,height:s.height,canvas:[s.canvas.width,s.canvas.height]}]))};
     },

@@ -65,6 +65,24 @@ async function openPage(browser,headset) {
   state=await until(s=>s.watch.stalks.face&&s.watch.stalks.button,5000,'the watch and wrist button on their stalks');
   assert.ok(state.watch.stalks.face>.04&&state.watch.stalks.button>.04,`They stand well out from the wrist (${JSON.stringify(state.watch.stalks)})`);
 
+  // The voice cheat sheet lies on the back of the left forearm and shows when you turn that side toward your eyes.
+  const leftAt=await handPosition('left');
+  const turns=[[0,0,0,1],[0,Math.SQRT1_2,0,Math.SQRT1_2],[0,-Math.SQRT1_2,0,Math.SQRT1_2],[Math.SQRT1_2,0,0,Math.SQRT1_2],[-Math.SQRT1_2,0,0,Math.SQRT1_2],
+    [0,0,Math.SQRT1_2,Math.SQRT1_2],[0,0,-Math.SQRT1_2,Math.SQRT1_2],[1,0,0,0],[0,1,0,0],[0,0,1,0]];
+  let shown=null,hidden=null;
+  for(const turn of turns) {
+    await place('left',[-.15,1.25,-.3],turn);await frames(3);
+    const sheet=(await vrState()).watch.sheet;
+    if(sheet.shown&&!shown)shown={turn,sheet};
+    if(!sheet.shown&&sheet.facing!==null&&sheet.facing<0&&!hidden)hidden={turn,sheet};
+  }
+  assert.ok(shown,'Turning the back of the left forearm toward the eyes shows the cheat sheet');
+  assert.ok(hidden,'Turned away (palm up), it is put away');
+  near(shown.sheet.along,.13,.005,'A hand\'s width up the arm from the wrist');near(shown.sheet.out,.03,.005,'just off the back of the arm');
+  assert.deepEqual(shown.sheet.lines,['Open menu','Close menu','Open … search, area, terrain, layers, settings','Generate terrain','Exit program'],
+    'It lists the map\'s voice commands and the menus that can be opened by name');
+  await place('left',leftAt,[0,0,0,1]);await frames(3);
+
   // A pinch in open air grabs the world, and moving the pinched hand drags it.
   await place('right',[.25,1.3,-.35]);await frames();
   await pinch('right',1);await frames();
