@@ -187,6 +187,12 @@ def test_the_headset_hands_off_its_workspace(app, monkeypatch):
     shared = client.get("/api/workspace").get_json()
     assert shared["selection"] == ROAN and shared["export_size"] == 220 and shared["age_s"] == 0
     assert shared["controls"] == {"exaggeration": 3.5, "contours": True}  # only plain values pass
+    assert shared["mode"] == "map", "The headset is on the map unless it says it shows the model"
+    # Showing the generated model: following pages open their model view; anything else counts as the map.
+    client.post("/api/workspace", json={**payload, "mode": "model"})
+    assert events[-1]["mode"] == "model" and client.get("/api/workspace").get_json()["mode"] == "model"
+    client.post("/api/workspace", json={**payload, "mode": "<script>"})
+    assert client.get("/api/workspace").get_json()["mode"] == "map"
 
 
 @pytest.mark.parametrize("selection", [None, {"south": 1}, {**ROAN, "shape": "star"}])

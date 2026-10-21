@@ -341,6 +341,7 @@ export function createVR(ctx) {
     if(mode==='map'){ctx.model.visible=false;mapMode.enter(view,camera);}
     else{mapMode.leave();ctx.model.visible=true;lastId=ctx.state.id;frameModel();}
     applyView();
+    ctx.handoff?.(true);   // the computer's page follows: its model view opens with the model, and closes on the map
   }
 
   // ---------- grabbing: one hand drags, two hands also zoom and turn ----------
@@ -553,7 +554,7 @@ export function createVR(ctx) {
     button.addEventListener('click',()=>enter());
   }
 
-  instance={update,attachButton,camera,setMode,exit:()=>session?.end(),watchPoint:id=>watch.regionPoint(id),get live(){return ctx.live;},get presenting(){return Boolean(session);},
+  instance={update,attachButton,camera,setMode,get mode(){return mode;},exit:()=>session?.end(),watchPoint:id=>watch.regionPoint(id),get live(){return ctx.live;},get presenting(){return Boolean(session);},
     get state(){return {scale:view.scale,yaw:view.yaw,spin:spin.turn.toArray(),modelCenter:spin.center.clone().applyMatrix4(ctx.model.matrix).toArray(),modelMatrix:ctx.model.matrix.toArray(),position:view.position.toArray(),minScale:view.minScale,maxScale:view.maxScale,
       mode,gliding:Boolean(glide),loadingSign:loading.mesh.visible,lastGlide,background:session?backdrop:null,backgroundShown:scene.background?.isTexture?scene.background.image?.src?.split('/').pop()||'gradient':null,watch:watch.state,commands:{...commands.state,on:voiceOn},map:{...mapMode.state,selection:mapMode.active?mapMode.boundsFrom(view):null},pageSelection:ctx.state.selection,flownSeconds,area:ctx.state.data?{bounds:ctx.state.data.bounds,width_m:ctx.state.data.width_m,height_m:ctx.state.data.height_m}:null,
       hands:hands.map(hand=>({tracked:hand.tracked,kind:hand.kind,ray:hand.controller.matrixWorld.toArray(),model:hand.skin.ready,touching:Boolean(hand.poking),over:hand.uiHover||null,pinching:hand.trigger,mode:hand.mode,point:hand.point.toArray(),indexTip:joint(hand,'index-finger-tip')?.position.toArray()||null,

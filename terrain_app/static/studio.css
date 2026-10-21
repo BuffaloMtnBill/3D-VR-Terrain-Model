@@ -186,3 +186,22 @@
 @keyframes design-preview-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.design-preview-busy{animation:none}}
 @media(max-width:480px){.design-preview-view{height:150px}}
+
+/* The model view: the headset's generated model, large, with the two 3D print exports beside it. */
+#model-view{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;border-radius:0;background:var(--paper);overflow:hidden}
+#model-view[open]{display:flex;flex-direction:column}
+#model-view::backdrop{background:var(--paper)}
+.model-view-bar{display:flex;align-items:center;gap:18px;padding:12px 20px;border-bottom:1px solid var(--line);background:#17251c;flex-shrink:0}
+.model-view-heading h2{font-family:var(--serif);font-size:24px;font-weight:400;margin:4px 0 0}
+.model-view-heading .small-hint{margin-top:3px}
+.model-view-body{flex:1;min-height:0;display:flex}
+#model-view-stage{flex:1;min-width:0;display:flex}
+#model-view-stage #scene-container{flex:1;height:auto}
+.model-view-export{width:320px;flex-shrink:0;border-left:1px solid var(--line);padding:20px;overflow:auto}
+.model-view-export h3{font-size:12px;font-weight:650;letter-spacing:.4px;color:var(--tan);margin:0 0 14px}
+.model-view-export .export-choices{grid-template-columns:1fr;margin:16px 0 10px}
+#model-view-status{font-size:11px;margin-top:10px;color:var(--sage);min-height:16px}
+#model-view-design{margin-top:14px;font-size:11px;color:var(--tan);text-decoration:underline}
+@media (max-width:760px){.model-view-body{flex-direction:column}.model-view-export{width:auto;border-left:0;border-top:1px solid var(--line)}#model-view-stage{min-height:55vh}}
+.model-view-export .export-choices button:disabled{opacity:.6;cursor:not-allowed}
+.model-view-export .export-choices button:disabled #model-view-3mf-hint{color:#edbb8b}

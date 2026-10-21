@@ -1160,9 +1160,11 @@ export function createStudio(ctx) {
     $('studio-preview').disabled=value;
     if(value)dialog.setAttribute('aria-busy','true');else dialog.removeAttribute('aria-busy');
   }
-  async function exportFormat(format) {
-    const status=$('export-status'),bar=$('studio-progress'),state=ctx.state;
+  // `view` shows the progress somewhere else (the model view's own status line and bar).
+  async function exportFormat(format,view={}) {
+    const status=view.status||$('export-status'),bar=view.bar||$('studio-progress'),state=ctx.state;
     if(!state.id)return ctx.notify('Generate terrain before exporting.',true);
+    if(state.data)loadStore();   // this area's add-ons from the design page, even if it was not opened
     const opts=ctx.options();
     if(!Number.isFinite(opts.size_mm)||opts.size_mm<10||opts.size_mm>2000)return ctx.notify('Choose a model size between 10 and 2000 millimeters.',true);
     if(busy)return;
@@ -1187,7 +1189,8 @@ export function createStudio(ctx) {
         ctx.download(await response.blob(),filenameOf(response,`terrain.${format}`));
       }
       status.textContent='Your file has been downloaded.';
-    } catch(error){status.textContent=error.message;ctx.notify(error.message,true);}
+      return true;
+    } catch(error){status.textContent=error.message;ctx.notify(error.message,true);return false;}
     finally{setBusy(false);setTimeout(()=>{if(!busy)bar.hidden=true;},1200);ctx.updatePrintPalette();}
   }
   function exitPreview() {
@@ -1356,6 +1359,7 @@ export function createStudio(ctx) {
       ctx.updatePrintPalette();scheduleCheck();
     },
     close(){if(dialog.open)dialog.close();},
+    exportFormat,
     // The main scene rebuilt (new area, base, palette, features): copy it again while the studio is visible.
     modelChanged() {
       dirtyModel=true;

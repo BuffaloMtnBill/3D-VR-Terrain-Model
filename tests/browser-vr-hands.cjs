@@ -187,6 +187,28 @@ async function openPage(browser,headset) {
   // The computer opens the same model by itself.
   await computer.waitForFunction(()=>document.getElementById('selection-state').textContent==='Terrain generated',null,{timeout:30000});
   assert.deepEqual(await selectionText(computer),await selectionText(page),'The computer shows the same cut');
+  // …in its model view, with the 3D preview moved in, ◀ Map selection, and the two 3D print exports.
+  await computer.waitForFunction(()=>document.getElementById('model-view').open,null,{timeout:30000});
+  assert.equal(await computer.evaluate(()=>Boolean(document.querySelector('#model-view-stage #scene-container'))),true,'The model fills the model view');
+  // With the fixture's map layers on, multicolor needs more than four filaments, and says so; with them off, it fits.
+  assert.equal(await computer.locator('[data-model-export="3mf"]').isDisabled(),true,'Too many colors for four filaments');
+  assert.match(await computer.locator('#model-view-3mf-hint').innerText(),/colors with the map layers that are on/);
+  await computer.evaluate(()=>document.querySelectorAll('#style-editor input[type=checkbox][id^="feature-"]').forEach(box=>{if(box.checked)box.click();}));
+  await computer.waitForFunction(()=>!document.querySelector('[data-model-export="3mf"]').disabled,null,{timeout:10000});
+  for(const [kind,extension] of [['stl','stl'],['3mf','3mf']]) {
+    const file=computer.waitForEvent('download',{timeout:60000});
+    await computer.locator(`[data-model-export="${kind}"]`).click();
+    const got=await file.catch(async error=>{throw new Error(`${kind}: ${await computer.locator('#model-view-status').innerText()} (${error.message.split('\n')[0]})`);});
+    assert.match(got.suggestedFilename(),new RegExp(`\\.${extension}$`),`The model view exports ${kind==='stl'?'a standard STL':'a multicolor 3MF'}`);
+  }
+  assert.equal(await computer.evaluate(()=>document.querySelector('[data-palette="print"]').classList.contains('active')),true,'Multicolor uses the Print palette');
+  // ◀ Map selection goes back to the page; the headset's next update does not bring the same model back.
+  await computer.click('#model-view-back');
+  assert.equal(await computer.evaluate(()=>document.getElementById('model-view').open),false,'◀ Map selection closes the model view');
+  assert.equal(await computer.evaluate(()=>document.querySelector('#model-view-stage #scene-container')),null,'and puts the 3D preview back');
+  await page.evaluate(async()=>{const vr=(await import('/static/vr.js')).currentVR();vr.setMode('model');});
+  await computer.waitForTimeout(1500);
+  assert.equal(await computer.evaluate(()=>document.getElementById('model-view').open),false,'Dismissed, it stays closed for this model');
 
   // A fist turns the model as the fist turns, about the model's center, which stays where it is. (IWER has no fist
   // pose, so one is made from its relaxed pose with the index, middle, and ring fingertips curled in to the palm.)
@@ -256,6 +278,12 @@ async function openPage(browser,headset) {
   assert.equal((await vrState()).watch.buttonLabel,'◀ Map');
   await touchLeft((await vrState()).watch.button);
   assert.equal((await vrState()).mode,'map','◀ Map returns to Map Selection');
+  // Once the headset is back on the map, its model view opens on the computer again next time, and closes with it.
+  await page.evaluate(async()=>(await import('/static/vr.js')).currentVR().setMode('model'));
+  await computer.waitForFunction(()=>document.getElementById('model-view').open,null,{timeout:10000});
+  await page.evaluate(async()=>(await import('/static/vr.js')).currentVR().setMode('map'));
+  await computer.waitForFunction(()=>!document.getElementById('model-view').open,null,{timeout:10000});
+  assert.equal(await computer.evaluate(()=>document.querySelector('#model-view-stage #scene-container')),null,'The computer is back on the map selection too');
 
   // Leaving VR returns to the page; the computer exports the model with the page's usual export.
   await page.evaluate(async()=>(await import('/static/vr.js')).currentVR().exit());
@@ -264,7 +292,7 @@ async function openPage(browser,headset) {
   assert.equal(await computer.locator('#scene-detail').innerText(),await page.locator('#scene-detail').innerText(),'The computer has the headset\'s model');
   await computer.click('#export-button');
   const download=computer.waitForEvent('download',{timeout:60000});
-  await computer.locator('[data-export="stl"]').click();
+  await computer.locator('[data-model-export="stl"]').click();
   assert.match((await download).suggestedFilename(),/\.stl$/,'and exports it');
 
   for(const [name,p] of [['headset',page],['computer',computer]])assert.deepEqual(p.errors,[],`No ${name} page errors: ${p.errors.join('; ')}`);

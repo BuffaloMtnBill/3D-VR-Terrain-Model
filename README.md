@@ -1,8 +1,9 @@
 # 3D-VR-Terrain-Model
 
 The model-only version of [3D-VR-Terrain](https://github.com/BuffaloMtnBill/3D-VR-Terrain): the same VR map and model
-explorer, without VR silhouette mode (the viewer marker, ridge preview and sunset view). It branches from
-3D-VR-Terrain before silhouette mode was added, plus the viewpoint ridgeline fix.
+explorer, without VR silhouette mode (the viewer marker, ridge preview and sunset view), and a computer page kept to
+just the model: frame a place, generate it, and export it to 3D print as a standard or multicolor model. It
+branches from 3D-VR-Terrain before silhouette mode was added.
 
 A fork of [Terrain Studio · 3D Map Extractor](https://github.com/BuffaloMtnBill/3D-Map-Extractor) built around an
 integrated 3D workflow: the terrain is explored and edited in a VR headset as well as on the page. For safety,
@@ -88,11 +89,10 @@ environment removes those too), and leaves downloaded data in the
 
 ## Use
 
-Terrain Studio starts on the **geography selection page**, where you find, frame, and style a place.
-Its **Design and export** section opens one of two design pages: **3D model design**, where you add
-markers and other add-ons to the whole landscape and export it, and **Silhouette design**, where
-elevation-profile slices (or an uploaded route's profile) become flat ridgeline pieces to print, laser
-cut, stand on a desk, light on an LED lamp base, or layer in a shadow box.
+The computer's page is kept to just the model: you find and frame a place, choose its map layers, generate
+it, and export it to 3D print. There are no design pages, silhouettes, elevation profiles, or GPS routes in this
+version. **Export model** opens the [model view](#model-view-and-export), which also opens by itself when a model
+is generated in the headset.
 
 1. Pick a preset, or type in the one search box: an **address, city, or place
    name**, a **US ZIP code** (five digits or ZIP+4), or a `latitude, longitude`
@@ -106,10 +106,8 @@ cut, stand on a desk, light on an LED lamp base, or layer in a shadow box.
 2. Choose **Rectangle**, **Circle**, or **Oval** with the map's **Shape** control.
    Circles and ovals have draggable handles on all four borders; circles keep
    equal axes, while ovals resize each axis independently. Their rotation hook
-   works like the rectangle's. After **Generate terrain**, the explorer, **3D model
-   design**, and STL/OBJ/3MF/GLB exports follow the chosen footprint, including
-   clipped map features and added material. Raw elevation and heightmap exports
-   retain their enclosing grid and record the selection shape in metadata.
+   works like the rectangle's. After **Generate terrain**, the explorer and the STL and 3MF exports follow
+   the chosen footprint, including clipped map features.
    Drag the rectangle's **right border** or **bottom border** to resize along the frame's
    axes, keeping its opposite corner fixed. Drag the **lower-right corner** to
    rotate around the center without changing the width or height. Hold Shift
@@ -132,24 +130,16 @@ cut, stand on a desk, light on an LED lamp base, or layer in a shadow box.
    The **Elevation multiplier**, **Base thickness**, and **Contour lines**
    controls sit below Terrain detail and update the model immediately.
 4. Use the right-hand **Map layers** panel, which is always open, to choose map
-   features. Colors are chosen on the design pages: its **Open Colors** link (or
-   **3D model design**) opens the **Colors** card holding the surface palette, the
-   Print palette's surface colors, each map feature's color, and the GPS route color.
-   The **3D model design** and **Silhouette design** buttons stay in the left sidebar. Orbit with the mouse, scroll to zoom, and
+   features. Orbit with the mouse, scroll to zoom, and
    use the camera reset or auto-rotate buttons. Under **Map features**, check
    roads, train tracks, water, or buildings. **Boundaries** opens a submenu for
    borders, city boundaries, and park boundaries; **Trails** opens one for the AT
    (Appalachian Trail) and other trails. Checking **Buildings** reveals a
    **3D buildings** option. Submenus appear only while their category is checked;
    unchecking the category hides all of its layers and keeps your choices.
-   Each has its own color in the design page's Colors card; changes apply immediately to loaded layers.
    Roads and Water also have detail sliders. Lower detail omits minor roads,
    creeks, and smaller water areas while retaining larger mapped features.
-5. Move the cross-section slider to inspect profiles along the frame's axes
-   (east–west or north–south at zero rotation, chosen beside the slider). The section guide appears on
-   the map only; the 3D preview stays clear.
-   The orange line marks the section on both the map and model.
-6. Export your landscape or save a PNG of the preview.
+5. Click **Export model** to download it for 3D printing, or save a PNG of the preview.
 
 The default Roan Mountain terrain is a **real bundled DEM**, downloaded from
 Mapzen Terrain Tiles. It renders without network access. New area extraction and
@@ -160,8 +150,7 @@ The Famous landscapes list comes from `terrain_app/data/DefaultProfiles.txt`.
 
 | Control | Effect |
 | --- | --- |
-| Alpine / Earth / Desert | Three elevation-based color palettes (Colors card, 3D model design page) |
-| Print | Mapped surface colors for four-filament printing; shows six surface colors in the Colors card |
+| Print palette | Mapped surface colors for four-filament printing, chosen by the Multicolor export |
 | Elevation profile | How heights are shaped before the multiplier: Standard, Local relief, or Lowland emphasis (see below) |
 | Elevation multiplier | 1× preserves the horizontal-to-vertical ratio; values above 1× emphasize relief |
 | Base thickness | Height of the solid base beneath the terrain, as a percentage of the longest horizontal edge |
@@ -336,440 +325,24 @@ offers the headset's last work for two hours.
 Models cannot be saved from VR. An export started while in VR is refused, and nothing is written to the
 server computer.
 
-## Elevation profile
+## Model view and export
 
-The **Elevation profile** selector above the Elevation multiplier chooses how
-heights are shaped before that multiplier is applied:
+**Export model** (left sidebar) opens the model view: the 3D model fills the window, with **◀ Map selection** to
+go back and two exports beside it. The size box sets the model's longest side in millimeters.
 
-- **Standard** multiplies every height equally.
-- **Local relief** separates the terrain into a smoothed trend surface and the
-  finer relief around it (a local relief model), then amplifies only the fine
-  relief: up to three times at full strength. Ridges, gullies, and terraces
-  stand out while broad landforms keep their height. The smoothing radius is
-  3% of the grid's longer side.
-- **Lowland emphasis** applies a power curve so low ground gets a larger share
-  of the same total height. The lowest and highest points and the order of all
-  heights are unchanged; valleys and plains gain shape that a plain multiplier
-  leaves flat.
+| Export | File | What it is |
+| --- | --- | --- |
+| **Standard 3D model** | STL | One closed solid in a single filament, for any printer |
+| **Multicolor** | 3MF | The Print palette's mapped surface colors, plus the map layers that are on, as separate color parts for up to four filaments |
 
-**Effect strength** appears for the two non-standard profiles. These profiles
-change the model's geometry in the preview, STL, OBJ, GLB, and 3MF. Statistics,
-the profile chart, contour lines, surface colors, and the CSV, NumPy, and
-heightmap exports keep the real elevations. The chosen profile and strength
-are saved in export metadata and in **Save as default**.
+Multicolor switches the model to the Print palette (its colors show in the preview). When the surface colors and
+the map layers that are on need more than four filaments, the button says how many and stays off until some layers
+are turned off. If loading the surface colors fails, the model view says so; click Multicolor again to retry.
 
-### Profile panel: choosing the slice type
-
-The profile panel on the geography selection page chooses the type of elevation
-profile to display. **Straight slice** uses the slider and direction selector to
-show a cross-section east–west or north–south (at zero rotation).
-
-**Ridgeline · two points** shows the highest way between two locations. Press
-**Pick two points**, then click two places on the map to set markers A and B
-(draggable). The ridgeline first finds the highest saddle that any path between
-the points must cross (the bottleneck of a maximum spanning tree), then follows
-the shortest path that never drops below that saddle, weighted toward high
-ground to trace the crest. The orange line on the map shows the path; the chart
-plots elevation against distance from A.
-
-**Viewpoint skyline** displays the highest elevations visible from a location
-across a chosen bearing and field of view, with Earth's curvature and standard
-atmospheric refraction (k = 0.13) applied. Press **Pick viewpoint**, then click
-where you stand (draggable marker). **Facing** sets the compass bearing
-(0–360°); a newly placed viewpoint faces the middle of the selection box, and
-dragging it re-aims it there unless you have turned Facing yourself. **View** the field of view (60–360°), **Eye** the eye height (standing
-2 m, tower 15 m, hilltop 100 m, aerial 400 m), and **Layers** splits the view
-into 1–5 distance bands. For each bearing the skyline is the highest elevation
-angle; the chart plots degrees above horizontal against bearing, with nearer
-bands in darker shades. The dashed wedge on the map shows the field of view.
-**Beyond** (everything, 250 m–10 km) leaves out terrain nearer than that, as if
-the foreground were cleared. **Out to** (Horizon by default, or 1–50 km) cuts off
-terrain farther than that: the skyline, the bands, the detected ridges, and the
-layered glow and diorama designs built from them end at that distance, and the
-wedge on the map stops there. **Detect ridges** replaces the bands with up to 7
-ridgelines found in the view: visible crests with hidden ground behind them,
-grouped by distance (groups at least ~16 % farther apart, so one ridge seen at a
-slant stays one), nearest first; the status lists their distances.
-
-**Viewpoint ridgeline** uses the same controls with ridge detection always on: the
-chart draws each ridgeline seen from the viewpoint as its own line, labeled with its
-distance (solid where it is seen; faint and dashed where a nearer ridge hides it — a farther ridge starts
-past the low ground behind the ridge in front, never on that ridge's own back slope), and the map draws where each ridge's crest runs on the ground. In both
-viewpoint modes a click on the map moves the viewpoint; a viewpoint on the frame's
-edge sees no terrain in the directions that leave it.
-
-Points saved for another area (after moving the frame and generating again) are
-dropped when they fall outside the new terrain, and picking starts again.
-
-Both modes see only the generated terrain inside the frame: to include distant
-mountains, frame and generate a larger area. Points stay as latitude/longitude,
-so moving or resizing the frame keeps them on the ground; the chosen mode and
-all points are remembered in the browser.
-
-API: `POST /api/profile/<terrain id>` with `{"mode": "ridgeline", "start":
-[lat, lon], "end": [lat, lon]}` or `{"mode": "viewpoint", "point": [lat, lon],
-"bearing": 0–360, "fov": 10–360, "eye_m": 0–500, "bands": 1–5, "min_radius_m":
-0–50000, "ridges": false}` (with `"ridges": true`, `bands` is 1–7 ridges). Responses
-include `mode`, `path`, `distances`, `heights`, `length_m`, `highest_m`,
-`lowest_m` (ridgeline) or `azimuths`, `angles`, `skyline_m`, `bands`,
-`band_edges`, `farthest_m`, `eye_elevation_m`, `point`, `rays`, `bearing`, `fov`,
-`min_radius_m`, and `ridges` (`distance_m`, `near_m`, `far_m`, `coverage` of each
-detected ridge; its skyline is in `bands`) (viewpoint).
-
-## Exports
-
-Choose the **longest horizontal edge in millimeters** (default: 180 mm).
-Geometry exports use the current multiplier and base thickness; models always have a solid base. The UI
-uses the original elevations; the smoothing slider has been removed.
-
-- **Four-color 3MF:** select Print in the **Colors** card and use at most four
-  distinct colors across surfaces and enabled map features. Downloads a native `terrain-print.3mf` file with
-  millimeter geometry, shared materials, and a multi-part assembly. Each color
-  has a closed solid part; identical colors merge into one part. Open it in
-  your slicer and assign each named part to its matching filament. These are
-  generic 3MF models, without printer-specific profiles or slot assignments.
-  Selected Roads, Train tracks, Borders, Water, City boundaries, Park boundaries,
-  AT, and Buildings are included. Linework and water are colored inlays 0.6 mm
-  deep; line widths are at least 0.6 mm (rail strokes 0.4 mm). Buildings have
-  flat raised roofs using mapped heights/levels, with a minimum 0.8 mm rise;
-  with 3D buildings on, mapped building parts and roof shapes are printed.
-  Unchecked layers are omitted and Roads/Water detail settings are honored.
-  Choose feature colors from your four surface colors, or share surface colors
-  to free a filament slot. Same-color features merge with terrain; mesh booleans
-  remove overlapping interiors between different color parts.
-  Overlapping layers take precedence in this order: water, roads, train tracks,
-  borders, cities, parks, other trails, AT, then buildings. Features follow the saved terrain's
-  selection and rotation. Assign the color parts to filament slots in your slicer.
-- **STL:** a direct `.stl` download. Millimeter coordinates; X selection right,
-  Y selection top, Z up (X east and Y north at zero rotation).
-  Meshes are closed solids, suited to slicers.
-- **OBJ:** a direct `.obj` download with metadata and source credits in comments.
-  Millimeter coordinates; X selection right, Y selection top, Z up. This export contains geometry.
-- **GLB:** a self-contained colored model, with palette and source credits in
-  glTF extras. Includes selected feature geometry and its chosen colors;
-  water polygons include their self-contained transparency mask. Uses meters according to the glTF convention, X selection right,
-  Y up, Z selection bottom;
-  a 180 mm landscape has a 0.18 m longest horizontal edge. Map textures are omitted.
-- **Preview image:** the camera button saves the rendered view, including selected
-  map features, their colors, and source credits.
-- **Heightmap PNG:** a direct 16-bit `.png` download. Bounds, min/max elevations,
-  decoding instructions, and source credits are embedded in PNG text fields.
-  Decode PNG values using
-  `min_m + pixel / 65535 * (max_m - min_m)`.
-- **Elevation CSV / NumPy:** separate `.csv` and `.npy` downloads of the original,
-  unexaggerated elevation grid in meters. Row 0 is the selection's top edge;
-  column 0 is its left edge (north and west at zero rotation).
-- **Optional settings & coordinates (JSON):** download `terrain-metadata.json`
-  separately if you want to retain geographic bounds, sampling information, and
-  model settings. Models open and print without this file. CSV and NumPy grids
-  benefit from it when reconstructing their geographic coordinates.
-- **Source credits (TXT):** a separate `terrain-credits.txt` download, useful when
-  sharing a model. OBJ, GLB, and PNG files include these credits inside the file.
-
-Solid STL/OBJ meshes share connected vertices around the surface, walls, and
-floor. Every export button downloads one native file. OBJ, GLB, and PNG embed
-metadata; feature choices and colors are recorded in GLB, OBJ, PNG, and optional
-JSON metadata. STL and OBJ contain terrain geometry; four-color 3MF contains solid terrain
-parts and selected map features grouped by print color. GLB and preview images
-include the visible map-feature layers. Optional JSON preserves settings,
-selection rotation, four geographic
-corners, and the absolute elevation used
-as the model's zero-height reference. Retain source attribution when sharing.
-
-## Design page add-ons
-
-**3D model design** (the Print Studio) opens a full-page workspace where a *project* (several named projects per framed area)
-adds parametric add-ons to the printed model: holes, nail markers, pencil holders, photo
-slots, pockets, coaster recesses, stand grooves, magnet pockets and wall hangers in the
-underside, plaques (flatten, level or raise a pad, with optional engraved or raised text),
-and text labels. Sizes are millimeters of the exported model. "Print as is" (a project
-without add-ons) exports exactly as before. The **Start from** card's preview turns the model slowly in 3D (drag to
-orbit): point at a template, or Tab to it, to see its add-ons placed without changing the project;
-otherwise it shows the active project.
-
-Its right column holds the **Colors** card: the surface palette (Alpine, Earth, Desert,
-Print), the Print palette's six surface colors with the surface-map status and color count,
-one color per map feature in the geography page's order (colors of layers that are off are
-dimmed but stay editable), and the GPS route color once a route is loaded. A line under the
-feature colors counts 3MF filaments across surfaces, enabled features, the route, and add-ons.
-Changes repaint both the design page's view and the geography page's preview.
-
-- Cuts go through everything, including map-feature inlays and buildings. Holes, slots, and
-  grooves are measured from the surface at their position; pockets and coasters have a flat
-  floor measured from the lowest surface point inside them. Added material (plaque pads,
-  raised text) uses the add-on's color, or the Dirt color when none is chosen, and counts
-  toward the four 3MF filaments.
-- The server applies add-ons with manifold mesh booleans to STL, OBJ, 3MF, and a server-built
-  GLB; the project is recorded in 3MF, OBJ, GLB, and JSON metadata. Printability checks
-  (floors thinner than 0.8 mm, thin walls, overlaps, colors, printer bed size) update as you
-  edit, and long exports run as background jobs with progress.
-- **Profile** shows the elevation-profile slice from the geography selection page as the printed model's
-  silhouette in millimeters (base band, terrain, and add-on cuts and fills crossing the slice),
-  in true proportions or stretched, or as real elevation. Its direction and position slider are
-  the geography selection page's own, so both always show the same slice. **Cut the 3D view here** clips the
-  model and add-on ghosts at the slice; point at the chart to read heights and cut floors.
-- Text uses the bundled DejaVu Sans Bold font (`terrain_app/data/fonts/`, with DejaVu Sans, Oblique,
-  and Bold Oblique for the silhouette page's text editor; under the
-  [DejaVu font license](terrain_app/data/fonts/DejaVu-LICENSE.txt)).
-- **Marker balls:** `terrain_app/data/templates/marker-ball.stl` is a 10 mm push-pin ball for a
-  brass nail (24.4 mm exposed, 1.8 mm hole); its dimensions are in `marker-ball.json`. Nail
-  markers default to that depth; with *Include marker balls* each nail marker adds one ball
-  beside the model in the 3MF, in its own color. The ball can also be downloaded alone (STL,
-  3MF, or the Blender source). Regenerate it with
-  `blender --background --python scripts/make_marker_ball.py`.
-- **Marker platforms:** choose *Platform* as the nail-marker style to turn each nail into a post
-  holding a 30 mm round deck (`terrain_app/data/templates/marker-platform.stl`, dimensions in
-  `marker-platform.json`). Its hub takes the nail through the same side T-slot as the ball (head
-  pocket, shank channel, 1.46 mm snap mouth); the deck top stands 9 mm above the hub's bottom and
-  26.5 mm of nail stands below it, so nail holes follow that depth when you switch styles. *On
-  top* can print a patch of the terrain around the marker (the *Area lifted* square, shrunk onto
-  the deck with its own *Top exaggeration* over a 1.2 mm base) or the mapped building at the
-  marker (scaled to fit the deck, at least 4 mm tall; the Buildings layer must be loaded, and a
-  marker with no building within 15 m prints bare). The top color counts toward the four 3MF
-  filaments. Print a bare platform deck top down on the bed, with no supports (the 3MF lays them
-  out that way). A platform with a printed-on top is an assembly of two parts, platform and top,
-  that stays aligned in the slicer; it prints upright and needs supports under the deck. Like the
-  ball, the nail head (3.2 × 0.8 mm) is assumed: measure yours and edit the constants (shared with
-  `make_marker_ball.py`). Regenerate it with
-  `~/opt/blender-4.5.14-linux-x64/blender --background --python scripts/make_marker_platform.py`
-  (any Blender 4.2 or newer).
-
-API: `GET /api/studio/catalog` (add-on types and parameters), `POST /api/studio/<id>/check`,
-`POST /api/studio/<id>/text-outline`, `POST /api/studio/<id>/export` (returns a job; poll
-`GET /api/studio/jobs/<job>`, then download `GET /api/studio/jobs/<job>/file`; `"preview": true`
-returns JSON mesh parts at a coarser grid), `GET /api/studio/marker-ball?format=stl|3mf|blend`, and
-`GET /api/studio/marker-platform?format=stl|3mf|blend` (both take `&color=` for the 3MF).
-`POST /api/export/<id>` also accepts an optional `project`.
-
-## Silhouette design page
-
-**Silhouette design** turns the elevation profile's slice into a flat piece: the ridgeline on top
-of a solid base strip, shown to scale in a front view (and a 3D view you can orbit). Its direction
-and position sliders are the geography selection page's own profile controls, so the chart and the
-dashed line on the map follow them; **Print from** and **Print to** keep only part of the slice.
-
-The page always opens on the profile the Follow the ridgeline chart shows (straight slice, two-point
-ridgeline, or viewpoint), except designs built from a GPX route. A newly generated area starts on the
-multi-layer **Layered glow** preset, built from the viewpoint's ridges when one is drawn.
-
-The **Heights** source can also be **Ridgeline (geography page)** or **Viewpoint
-skyline (geography page)**, using the profile drawn on the geography page;
-opening the silhouette page while the geography page shows one of them selects
-it automatically. A viewpoint skyline is printed as it looks from the viewpoint
-(lengths on a cylinder around the viewer, so true proportions match the view);
-with multiple layers (shadow box or layered lamp presets) each layer is one
-distance band, nearest ridges at the front, with nearer bands narrower. When the
-geography page has **Detect ridges** on, the layered presets use the detected
-ridges instead: one layer per ridge (the layer count follows them within the
-preset's limits; with fewer ridges than its minimum it falls back to bands), and
-terrain nearer than **Beyond** and farther than **Out to** is left out either way. **Thicker when closer**
-(on by default for the Layered glow and the Layered mountain diorama when the
-source is a viewpoint) sets each layer's thickness by its distance on a log
-scale, from **Nearest** (3 mm) to **Farthest** (1.5 mm for the lamp, 1.2 mm for
-the box), to 0.1 mm; the layer list shows each one ("Layer 1 (front) · ridge
-0.6 mi · 3.0 mm"). Comb and spacer-comb slots are each layer's own thickness +
-0.3 mm, and parts in the files are named with their thickness ("Layer 2 · 2.2
-mm"). A ridgeline makes a single layer. Silhouette requests use `source:
-"ridgeline"` with `ridge_start` and `ridge_end`, or `source: "viewpoint"` with
-`view_point`, `view_bearing`, `view_fov`, `view_eye_m`, `view_min_radius_m`
-(0–50000), and `view_ridges`; `thickness_by_distance`, `thickness_near_mm`, and
-`thickness_far_mm` (1.2–30) set thickness by distance, and a layer's own
-`thickness_mm` overrides it. Outlines give each layer `thickness_mm` and, for a
-viewpoint, `distance_m`, plus the `ridges` used.
-
-**Edit ridgelines** in the front view lets you change the printable curves directly.
-Click a curve or its checkbox to select it; Ctrl/Shift-click selects several.
-Use **Delete selected** or the Delete key to remove selected ridges, keeping at
-least one. Deleting a ridge keeps the other original ridges and rebuilds the
-comb slots and printable parts; it does not redetect or regroup the terrain.
-Drag anywhere along a curve to pull that region smoothly. **Pull width** sets
-how much neighboring curve moves; sideways pulls preserve the left-to-right
-order, and downward pulls keep the solid base intact. **Undo**, **Redo** and
-**Reset ridgelines** restore changes; Escape cancels a drag. The edits apply to
-the 3D view and STL/3MF/SVG exports, are saved per framed area, and are included
-in the settings JSON. Width and base-height changes preserve edits; changing
-the source, slice, viewpoint, detection count, smoothing or vertical scale starts
-with fresh curves. Cloud panels remain decorative; deleting down to a single
-terrain ridge leaves out the cloud background until more ridges are restored.
-
-**Colors** (in the Export card) fit a four-filament printer. **Color by distance** gives the layers
-up to four colors, **Nearest**, 2, 3, and **Farthest**: the layers, nearest first (front to back for
-slices), fall into contiguous groups as even as possible (seven layers: 2, 2, 2, 1), and fewer
-layers than colors use the nearest ones. Comb bases, spacer combs, and stand feet take the farthest
-color used, so the 3MF has at most four materials; parts sharing a color share one material. A
-caption or markings in their own color count too: a fifth color is a check warning, and the 3MF
-export refuses it ("Use at most four colors: share the text color with one of the distance
-colors."). New pieces fade the four colors from the body color to the text color, so an engraved
-caption shares the farthest one. The card shows "N of 4 filament colors".
-
-With a viewpoint's ridges or bands (two or more, not in a shadow box), **Pieces** can be **One
-piece, color zones** instead of separate layers: every ridge stands on one base strip, zone 1 is the
-nearest ridge's outline with the base strip, and each farther zone is what of its ridge shows above
-the nearer ones (slivers under 0.2 mm wide join the next zone), so the zones tile the piece. Each
-zone takes its distance color and, with **Thicker when closer**, its own thickness from the shared
-flat back, so the piece steps toward you and prints flat. Text, ticks, and pegs sit on the nearest
-zone; wall holes, keyholes, the desk stand, and the lamp tab (hanging from the base strip) apply to
-the whole piece; the comb's spacing and base steps are hidden. The 3MF has one part per color
-(ridges sharing a color merge, "Zones 1, 2"), the STL is the zones merged into one solid, and the
-SVG puts each color's zones in its own filled group under the cut outline. The front and 3D views
-draw the zones in color (and the steps), and the parts list names each zone ("Zone 1 (nearest) ·
-ridge 0.6 mi · 4.0 mm · color #234e40"). Requests use `color_by_distance`, `distance_colors` (one to
-four hex colors, nearest first), and `color_zones`; outlines add `zones` (each with `name`, `color`,
-`thickness_mm`, `distance_m`, and `polygons`) and the filament `colors`.
-
-**Cylinder lamp** (in the Export card) wraps the silhouette around a round lithophane shade in CylinderLamp, the lamp-making
-app beside this one: the layers' ridge curves (with any ridgeline edits) go to it, nearest first, and it opens in a new
-tab, starting itself from `$CYLINDERLAMP_DIR` (default `../CylinderLamp`) if it isn't running at `$CYLINDERLAMP_URL`
-(default http://127.0.0.1:5057). There each layer becomes a band of wall thickness - the sky thinnest, the nearest ridge
-thickest - so the range glows in steps. The handoff file goes in `$TERRAIN_LAMP_HANDOFF` (default
-`~/.local/share/terrain-studio/lamp-silhouettes`; the newest 50 are kept). `POST /api/silhouette/<id>/cylinder-lamp`
-takes the silhouette request plus `name` and answers `id`, `url`, `running` and `layers`; with `?download=1` it returns
-the handoff file, which CylinderLamp can also open.
-
-- **Shape:** width (the piece's length, 40–400 mm; the printed part of the slice fills it), vertical
-  scale (× true proportions at that width, 0.5–100; it starts at the elevation multiplier), base height
-  under the lowest point, thickness, smoothing (a moving average plus a simplification that drops
-  points), true elevations, the model's shaped elevation profile, or the **uploaded route**, and mirror.
-- **Text:** a caption of up to three lines on the base (DejaVu Sans Bold, starting as the place name),
-  engraved, raised from the front face, or cut through as a stencil (thin bridges keep the insides of
-  O, A, and e attached), at the left, center, or right. The lamp designs (Edge-lit ridgeline, both
-  Layered glows, Skyline night-light) start without text; the Stencil lamp keeps its cut-through
-  name, since lighting the letters is its point.
-  - **Edit text…** opens the text editor for layouts with more than one size: up to six lines, each
-    with its own text, size (capital-letter height, 1–40 mm), style (Regular, Bold, Italic, Bold
-    italic; DejaVu Sans), and letter spacing (−20 to +100 % of its letter height added between
-    letters), plus the block's alignment (the lines left, centered, or right within it), line spacing
-    (baseline to baseline, × the lower line's size), style, depth, and color. A name over a smaller
-    italic address, left-aligned, is a few clicks. The preview is drawn from the server's own outlines,
-    so it is exactly what prints; **Plain text** returns to a simple caption. The presets with a
-    caption (trail memory, elevation chart, anniversary, race) start with a block: a bold first line
-    and smaller lines under it.
-  - **Moving the text:** the front view draws a dashed box with a move grip around the text: drag it
-    anywhere on the front piece, or focus it and nudge with the arrow keys (Shift: 5 mm). It snaps to
-    the piece's center line and to the base strip's middle within 2 mm (a guide shows), and **Reset
-    text position** puts it back on the base strip; choosing Left, Center, or Right does too. The text
-    must sit on material: 1.2 mm in from the edges for engraved or stencil text, clear of the lamp
-    comb's slots and the shadow box's comb ends, and on the nearest color zone (zones differ in
-    thickness, so the text stays on zone 1's face). Dropped where it would not fit, it comes back to
-    the nearest place it fits, and Checks says so. The 3D view and every export follow the position;
-    presets reset it, and it is remembered per framed area with the other settings.
-- **Mounting:** a desk stand (two feet with a slot the thickness plus 0.2 mm wide, printed beside the
-  piece in the same file), two round wall holes, or two keyholes.
-- **Exports:** STL (one solid, lying flat with its front face up; a design with several parts
-  downloads as a ZIP of one STL per part), 3MF (every part as a named color part, laid out flat side
-  by side), SVG (outlines, wall holes, and text as paths in millimeters for laser cutting or vinyl;
-  several layers and the combs' side views each get their own group), and the settings as JSON.
-  Checks list the size, the lowest point, text that is trimmed or too small, pegs that overlap the
-  text, pieces that miss their tab or box, and parts larger than a 256 mm bed; the Export card lists
-  the parts and their sizes.
-
-### Start from: design presets
-
-**Start from** at the top of the left panel sets everything a design needs; **Custom** is the plain
-piece above. Each preset keeps your slice, caption, and colors where they still make sense and shows
-its own settings below the picker. Every size is editable: **measure your lamp's slot and your box's
-inside** and type them in. Under the picker, a **preview** turns the design slowly in 3D (drag to orbit): point at a preset, or
-Tab to it, to see it built from your current slice and settings without applying it; otherwise it shows
-your current design, with its size and number of layers below.
-
-**Glow lamps** stand in an LED lamp base, the kind with a slot on top that lights a panel from its
-edge. They share a **lamp-base fit**: slot width (4.0 mm), length (160 mm), depth (8 mm), and
-clearance (0.2 mm). A straight tab (slot width − clearance thick, slot length − 2 × clearance long,
-slot depth tall) is centered under the piece, flush with its back face so both print flat; the piece
-itself may be wider than the slot. Checks warn when the piece is narrower than the tab.
-
-- **Edge-lit ridgeline:** one panel exactly the tab's thickness, with a 0.6 mm engraved caption that
-  catches the light. Print it in clear or translucent PETG at 100 % infill and 0.12 mm layers.
-- **Stencil lamp:** an opaque 3 mm piece with a large cut-through caption; the lamp lights the letters.
-- **Layered glow:** 2–4 thin panels (3 by default) from slices at 25, 50, and 75 % of the frame stand
-  in a printed **comb base** whose tab drops into the lamp (from a viewpoint with detected ridges: one
-  panel per ridge, closer panels thicker). Slots are each panel's thickness + 0.3 mm, centers
-  6 mm apart with at least 1.2 mm between them, 5 mm deep (the caption stays above them), and each panel's base is a step (8 mm) higher
-  than the one in front so rear ridges rise above front ones. Print the panels translucent, the front
-  darkest; print the comb base clear.
-  Beneath the layer options, a number line shows slice locations or shaded
-  viewpoint distance groups, with each layer's color, distance, and thickness.
-- **Layered glow with clouds:** the layered glow with Clouds on: a puffy, decorative cloud panel stands
-  behind the ridges in its own slot at the back of the comb base. Print the clouds white or the
-  palest translucent filament.
-
-The 3D view and the Start from preview show glow lamps standing on a round LED lamp base (a faint
-cylinder a little wider than the slot, with the slot dark on top).
-
-**Printing** (glow lamps and shadow boxes) makes the parts easier to print:
-- **Minimum feature** (1 mm; 0 keeps everything) trims ridge spikes and slivers narrower than that
-  from each panel (a morphological opening that keeps square corners and the base edge in place),
-  since they are only a couple of extrusion lines wide and snap; bits left floating are dropped so
-  every panel stays one piece. Checks note when something was trimmed.
-- **Comb slot clearance** (0.3 mm) is added to each panel's thickness for its slot in the comb base
-  or spacer combs: raise it if panels won't go in, lower it if they wobble.
-- The comb base prints slots down, so each slot's mouth on the bed has a 0.4 mm chamfer (less where
-  the walls between slots are thin) against elephant's foot; it also guides the panels in.
-- Checks warn when a rear panel nowhere shows 1.5 mm above the panels in front of it.
-  Ridge groups are approximate; decorative layers are labelled separately.
-  **Puffy clouds behind the terrain** adds a rounded cartoon-cloud panel as
-  the final rear layer, with a selectable color. The lamp base or shadow-box
-  spacer combs include its extra slot; it is a separate printable part in the
-  STL ZIP and 3MF. Clouds do not count toward the terrain-layer count and are
-  available for separate layered lamp/box designs.
-- **Skyline night-light:** a slice through town that **includes buildings**: along the slice, the
-  profile rises to the tallest mapped building within a corridor (30 m wide), standing on its lowest
-  ground. Turn on the Buildings map layer and let it load first. Shaped heights, a stencil name, and
-  the lamp tab.
-
-**Shadow boxes** share a **box fit**: inner width (200 mm), height (150 mm), and depth (40 mm). Pieces
-are the inner width less 1 mm, heights are cut flat at the inner height, and two printed **spacer
-combs** (12 mm wide, 8 mm tall, one per side, the box's depth less 0.5 mm long) hold every layer in a
-slot the thickness + 0.3 mm wide, evenly spaced from front to back. An optional **photo slot** (1 mm)
-behind the last layer holds a photo, card, or map.
-
-- **Layered mountain diorama:** 3–7 layers (5 by default) at slice positions spread across the frame
-  from its near side (the front layer) to its far side, each base a step higher, colored from the
-  body color at the front to palest at the back. An optional **LED channel** (5 × 2 mm) across the
-  combs behind the layers holds an LED strip.
-- **Trail memory box:** the uploaded route's elevation profile (the slice without a route), a photo
-  slot, a 1.8 mm **summit pin hole** 10 mm deep drilled down from the highest point for the bundled
-  brass-nail marker, and the route's name and date as the caption.
-- **Elevation chart box:** the route's profile with a caption of its name, distance and climb, and
-  date, and **distance ticks** engraved along the base every mile or kilometer (following the ft / m
-  switch), labeled where they have room.
-- **Anniversary box:** a stencil caption of names and a date, one layer at the chosen slice, and a
-  photo slot behind.
-
-**Flat pieces — Ridgeline color zones:** one piece from a viewpoint with detected ridges (2–7, 4 by
-default) as color zones, thicker when closer (4 mm nearest to 1.6 mm farthest), a 12 mm base with a
-0.6 mm engraved caption, and a desk stand. Assign each 3MF color part its filament.
-
-**Race profile — running or cycling:** the race's elevation along its length from the uploaded GPX,
-distance ticks (running every 1 mile or kilometer, cycling every 10), START and FINISH engraved at the
-ends, a three-line caption of the race name, date, and your finish time (typed in its own field), and
-three round **medal pegs** (6 mm × 20 mm, standing out of the front face along the bottom of the
-base), with keyholes to hang it; the stand or mirror work too.
-
-**Route profiles** use the distance along the uploaded route against its elevation, segments joined
-in order, with the same vertical-scale meaning as a slice (true proportions at the piece's width, ×
-the scale; route presets pick a scale that makes the climb about 50 mm tall). Elevations come from
-the GPX's `<ele>` values, smoothed over about 100 m; a GPX without them samples the terrain, which
-needs the whole route inside the generated frame (otherwise: "This GPX file has no elevations;
-re-export it with elevation or frame the whole route."). Routes uploaded before elevations were
-kept need uploading again. Trim applies to the route too.
-
-Settings, the chosen preset, and its fields are saved in the browser for each framed area. The API
-is `POST /api/silhouette/<id>/outline` (the preview: outlines, text, markings, and mount marks in mm,
-x from 0 at the left and y up, every layer with its assembled position, the fit's parts, a parts list
-with sizes, and warnings) and `POST /api/silhouette/<id>/export` with the same JSON body plus
-`format` (`stl`, `3mf`, `svg`, or `json`). The body takes `direction` (`ew` or `ns`), `position` and
-`trim` (percent), `width_mm`, `vertical_scale`, `base_mm`, `smoothing`, `source` (`true`, `shaped`
-with `relief` and `relief_strength`, or `route` with `route_id`), `mirror`, `text` (up to three lines
-of 60 characters), `text_size`, `text_style` (`engrave`, `emboss`, `stencil`), `text_depth`,
-`text_align`, `mount` (`none`, `stand`, `holes`, `keyholes`), `hole_diameter`, `thickness_mm`,
-`body_color`, and `text_color`, and for presets `preset`, `layers` (1–7 of `{position, base_mm,
-color}`, front first), `fit` (`none`, `lamp`, `box`), `slot_width`, `slot_length`, `slot_depth`,
-`slot_clearance`, `layer_spacing`, `box_width`, `box_height`, `box_depth`, `photo_slot`, `photo_gap`,
-`led_channel`, `led_width`, `led_depth`, `include_buildings`, `building_corridor_m`, `summit_pin`,
-`pin_diameter`, `pin_depth`, `peg_count`, `peg_diameter`, `peg_length`, `ticks`, `tick_every`,
-`units` (`ft` for miles, `m` for kilometers), and `start_finish`. The presets themselves live in
-`terrain_app/data/silhouette-presets.json`.
+**Following the headset.** When a model is generated in VR, the computer's page (following the headset, the
+default) opens the same model in its model view, ready to export; when the headset goes back to the map, the model
+view closes. **◀ Map selection** closes it on the computer only; the headset's later updates don't reopen it for the
+same model.
 
 ## Elevation source and geographic limits
 
@@ -904,13 +477,8 @@ features without that raster imagery. The UI shows this distinction in Map view.
 
 ## Four-color Print palette
 
-**Print** replaces Slate in the surface palettes. Selecting it in the design page's
-**Colors** card shows colors for Dark foliage, Light foliage, Dirt, Snow, Water,
-and Buildings beneath the palette. Every surface has its own color picker. Matching
-hex colors share one material; the card counts unique colors and asks you to share
-them when more than four are selected.
-Choices are saved locally in the browser. Feature checkboxes and feature colors
-are independent and stay selected when changing the surface palette.
+The model view's **Multicolor** export uses the Print palette: Dark foliage, Light foliage, Dirt, Snow, Water,
+and Buildings, each a filament color. Matching colors share one filament, and at most four fit a multicolor print.
 
 The surface map uses OSM forests/woods for dark foliage and mapped grasslands,
 meadows, scrub, farmland, orchards, gardens, and parks for light foliage.
@@ -1015,10 +583,7 @@ run by hand against a fixture server you started: `node tests/browser-water.cjs`
 `node tests/browser.cjs` is the main page test.
 Run `node tests/browser-water.cjs` against the same server to verify USGS/OSM
 switching, cached sources, saved preferences, and late-response handling.
-`node tests/browser-studio.cjs` covers the 3D model design page and `node tests/browser-silhouette.cjs`
-the silhouette design page (the shared slice, text and mount settings, STL and SVG downloads, saved settings).
-`node tests/browser-ridge-edit.cjs` checks curve dragging, cancellation, multi-ridge deletion, Undo/Redo, exports, and saved edits.
-`node tests/browser-selection-shapes.cjs` checks circle/oval border dragging, rotation, generation, the 3D design handoff, and clipped GLB exports. The fixture server uses synthetic elevations for round selections.
+`node tests/browser-selection-shapes.cjs` checks circle/oval border dragging, rotation, generation, and that the model view's STL keeps an oval footprint. The fixture server uses synthetic elevations for round selections.
 `node tests/browser-vr.cjs` drives VR with controllers on an emulated Meta Quest 3 (the `iwer` npm package; set
 `TERRAIN_IWER_PATH` to its `build/iwer.min.js` if it is installed elsewhere): Map Selection (tiles that sharpen as
 you lean in, dragging, zooming, and turning the map, the page's selection following), every watch menu and the
@@ -1082,27 +647,7 @@ The AT feature follows mapped Appalachian Trail hiking-route relations and named
 trail ways from OpenStreetMap, clipped to the selected terrain. Its checkbox and
 color picker work independently of Roads, including at low road detail.
 
-## GPS routes (GPX)
-
-**Upload GPX** under *Your landscape* overlays a recorded activity on the map,
-the 3D preview, and model exports. Export the activity as GPX from Strava
-("Export GPX"), Garmin Connect ("Export to GPX"), or COROS. Tracks and routes
-are read with any GPX namespace; files must be under 15 MB and 500,000 points.
-Each point keeps its elevation (smoothed over about 100 m) for route profiles on the silhouette page,
-and the first point's time gives the route its date.
-
-The route is stored in geographic coordinates (cached under `routes/` in the
-cache folder), so moving or resizing the frame never rescales it: each frame
-shows the part of the route inside it. **Frame the route** fits the selection
-around it, and a route far from the current frame is framed automatically.
-Choose its **line thickness** (0.4–6 mm on the printed model) beside the
-route; its **line color** is in the 3D model design page's **Colors** card,
-which shows it while a route is loaded. In 3MF files the route is a color part printed like a trail inlay, and
-its color counts toward the four-filament limit; GLB files and preview images
-include it. STL and OBJ files contain terrain geometry only, as with other map
-features.
-
-### Interface defaults and favorite landscape parameters
+## Interface defaults and favorite landscape parameters
 
 The **ft / m** switch in **Follow the ridgeline** sets the display units for the
 whole page and is remembered in this browser. Feet is the default: elevations,
@@ -1113,7 +658,7 @@ Print dimensions stay in millimeters, while raw elevation data and GLB retain
 their documented metric units.
 
 Adjust the terrain controls in the left sidebar, the map features in **Map layers**,
-and the palette and colors in the design page's **Colors** card, then click
+then click
 **Save as default** (in **Map layers**) to remember those
 selections in this browser. This includes the elevation multiplier, base
 thickness, contour lines, feature colors and detail levels, building options, boundary and

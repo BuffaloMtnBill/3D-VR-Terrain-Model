@@ -4,14 +4,13 @@ import { GLTFExporter } from './vendor/GLTFExporter.js';
 import { SelectionFrame } from './map-frame.js';
 import {clipFootprint,clipGroup,footprintRim} from './footprint.js';
 import {rotationAngle,selectionCorners,sampleLocation,geographicExtent,mercatorPixel} from './selection-geometry.js';
-import {createProfileModes} from './profile-modes.js';
 import {buildFeatures,buildRoute,disposeFeatures,featureLabels,filterFeatures} from './feature-layers.js';
 import {paintSurface,coverLabels} from './print-palette.js';
 import {createStudio} from './print-studio.js';
 import {horn} from './sounds.js';
-import {createSilhouette} from './silhouette.js';
 import {createVR} from './vr.js';
 import {createLive} from './live.js';
+import {createModelView} from './model-view.js';
 
 const $ = id => document.getElementById(id);
 const presets = {};
@@ -24,7 +23,7 @@ const paletteStops = {
 const ramps = Object.fromEntries(Object.entries(paletteStops).map(([key, stops]) => [key, stops.map(hex => new THREE.Color(hex))]));
 const state = {selection:null, selectionError:null, palette:'alpine', view:'relief', mapStyle:'terrain', data:null, id:null, loading:false, name:'', surfaceVersion:0};
 let map, mapLayer, selectionFrame, profileMapLine, renderer, scene, camera, perspective, orthographic, controls, sun, grid, model, topMesh, baseMesh, mapTexture, featureGroup;
-let toastTimer, sceneReady = false, lastMapError = 0, studio = null, silhouette = null, vr = null, live = null, offered = null, mapStyles = null;
+let toastTimer, sceneReady = false, lastMapError = 0, studio = null, modelView = null, silhouette = null, vr = null, live = null, offered = null, mapStyles = null;
 let featureData=null,featureRequest=null,featureError=null,placeRequest=null;
 let waterSourceChosen=false;
 const featureCache=new Map();
@@ -510,6 +509,11 @@ async function loadSurface(id, reset=false, loadedName=null) {
 
 function printColors() {return Object.fromEntries(Object.keys(coverLabels).map(name=>[name,$(`print-${name}`).value]));}
 
+// Filaments a multicolor 3MF needs: the Print palette's surface colors, enabled map features, the route, and the
+// design page's add-on and marker colors.
+function filamentCount() {
+  return new Set([...Object.values(printColors()),...Object.values(featureStyles()).filter(style=>style.enabled).map(style=>style.color),...routeColors(),...(studio?.extraColors()||[])]).size;
+}
 function updatePrintPalette() {
   
   const surfaceCount=new Set(Object.values(printColors())).size;
@@ -525,13 +529,14 @@ function updatePrintPalette() {
   $('route-color-row').hidden=!route;$('route-color-row').classList.toggle('off',!routeShown());
   // A disabled button cannot explain itself on click, so the button says why 3MF is unavailable.
   // Add-on fill colors and marker balls from the design page project also need filaments.
-  const printCount=new Set([...Object.values(printColors()),...Object.values(styles).filter(style=>style.enabled).map(style=>style.color),...routeColors(),...(studio?.extraColors()||[])]).size;
+  const printCount=filamentCount();
   $('print-feature-color-count').hidden=state.palette!=='print';
   $('print-feature-color-count').textContent=`3MF: ${printCount} / 4 filament colors across surfaces, enabled features${route?', the route':''}, and add-ons.`;
   $('print-feature-color-count').classList.toggle('error',printCount>4);
   const unavailable=state.palette!=='print'?'Choose the Print palette under Colors to enable':printCount>4?`${printCount} colors · share colors to fit four filaments`:'';
   document.querySelector('[data-export="3mf"]').disabled=Boolean(unavailable);
   $('export-3mf-hint').textContent=unavailable||'Print palette · separate solid color parts';
+  modelView?.refresh();
   $('cover-status').classList.toggle('error',Boolean(coverError));
   $('cover-retry').hidden=!coverError;
   $('cover-status').textContent=coverError||(coverData?(Object.values(coverData.counts).some(count=>count>0)?'Mapped surface colors loaded.':'No mapped surface areas; using Dirt.'):(state.id?'Loading surface map…':'Generate terrain to load mapped surface colors.'));
@@ -793,7 +798,8 @@ function workspace() {
   const selection=draftSelection||state.selection,generated=state.data&&state.id!=='example'&&sameBounds(selection,state.data.bounds);
   return {page:pageId,name:state.loadedName&&generated?state.loadedName:state.name,
     place:$('place').value,selection,terrain_id:generated?state.id:null,
-    palette:state.palette,controls:controlValues(handoffInputs()),export_size:Number($('export-size').value)};
+    palette:state.palette,controls:controlValues(handoffInputs()),export_size:Number($('export-size').value),
+    mode:vr?.mode==='model'&&generated?'model':'map'};   // the headset's view: the map, or the generated model
 }
 let handoffTimer=null,lastHandoff=0;
 // Sent while in VR, a few times a second at most (and at once when the headset comes off); kept only in the
@@ -837,6 +843,8 @@ async function applyWorkspace(w) {
     try{await loadSurface(w.terrain_id,true,w.name||null);$('selection-state').textContent='Terrain generated';}
     catch{notify('The headset’s cut is set, but the server no longer has its terrain. Generate it, then export.',true);}
   }
+  // The headset shows its model: so does this page, ready to export; back on the map there, back to the map here.
+  modelView?.headsetMode(w.mode==='model'&&w.terrain_id&&state.id===w.terrain_id?'model':'map');
 }
 
 async function continueWorkspace(w) {
@@ -939,6 +947,7 @@ function profileSamples() {
 }
 
 function updateProfileMapLine() {
+  if(document.querySelector('.profile-panel')?.hidden){if(profileMapLine){map.removeLayer(profileMapLine);profileMapLine=null;}return;}
   if(profileModes?.active()){if(profileMapLine){map.removeLayer(profileMapLine);profileMapLine=null;}return;}
   const profile=profileSamples(); if(!profile) return;
   const {horizontal,fraction}=profile,data=state.data;
@@ -951,6 +960,7 @@ function updateProfileMapLine() {
 }
 
 function drawProfile(pointer=null) {
+  if(document.querySelector('.profile-panel')?.hidden)return;
   if(profileModes?.active())return profileModes.draw($('profile'),pointer);  // ridgeline or viewpoint skyline
   const canvas=$('profile'),rect=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);
   canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);
@@ -1155,7 +1165,6 @@ const studioContext={
 };
 
 // The silhouette design page reads even less: the slice controls it shares, the relief settings, units, colors, and the uploaded route.
-const silhouetteContext={get state(){return state;},get route(){return route;},get profile(){return profileModes;},options,notify,download,units,printColors};
 
 async function screenshot() {
   if(!sceneReady||!state.data) return notify('Generate a terrain preview first.',true);
@@ -1362,14 +1371,10 @@ function wireControls() {
   $('help-button').addEventListener('click',()=>$('help-dialog').showModal());
   $('restart-server').addEventListener('click',restartServer);
   studio=createStudio(studioContext);
-  $('export-button').addEventListener('click',()=>{if(!state.data)return notify('Generate terrain before exporting.',true);updateExportDimensions();updatePrintPalette();studio.open();});
+  modelView=createModelView({studio,get state(){return state;},notify,filamentCount});
+  // This page shows just the model: Export model opens the model view with its two 3D print exports.
+  $('export-button').addEventListener('click',()=>{if(!state.data||state.id==='example'&&!state.loadedName)return notify('Generate terrain before exporting.',true);updateExportDimensions();updatePrintPalette();modelView.open();});
   // Colors are chosen on the design page; the geography page's hint opens it at the Colors card.
-  $('open-colors').addEventListener('click',()=>{
-    $('export-button').click();
-    if($('studio').open){$('studio-colors').scrollIntoView({block:'start'});document.querySelector('[data-palette].active')?.focus({preventScroll:true});}
-  });
-  silhouette=createSilhouette(silhouetteContext);
-  $('silhouette-button').addEventListener('click',()=>{if(!state.data)return notify('Generate terrain before designing a silhouette.',true);silhouette.open();});
   $('export-size').addEventListener('input',()=>{updateExportDimensions();rebuildRoute();});
   document.querySelectorAll('[data-palette]').forEach(button=>button.addEventListener('click',()=>{
     state.palette=button.dataset.palette;
@@ -1418,12 +1423,7 @@ async function init() {
       if(event.target.checked)api('/api/workspace').then(w=>{if(w.selection&&w.page!==pageId)followWorkspace(w);}).catch(()=>{});
     });
     if(config.pairing_pin){$('pairing-pin').hidden=false;$('pairing-pin').lastChild.textContent=` HEADSET PIN ${config.pairing_pin}`;}
-    profileModes=createProfileModes({get map(){return map;},get state(){return state;},api,units,number,
-      redraw:()=>drawProfile(),sliceVisible:()=>updateProfileMapLine(),changed:()=>silhouette?.modelChanged(),
-      // The frame was moved, resized, or switched source since the terrain was generated: picking points generates it first.
-      stale:()=>Boolean(state.selection)&&!state.selectionError&&(!state.data||!sameBounds(state.selection,state.data.bounds)||$('elevation-source').value!==state.data.source_id),
-      get generating(){return state.loading;},generate:()=>generateTerrain()});
-    profileModes.attach(map);
+    // No elevation profile on this page: it shows just the model.
     if(config.example_available) {
       state.loadedName=initialPlace.name;
       await loadSurface('example',true);

@@ -16,7 +16,6 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='studio.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='silhouette.css') }}">
   <script type="importmap">{"imports":{"three":"/static/vendor/three.module.js"}}</script>
   <script src="{{ url_for('static', filename='vendor/leaflet.js') }}" defer></script>
   <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
@@ -45,7 +44,7 @@
         <form id="place-form" class="coordinate-search" role="search"><label class="sr-only" for="place-search">Search for an address, city, US ZIP code, or latitude and longitude</label><input id="place-search" type="search" autocomplete="off" maxlength="200" placeholder="Address, city, or US ZIP code" aria-describedby="place-status coordinate-hint"><button type="submit" title="Go to this place" aria-label="Go to this place">↗</button></form>
         <span id="place-status" class="small-hint" role="status" hidden></span>
         <span id="coordinate-hint" class="small-hint">Pan or zoom the map beneath the fixed frame.</span>
-        <div id="route-block" class="route-block">
+        <div id="route-block" class="route-block" hidden>
           <div class="route-heading"><span class="route-title">GPS route</span><button id="route-upload" type="button" class="button secondary route-upload">Upload GPX ↑</button></div>
           <input id="route-file" type="file" accept=".gpx,application/gpx+xml" hidden>
           <span id="route-status" class="small-hint" role="status">Overlay an activity exported as GPX from Strava, Garmin Connect, or COROS.</span>
@@ -81,13 +80,13 @@
 
 
 
-      <section class="export-section"><div class="section-label"><h2>Design and export</h2></div><p>Print the whole landscape with markers, plaques, and holders, or cut one ridgeline as a flat silhouette.</p><div class="design-buttons"><button id="export-button" class="button secondary full">3D model design <span aria-hidden="true">→</span></button><button id="silhouette-button" class="button secondary full" title="The elevation profile slice as a flat piece to print, laser cut, or stand on a desk">Silhouette design <span aria-hidden="true">→</span></button></div><div class="export-formats">STL &nbsp; / &nbsp; 3MF &nbsp; / &nbsp; OBJ &nbsp; / &nbsp; GLB &nbsp; / &nbsp; SVG</div></section>
+      <section class="export-section"><div class="section-label"><h2>Export</h2></div><p>Download the model to 3D print: a standard model in one filament, or multicolor in up to four.</p><button id="export-button" class="button primary full">Export model <span aria-hidden="true">→</span></button><div class="export-formats">STL &nbsp; / &nbsp; 3MF</div></section>
       <div class="sidebar-foot">Real places. Real elevation.<br><a href="https://www.openstreetmap.org/fixthemap" target="_blank" rel="noopener">Report a map issue ↗</a></div>
     </aside>
 
     <div class="main-content">
       <button id="enter-vr" class="vr-launch" type="button" title="Explore the terrain and choose the cut in VR (Meta Quest)" hidden><span class="vr-launch-mark" aria-hidden="true">VR</span><span>Enter VR</span><small>Put on the headset, then press this in its browser</small></button>
-      <div class="workspace-heading"><div><span class="eyebrow">THE EXPLORER</span><h2 id="landscape-title">{{ presets[default_place].name }}</h2></div><span id="terrain-badge" class="data-badge"><i></i> REAL ELEVATION DATA</span></div>
+      <div class="workspace-heading"><div><span class="eyebrow">THE EXPLORER</span><h2 id="landscape-title">{{ presets[default_place].name }}</h2></div><div class="heading-tools"><div class="unit-toggle" role="group" aria-label="Elevation units"><button type="button" data-units="ft" aria-pressed="true" class="active" title="Show feet and miles">ft</button><button type="button" data-units="m" aria-pressed="false" title="Show meters and kilometers">m</button></div><span id="terrain-badge" class="data-badge"><i></i> REAL ELEVATION DATA</span></div></div>
       <div class="view-panes">
         <section class="map-panel panel" aria-label="Area selection">
           <div class="panel-heading"><div><h3>Find your frame</h3></div><label class="map-shape-control" for="selection-shape">Shape <select id="selection-shape"><option value="rectangle">Rectangle</option><option value="circle">Circle</option><option value="oval">Oval</option></select></label><button id="edit-bounds" class="text-button" title="Edit bounding coordinates">Coordinates ↗</button></div>
@@ -124,14 +123,13 @@
 
       <section class="stats-strip" aria-label="Terrain statistics"><div><span class="stat-label">LOWEST POINT</span><strong id="stat-low">—<small> ft</small></strong></div><div><span class="stat-label">HIGHEST POINT</span><strong id="stat-high">—<small> ft</small></strong></div><div><span class="stat-label">ELEVATION RANGE</span><strong id="stat-range">—<small> ft</small></strong></div><div><span class="stat-label">GRID SPACING</span><strong id="stat-spacing">—<small> ft</small></strong></div></section>
 
-      <section class="profile-panel panel"><div class="profile-heading"><div><h3>Follow the ridgeline</h3><span class="profile-caption">Elevation profile</span></div><div class="profile-options"><div class="unit-toggle" role="group" aria-label="Elevation units"><button type="button" data-units="ft" aria-pressed="true" class="active" title="Show feet and miles">ft</button><button type="button" data-units="m" aria-pressed="false" title="Show meters and kilometers">m</button></div></div></div><div class="profile-controls"><select id="profile-mode" class="profile-mode" aria-label="Profile type"><option value="slice">Straight slice</option><option value="ridgeline">Ridgeline · two points</option><option value="viewpoint">Viewpoint skyline</option><option value="viewridge">Viewpoint ridgeline</option></select><span id="profile-slice-controls" class="profile-mode-controls"><label for="profile-position">Cross-section position</label><input id="profile-position" type="range" min="0" max="100" step="1" value="50"><output id="profile-position-value">50%</output><select id="profile-direction" class="profile-direction" aria-label="Cross section direction"><option value="ew">West → East</option><option value="ns">North → South</option></select></span><span id="profile-ridge-controls" class="profile-mode-controls" hidden><button id="profile-pick-ridge" type="button" class="button secondary profile-pick" aria-pressed="false">Pick two points</button></span><span id="profile-view-controls" class="profile-mode-controls" hidden><button id="profile-pick-view" type="button" class="button secondary profile-pick" aria-pressed="false">Pick viewpoint</button><label class="profile-inline" for="view-bearing">Facing</label><input id="view-bearing" type="range" min="0" max="359" step="1" value="90"><output id="view-bearing-value">90° E</output><label class="profile-inline" for="view-fov">View</label><select id="view-fov" class="profile-direction"><option value="60">60°</option><option value="90">90°</option><option value="120" selected>120°</option><option value="180">180°</option><option value="360">360°</option></select><label class="profile-inline" for="view-eye">Eye</label><select id="view-eye" class="profile-direction"><option value="2" selected>Standing</option><option value="15">Tower</option><option value="100">Hilltop</option><option value="400">Aerial</option></select><label class="profile-inline" for="view-radius">Beyond</label><select id="view-radius" class="profile-direction" title="Leave out terrain nearer than this, as if the foreground were cleared"><option value="0" selected>Everything</option><option value="250">250 m</option><option value="500">500 m</option><option value="1000">1 km</option><option value="2000">2 km</option><option value="5000">5 km</option><option value="10000">10 km</option></select><label class="profile-inline" for="view-far">Out to</label><select id="view-far" class="profile-direction" title="Cut off terrain farther than this, so the skyline and the layered designs end there"><option value="0" selected>Horizon</option><option value="1000">1 km</option><option value="2000">2 km</option><option value="5000">5 km</option><option value="10000">10 km</option><option value="20000">20 km</option><option value="50000">50 km</option></select><label class="profile-inline" for="view-bands">Layers</label><select id="view-bands" class="profile-direction"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option></select><label id="view-ridges-label" class="profile-inline profile-check" for="view-ridges"><input id="view-ridges" type="checkbox">Detect ridges</label></span></div><span id="profile-mode-status" class="small-hint profile-mode-status" role="status" hidden></span><div class="profile-canvas-wrap"><canvas id="profile" aria-label="Elevation cross section in feet above sea level"></canvas><span id="profile-tooltip" hidden></span></div><div class="profile-foot"><span id="profile-units-note">Heights in feet above sea level</span><span id="profile-distance">— mi across</span></div></section>
+      <section class="profile-panel panel" hidden><div class="profile-heading"><div><h3>Follow the ridgeline</h3><span class="profile-caption">Elevation profile</span></div><div class="profile-options"></div></div><div class="profile-controls"><select id="profile-mode" class="profile-mode" aria-label="Profile type"><option value="slice">Straight slice</option><option value="ridgeline">Ridgeline · two points</option><option value="viewpoint">Viewpoint skyline</option><option value="viewridge">Viewpoint ridgeline</option></select><span id="profile-slice-controls" class="profile-mode-controls"><label for="profile-position">Cross-section position</label><input id="profile-position" type="range" min="0" max="100" step="1" value="50"><output id="profile-position-value">50%</output><select id="profile-direction" class="profile-direction" aria-label="Cross section direction"><option value="ew">West → East</option><option value="ns">North → South</option></select></span><span id="profile-ridge-controls" class="profile-mode-controls" hidden><button id="profile-pick-ridge" type="button" class="button secondary profile-pick" aria-pressed="false">Pick two points</button></span><span id="profile-view-controls" class="profile-mode-controls" hidden><button id="profile-pick-view" type="button" class="button secondary profile-pick" aria-pressed="false">Pick viewpoint</button><label class="profile-inline" for="view-bearing">Facing</label><input id="view-bearing" type="range" min="0" max="359" step="1" value="90"><output id="view-bearing-value">90° E</output><label class="profile-inline" for="view-fov">View</label><select id="view-fov" class="profile-direction"><option value="60">60°</option><option value="90">90°</option><option value="120" selected>120°</option><option value="180">180°</option><option value="360">360°</option></select><label class="profile-inline" for="view-eye">Eye</label><select id="view-eye" class="profile-direction"><option value="2" selected>Standing</option><option value="15">Tower</option><option value="100">Hilltop</option><option value="400">Aerial</option></select><label class="profile-inline" for="view-radius">Beyond</label><select id="view-radius" class="profile-direction" title="Leave out terrain nearer than this, as if the foreground were cleared"><option value="0" selected>Everything</option><option value="250">250 m</option><option value="500">500 m</option><option value="1000">1 km</option><option value="2000">2 km</option><option value="5000">5 km</option><option value="10000">10 km</option></select><label class="profile-inline" for="view-far">Out to</label><select id="view-far" class="profile-direction" title="Cut off terrain farther than this, so the skyline and the layered designs end there"><option value="0" selected>Horizon</option><option value="1000">1 km</option><option value="2000">2 km</option><option value="5000">5 km</option><option value="10000">10 km</option><option value="20000">20 km</option><option value="50000">50 km</option></select><label class="profile-inline" for="view-bands">Layers</label><select id="view-bands" class="profile-direction"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option></select><label id="view-ridges-label" class="profile-inline profile-check" for="view-ridges"><input id="view-ridges" type="checkbox">Detect ridges</label></span></div><span id="profile-mode-status" class="small-hint profile-mode-status" role="status" hidden></span><div class="profile-canvas-wrap"><canvas id="profile" aria-label="Elevation cross section in feet above sea level"></canvas><span id="profile-tooltip" hidden></span></div><div class="profile-foot"><span id="profile-units-note">Heights in feet above sea level</span><span id="profile-distance">— mi across</span></div></section>
       <footer class="data-footer"><span>Elevation: <a id="elevation-credit" href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Mapzen / Tilezen · AWS Open Data ↗</a></span><a href="/api/attribution" target="_blank" rel="noopener">Source credits & licenses ↗</a><span>Terrain detail varies by region.</span></footer>
     </div>
     <aside id="style-sidebar" class="style-sidebar editing" aria-label="Map layers">
       <section class="style-panel">
         <div class="style-panel-heading"><div class="section-label"><h2>Map layers</h2></div></div>
         <div id="style-editor" class="style-editor">
-        <p class="colors-elsewhere small-hint">Colors are chosen on the design pages. <button id="open-colors" type="button" class="text-button">Open Colors →</button></p>
         <fieldset class="feature-controls"><legend>Map features</legend>
           <div class="feature-block"><div class="feature-option"><label for="feature-roads"><input id="feature-roads" type="checkbox" data-feature="roads" checked>Roads</label><span id="feature-count-roads" class="feature-count"></span></div><div class="feature-detail"><div class="slider-label"><label for="detail-roads">Roads detail</label><output id="detail-roads-value">100%</output></div><input id="detail-roads" type="range" min="0" max="100" step="1" value="100" data-feature-detail="roads" aria-label="Roads level of detail"><div class="range-endpoints"><span>Major roads</span><span>All roads</span></div></div></div>
           <div class="feature-option"><label for="feature-railways"><input id="feature-railways" type="checkbox" data-feature="railways">Train tracks</label><span id="feature-count-railways" class="feature-count"></span></div>
@@ -148,7 +146,7 @@
           </div></div>
           <span id="map-feature-image-note" class="small-hint" hidden>The Map image already contains roads and boundaries. These checkboxes control added features; Relief and Print show only the selected feature layers.</span>
           <span id="feature-status" class="small-hint" role="status">Choose layers to show on the current terrain.</span><button id="feature-retry" type="button" class="text-button" hidden>Retry map features ↗</button>
-          <span class="small-hint feature-source">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a><span id="water-credit"> · Water: <a href="https://www.usgs.gov/3d-hydrography-program" target="_blank" rel="noopener">USGS 3DHP</a></span> · 3MF, GLB & preview images include layers.</span>
+          <span class="small-hint feature-source">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a><span id="water-credit"> · Water: <a href="https://www.usgs.gov/3d-hydrography-program" target="_blank" rel="noopener">USGS 3DHP</a></span> · 3MF and preview images include layers.</span>
         </fieldset>
         <button id="save-style-defaults" type="button" class="button secondary full">Save as default</button><p id="style-defaults-status" class="small-hint" role="status">Save these selections as defaults for this browser.</p>
         </div>
@@ -285,217 +283,30 @@
     </div>
   </dialog>
 
-  <dialog id="silhouette" aria-labelledby="silhouette-title">
-    <dialog id="text-editor" class="text-editor" aria-labelledby="text-editor-title">
-      <form method="dialog" class="text-editor-form">
-        <header class="text-editor-head"><h3 id="text-editor-title">Text</h3><span id="text-editor-size" class="text-editor-size"></span></header>
-        <div class="text-editor-preview"><svg id="text-editor-svg" role="img" aria-label="Preview of the text block, to scale"></svg><span id="text-editor-status" class="small-hint" role="status"></span></div>
-        <div class="text-editor-columns" aria-hidden="true"><span>Text</span><span>Size (mm)</span><span>Style</span><span>Spacing (%)</span><span></span></div>
-        <ol id="text-editor-lines" class="text-editor-lines" aria-label="Lines, top to bottom"></ol>
-        <button id="text-editor-add" type="button" class="text-button text-editor-add">+ Add line</button>
-        <div class="text-editor-block">
-          <div class="view-tabs text-editor-align" role="group" aria-label="Line alignment"><button type="button" data-text-align="left" aria-pressed="false">Left</button><button type="button" data-text-align="center" aria-pressed="false">Center</button><button type="button" data-text-align="right" aria-pressed="false">Right</button></div>
-          <label for="text-editor-spacing">Line spacing (×) <input id="text-editor-spacing" type="number" min="1" max="3" step="0.1" value="1.6"></label>
-          <label for="text-editor-style">Style <select id="text-editor-style"><option value="engrave">Engraved</option><option value="emboss">Raised (emboss)</option><option value="stencil">Cut through (stencil)</option></select></label>
-          <label for="text-editor-depth">Depth (mm) <input id="text-editor-depth" type="number" min="0.2" max="5" step="0.1" value="0.8"></label>
-          <label for="text-editor-color">Color <input id="text-editor-color" type="color" value="#f0ead6"></label>
+  <dialog id="model-view" aria-labelledby="model-view-title">
+    <div class="model-view-bar">
+      <button id="model-view-back" type="button" class="button secondary">◀ Map selection</button>
+      <div class="model-view-heading"><span class="eyebrow">MODEL VIEW</span><h2 id="model-view-title">Your model</h2><span id="model-view-source" class="small-hint"></span></div>
+    </div>
+    <div class="model-view-body">
+      <div id="model-view-stage"></div>
+      <aside class="model-view-export">
+        <h3>Export to 3D print</h3>
+        <label for="model-view-size">Model size (millimeters, longest side)</label><input id="model-view-size" type="number" min="10" max="2000" step="1" value="180">
+        <div id="model-view-dimensions" class="small-hint"></div>
+        <div class="export-choices">
+          <button type="button" data-model-export="stl"><strong>Standard 3D model <span>↓</span></strong><span>STL · one solid piece in a single filament, for any printer</span></button>
+          <button type="button" data-model-export="3mf"><strong>Multicolor <span>↓</span></strong><span id="model-view-3mf-hint">3MF · the Print palette's mapped colors as up to four filament parts</span></button>
         </div>
-        <p class="small-hint">Size is the height of capital letters; spacing adds that share of it between letters (negative tightens). Alignment lines the rows up inside the block; drag the block on the piece in the front view.</p>
-        <menu class="text-editor-actions"><button type="button" id="text-editor-cancel" class="button secondary">Cancel</button><button type="button" id="text-editor-ok" class="button primary">OK</button></menu>
-      </form>
-    </dialog>
-    <header class="studio-bar">
-      <button id="silhouette-back" type="button" class="button secondary studio-back" aria-label="Back to the geography selection page"><span aria-hidden="true">←</span> Geography selection</button>
-      <div class="studio-heading"><span class="eyebrow">STEP 2 · SILHOUETTE DESIGN</span><h2 id="silhouette-title">Your landscape</h2><span id="silhouette-dimensions" class="studio-dimensions"></span></div>
-    </header>
-    <div class="studio-body">
-      <aside class="studio-left" aria-label="Design preset, slice, and shape">
-        <section class="studio-card silhouette-start"><h3>Start from</h3>
-          <script id="silhouette-presets" type="application/json">{{ silhouette_presets|tojson }}</script>
-          <div id="silhouette-preset-list" class="silhouette-presets" role="radiogroup" aria-label="Design preset"></div>
-          <p id="silhouette-preset-summary" class="small-hint"></p>
-          <figure id="silhouette-turntable" class="design-preview" aria-live="polite"><div id="silhouette-turntable-view" class="design-preview-view"><span class="design-preview-busy" aria-hidden="true"></span></div>
-            <figcaption><strong id="silhouette-turntable-title">Preview</strong><span id="silhouette-turntable-size">Point at a design to preview it.</span></figcaption></figure>
-        </section>
-        <section id="silhouette-fit-card" class="studio-card silhouette-fit" hidden><h3 id="silhouette-fit-title">Preset settings</h3>
-          <div data-fit-block="lamp" hidden>
-            <span class="silhouette-subhead">Lamp base slot</span>
-            <label class="studio-inline" for="silhouette-slot-width">Slot width (mm) <input id="silhouette-slot-width" type="number" min="1" max="20" step="0.1" value="4"></label>
-            <label class="studio-inline" for="silhouette-slot-length">Slot length (mm) <input id="silhouette-slot-length" type="number" min="20" max="400" step="1" value="160"></label>
-            <label class="studio-inline" for="silhouette-slot-depth">Slot depth (mm) <input id="silhouette-slot-depth" type="number" min="2" max="30" step="0.5" value="8"></label>
-            <label class="studio-inline" for="silhouette-slot-clearance">Clearance (mm) <input id="silhouette-slot-clearance" type="number" min="0" max="1" step="0.05" value="0.2"></label>
-            <span id="silhouette-tab-hint" class="small-hint">Measure your lamp base's slot. The tab is the slot less the clearance.</span>
-          </div>
-          <div data-fit-block="box" hidden>
-            <span class="silhouette-subhead">Shadow box inside</span>
-            <label class="studio-inline" for="silhouette-box-width">Inner width (mm) <input id="silhouette-box-width" type="number" min="41" max="500" step="1" value="200"></label>
-            <label class="studio-inline" for="silhouette-box-height">Inner height (mm) <input id="silhouette-box-height" type="number" min="20" max="400" step="1" value="150"></label>
-            <label class="studio-inline" for="silhouette-box-depth">Inner depth (mm) <input id="silhouette-box-depth" type="number" min="8" max="200" step="1" value="40"></label>
-            <span class="small-hint">Measure inside the frame, from the glass to the back. Pieces are the inner width less 1 mm; two spacer combs hold them.</span>
-          </div>
-          <div data-fit-block="print" hidden>
-            <span class="silhouette-subhead">Printing</span>
-            <label class="studio-inline" for="silhouette-min-feature">Minimum feature (mm) <input id="silhouette-min-feature" type="number" min="0" max="3" step="0.1" value="1"></label>
-            <label class="studio-inline" for="silhouette-comb-clearance">Comb slot clearance (mm) <input id="silhouette-comb-clearance" type="number" min="0" max="1" step="0.05" value="0.3"></label>
-            <span class="small-hint">Ridge spikes narrower than the minimum feature are trimmed so they print and don't snap (0 keeps everything). The clearance is added to each panel's thickness for its comb slot: raise it if panels won't go in, lower it if they wobble. The lamp's comb base prints slots down, with chamfered mouths against elephant's foot.</span>
-          </div>
-          <div data-fit-block="layers" hidden>
-            <span class="silhouette-subhead">Layers</span>
-            <label class="studio-inline" for="silhouette-layer-count"><span id="silhouette-layer-count-label">Layers</span> <input id="silhouette-layer-count" type="number" min="2" max="7" step="1" value="3"></label>
-            <label for="silhouette-layer-positions">Slice positions, front to back (%)</label><input id="silhouette-layer-positions" autocomplete="off" spellcheck="false">
-            <div id="silhouette-step-block"><label class="studio-inline" for="silhouette-layer-step">Base step (mm) <input id="silhouette-layer-step" type="number" min="0" max="20" step="0.5" value="6"></label></div>
-            <div id="silhouette-spacing-block"><label class="studio-inline" for="silhouette-layer-spacing">Slot spacing (mm) <input id="silhouette-layer-spacing" type="number" min="2" max="30" step="0.5" value="6"></label></div>
-            <div id="silhouette-layer-swatches" class="silhouette-swatches" aria-hidden="true"></div>
-            <span id="silhouette-layer-hint" class="small-hint">Each layer's base is a step higher than the one in front, so every ridge shows. The front layer is the frame's near side.</span>
-            <span class="silhouette-subhead">Thickness</span>
-            <label class="studio-check" for="silhouette-thickness-distance"><input id="silhouette-thickness-distance" type="checkbox"> Thicker when closer</label>
-            <label class="studio-inline" for="silhouette-thickness-near">Nearest (mm) <input id="silhouette-thickness-near" type="number" min="1.2" max="30" step="0.1" value="3"></label>
-            <label class="studio-inline" for="silhouette-thickness-far">Farthest (mm) <input id="silhouette-thickness-far" type="number" min="1.2" max="30" step="0.1" value="1.5"></label>
-            <span id="silhouette-thickness-hint" class="small-hint"></span>
-            <ul id="silhouette-layer-list" class="silhouette-layer-list" aria-label="Layers, front to back"></ul>
-            <label class="studio-check" for="silhouette-clouds"><input id="silhouette-clouds" type="checkbox"> Puffy clouds behind the terrain</label>
-            <label class="studio-inline" for="silhouette-cloud-color">Cloud color <input id="silhouette-cloud-color" type="color" value="#f0ead6"></label>
-            <span id="silhouette-cloud-hint" class="small-hint">Adds a separate cartoon-cloud panel and a rear slot in the base.</span>
-            <figure id="silhouette-layer-line" class="silhouette-layer-line" aria-label="Terrain layers on a number line">
-              <strong>Terrain regions</strong>
-              <svg id="silhouette-layer-axis" role="img" aria-label="Layer positions and shaded terrain regions"></svg>
-              <figcaption id="silhouette-layer-axis-hint" class="small-hint">Generate the layers to see their positions.</figcaption>
-              <span id="silhouette-cloud-key" hidden></span>
-            </figure>
-          </div>
-          <div data-fit-block="buildings" hidden>
-            <label class="studio-check" for="silhouette-buildings"><input id="silhouette-buildings" type="checkbox"> Include buildings along the slice</label>
-            <label class="studio-inline" for="silhouette-corridor">Corridor width (m) <input id="silhouette-corridor" type="number" min="5" max="200" step="5" value="30"></label>
-            <span class="small-hint">The tallest mapped building within the corridor raises the profile. Needs the Buildings map layer.</span>
-          </div>
-          <div data-fit-block="route" hidden><span id="silhouette-route-status" class="small-hint silhouette-route-status"></span></div>
-          <div data-fit-block="race" hidden>
-            <div class="view-tabs silhouette-race-kind" role="group" aria-label="Race kind"><button type="button" data-race-kind="running" aria-pressed="true" class="active">Running</button><button type="button" data-race-kind="cycling" aria-pressed="false">Cycling</button></div>
-            <label for="silhouette-finish-time">Finish time</label><input id="silhouette-finish-time" maxlength="20" autocomplete="off" placeholder="e.g. 3:42:15">
-          </div>
-          <div data-fit-block="ticks" hidden>
-            <label class="studio-check" for="silhouette-ticks"><input id="silhouette-ticks" type="checkbox"> Distance ticks along the base</label>
-            <label class="studio-inline" for="silhouette-tick-every"><span>Every (<span id="silhouette-tick-unit">mi</span>)</span> <input id="silhouette-tick-every" type="number" min="0.1" max="100" step="0.5" value="1"></label>
-            <label class="studio-check" for="silhouette-start-finish"><input id="silhouette-start-finish" type="checkbox"> START and FINISH at the ends</label>
-          </div>
-          <div data-fit-block="pegs" hidden>
-            <span class="silhouette-subhead">Medal pegs</span>
-            <label class="studio-inline" for="silhouette-peg-count">Pegs <input id="silhouette-peg-count" type="number" min="0" max="8" step="1" value="3"></label>
-            <label class="studio-inline" for="silhouette-peg-diameter">Diameter (mm) <input id="silhouette-peg-diameter" type="number" min="3" max="12" step="0.5" value="6"></label>
-            <label class="studio-inline" for="silhouette-peg-length">Length (mm) <input id="silhouette-peg-length" type="number" min="5" max="40" step="1" value="20"></label>
-          </div>
-          <div data-fit-block="pin" hidden>
-            <label class="studio-check" for="silhouette-pin"><input id="silhouette-pin" type="checkbox"> Summit pin hole for a nail marker</label>
-            <label class="studio-inline" for="silhouette-pin-diameter">Hole (mm) <input id="silhouette-pin-diameter" type="number" min="1" max="4" step="0.1" value="1.8"></label>
-            <label class="studio-inline" for="silhouette-pin-depth">Depth (mm) <input id="silhouette-pin-depth" type="number" min="3" max="30" step="1" value="10"></label>
-          </div>
-          <div data-fit-block="photo" hidden>
-            <label class="studio-check" for="silhouette-photo"><input id="silhouette-photo" type="checkbox"> Photo or map slot behind</label>
-            <label class="studio-inline" for="silhouette-photo-gap">Slot (mm) <input id="silhouette-photo-gap" type="number" min="0.3" max="5" step="0.1" value="1"></label>
-          </div>
-          <div data-fit-block="led" hidden>
-            <label class="studio-check" for="silhouette-led"><input id="silhouette-led" type="checkbox"> LED strip channel in the combs</label>
-            <label class="studio-inline" for="silhouette-led-width">Width (mm) <input id="silhouette-led-width" type="number" min="2" max="20" step="0.5" value="5"></label>
-            <label class="studio-inline" for="silhouette-led-depth">Depth (mm) <input id="silhouette-led-depth" type="number" min="0.5" max="5" step="0.5" value="2"></label>
-          </div>
-          <p id="silhouette-preset-hint" class="small-hint silhouette-print-hint"></p>
-        </section>
-        <section class="studio-card"><h3>Slice</h3>
-          <label class="studio-inline" for="silhouette-direction">Direction <select id="silhouette-direction"><option value="ew">West → East</option><option value="ns">North → South</option></select></label>
-          <div class="silhouette-range"><label for="silhouette-position">Position across the frame</label><output id="silhouette-position-value">50%</output></div>
-          <input id="silhouette-position" type="range" min="0" max="100" step="1" value="50">
-          <div class="silhouette-range"><label for="silhouette-trim-start">Print from</label><output id="silhouette-trim-start-value">0%</output></div>
-          <input id="silhouette-trim-start" type="range" min="0" max="95" step="1" value="0">
-          <div class="silhouette-range"><label for="silhouette-trim-end">Print to</label><output id="silhouette-trim-end-value">100%</output></div>
-          <input id="silhouette-trim-end" type="range" min="5" max="100" step="1" value="100">
-          <span id="silhouette-slice-note" class="small-hint">Shares its slice with the geography selection page's elevation profile.</span>
-        </section>
-        <section class="studio-card"><h3>Shape</h3>
-          <label class="studio-inline" for="silhouette-width">Width (mm) <input id="silhouette-width" type="number" min="40" max="400" step="1" value="180"></label>
-          <label class="studio-inline" for="silhouette-vertical">Vertical scale (×) <input id="silhouette-vertical" type="number" min="0.5" max="10" step="0.1" value="2"></label>
-          <label class="studio-inline" for="silhouette-base">Base height (mm) <input id="silhouette-base" type="number" min="2" max="40" step="0.5" value="8"></label>
-          <label class="studio-inline" for="silhouette-thickness">Thickness (mm) <input id="silhouette-thickness" type="number" min="1.2" max="30" step="0.2" value="4"></label>
-          <div class="silhouette-range"><label for="silhouette-smoothing">Smoothing</label><output id="silhouette-smoothing-value">0%</output></div>
-          <input id="silhouette-smoothing" type="range" min="0" max="100" step="5" value="0">
-          <label class="studio-inline" for="silhouette-source">Heights <select id="silhouette-source"><option value="true">True elevation</option><option value="shaped">Model's elevation profile</option><option value="route">Uploaded route</option><option value="ridgeline">Ridgeline (geography page)</option><option value="viewpoint">Viewpoint skyline (geography page)</option></select></label>
-          <label class="studio-check" for="silhouette-mirror"><input id="silhouette-mirror" type="checkbox"> Mirror (flip left and right)</label>
-          <span class="small-hint">The vertical scale multiplies true proportions at this width; 1× is the land's real shape.</span>
-        </section>
-      </aside>
-      <section class="studio-center" aria-label="Silhouette preview">
-        <div class="studio-toolbar">
-          <div class="view-tabs studio-views" role="group" aria-label="Silhouette view"><button type="button" data-silhouette-view="front" aria-pressed="true" class="active">Front</button><button type="button" data-silhouette-view="3d" aria-pressed="false">3D</button></div>
-          <span id="silhouette-slice-label" class="silhouette-slice-label"></span>
-        </div>
-        <div class="silhouette-ridge-tools" aria-label="Ridgeline editing tools">
-          <button id="silhouette-ridge-edit" type="button" class="button secondary" aria-pressed="false">Edit ridgelines</button>
-          <div id="silhouette-ridge-actions" hidden>
-            <button id="silhouette-ridge-delete" type="button" class="button secondary" disabled>Delete selected</button>
-            <button id="silhouette-ridge-undo" type="button" class="button secondary" disabled>Undo</button>
-            <button id="silhouette-ridge-redo" type="button" class="button secondary" disabled>Redo</button>
-            <button id="silhouette-ridge-reset" type="button" class="button secondary" disabled>Reset ridgelines</button>
-            <label for="silhouette-ridge-radius">Pull width <input id="silhouette-ridge-radius" type="range" min="2" max="35" value="12"><output id="silhouette-ridge-radius-value">12%</output></label>
-          </div>
-          <div id="silhouette-ridge-list" role="group" aria-label="Select ridgelines" hidden></div>
-          <span id="silhouette-ridge-hint" class="small-hint" role="status">Edit ridgelines in the front view. Changes also apply to exported models.</span>
-        </div>
-        <div id="silhouette-view" class="studio-view silhouette-view">
-          <svg id="silhouette-svg" role="img" aria-label="The silhouette piece, front view, to scale"></svg>
-          <div id="silhouette-3d" class="silhouette-3d" hidden></div>
-          <div id="silhouette-checks" class="studio-checks" aria-live="polite"><strong>Checks</strong><ul id="silhouette-check-list"><li class="info">Loading the slice…</li></ul></div>
-          <div class="studio-view-hint" id="silhouette-view-hint">Front view to scale · the grid is 10 mm</div>
-        </div>
-      </section>
-      <aside class="studio-right" aria-label="Text, mounting, and export">
-        <section class="studio-card"><h3>Text</h3>
-          <div class="silhouette-text-head"><label for="silhouette-text">Caption on the base (up to 3 lines)</label><button id="silhouette-text-edit" type="button" class="button secondary">Edit text…</button></div>
-          <textarea id="silhouette-text" rows="3" maxlength="400" autocomplete="off" spellcheck="false" placeholder="No text"></textarea>
-          <div class="silhouette-text-move"><span id="silhouette-text-format" class="small-hint"></span><button id="silhouette-text-plain" type="button" class="text-button" hidden>Plain text</button></div>
-          <label class="studio-inline" for="silhouette-text-style">Style <select id="silhouette-text-style"><option value="engrave">Engraved</option><option value="emboss">Raised (emboss)</option><option value="stencil">Cut through (stencil)</option></select></label>
-          <label class="studio-inline" for="silhouette-text-size">Size (mm, capitals) <input id="silhouette-text-size" type="number" min="2" max="30" step="0.5" value="5"></label>
-          <label class="studio-inline" for="silhouette-text-depth">Depth (mm) <input id="silhouette-text-depth" type="number" min="0.2" max="5" step="0.1" value="0.8"></label>
-          <label class="studio-inline" for="silhouette-text-align">Position <select id="silhouette-text-align"><option value="left">Left</option><option value="center" selected>Center</option><option value="right">Right</option></select></label>
-          <div class="silhouette-text-move"><span class="small-hint">Or drag the text's box in the front view (arrow keys nudge it).</span><button id="silhouette-text-reset" type="button" class="text-button" disabled>Reset text position</button></div>
-          <label class="studio-inline" for="silhouette-text-color">Text color (3MF) <input id="silhouette-text-color" type="color" value="#f0ead6"></label>
-        </section>
-        <section class="studio-card"><h3>Mounting</h3>
-          <label class="studio-inline" for="silhouette-mount">Mount <select id="silhouette-mount"><option value="none">None</option><option value="stand">Desk stand (two feet)</option><option value="holes">Two wall holes</option><option value="keyholes">Two keyholes</option></select></label>
-          <div id="silhouette-hole-block" hidden><label class="studio-inline" for="silhouette-hole">Hole diameter (mm) <input id="silhouette-hole" type="number" min="2" max="10" step="0.5" value="4"></label></div>
-          <span id="silhouette-mount-hint" class="small-hint"></span>
-        </section>
-        <section class="studio-card studio-export"><h3>Export</h3>
-          <label class="studio-inline" for="silhouette-body-color">Body color (3MF) <input id="silhouette-body-color" type="color" value="#234e40"></label>
-          <div class="silhouette-colors" role="group" aria-labelledby="silhouette-colors-title">
-            <span id="silhouette-colors-title" class="silhouette-subhead">Colors</span>
-            <label class="studio-check" for="silhouette-color-distance"><input id="silhouette-color-distance" type="checkbox"> Color by distance</label>
-            <div class="silhouette-distance-colors">
-              <label for="silhouette-distance-color-1">Nearest <input id="silhouette-distance-color-1" type="color" value="#234e40"></label>
-              <label for="silhouette-distance-color-2">2 <input id="silhouette-distance-color-2" type="color" value="#678272"></label>
-              <label for="silhouette-distance-color-3">3 <input id="silhouette-distance-color-3" type="color" value="#acb6a4"></label>
-              <label for="silhouette-distance-color-4">Farthest <input id="silhouette-distance-color-4" type="color" value="#f0ead6"></label>
-            </div>
-            <div id="silhouette-pieces-block" hidden><label class="studio-inline" for="silhouette-pieces">Pieces <select id="silhouette-pieces"><option value="layers">Separate layers</option><option value="zones">One piece, color zones</option></select></label></div>
-            <span id="silhouette-filaments" class="silhouette-filaments" aria-live="polite"></span>
-            <span id="silhouette-colors-hint" class="small-hint"></span>
-          </div>
-          <div id="silhouette-parts" class="silhouette-parts" aria-live="polite"></div>
-          <div class="export-choices silhouette-exports">
-            <button type="button" data-silhouette-export="stl"><strong>STL <span>↓</span></strong><span id="silhouette-stl-note">One solid, lying flat</span></button>
-            <button type="button" data-silhouette-export="3mf"><strong>3MF <span>↓</span></strong><span>Every part in color, laid flat</span></button>
-            <button type="button" data-silhouette-export="svg"><strong>SVG <span>↓</span></strong><span>Outlines in mm for laser or vinyl</span></button>
-            <button type="button" data-silhouette-export="json"><strong>Settings <span>↓</span></strong><span>These choices as JSON</span></button>
-            <button type="button" id="silhouette-cylinder-lamp" title="Open the layers in CylinderLamp, wrapped around a round lithophane shade: the sky thinnest, the nearest ridge thickest"><strong>Cylinder lamp <span>↗</span></strong><span>Layers wrapped around a round shade</span></button>
-          </div>
-          <div id="silhouette-status" class="silhouette-status" role="status"></div>
-          <a class="text-button silhouette-credits" href="/api/attribution?download=1" download="terrain-credits.txt">Source credits (TXT) ↓</a>
-        </section>
+        <progress id="model-view-progress" max="1" value="0" hidden></progress>
+        <div id="model-view-status" role="status"></div>
       </aside>
     </div>
   </dialog>
 
   <dialog id="bounds-dialog"><form id="bounds-form"><div class="dialog-header"><div><span class="eyebrow">FRAME YOUR LANDSCAPE</span><h2>Bounding coordinates</h2></div><button type="button" id="close-bounds" class="icon-button" aria-label="Close coordinates dialog">×</button></div><div class="bounds-fields"><label>North<input id="bound-north" type="number" step="any" min="-85.0511" max="85.0511" required></label><label>West<input id="bound-west" type="number" step="any" min="-180" max="180" required></label><label>East<input id="bound-east" type="number" step="any" min="-180" max="180" required></label><label>South<input id="bound-south" type="number" step="any" min="-85.0511" max="85.0511" required></label></div><label class="space-top">Rotation (clockwise degrees)<input id="bound-rotation" type="number" min="-180" max="180" step="any" value="0" required></label><p class="small-hint">Coordinates describe the rectangle before rotation. Each side must be between 50 meters and 250 kilometers. Selections cannot cross the date line.</p><button type="submit" class="button primary full">Use this area ↗</button></form></dialog>
 
-  <dialog id="help-dialog"><form method="dialog" class="dialog-header"><h2>A world of possibilities.</h2><button class="icon-button" aria-label="Close help dialog">×</button></form><ol><li><strong>Frame a place.</strong> The selection frame stays fixed on screen. Pan the map beneath it, and use the +/− buttons or mouse wheel to zoom. Drag the right edge horizontally, bottom edge vertically to resize. Drag the lower-right corner to rotate the box around its center. The 1:1, 3:4, and 16:9 buttons snap its width-to-height ratio while keeping its center and rotation. Click a selected ratio again to swap portrait and landscape (3:4 ↔ 4:3 or 16:9 ↔ 9:16). Use the two-point button to click two locations: the box centers on their midpoint and rotates its horizontal axis through them, preserving its size. Presets, the address and city search, and US ZIP codes (five digits or ZIP+4) also work; a typed latitude, longitude pair in the search box jumps straight there.</li><li><strong>Generate the landscape.</strong> Python fetches real elevation data from the source you choose (Mapzen worldwide, or USGS 3DEP lidar-derived data for the United States) and samples a terrain grid. Smaller areas reveal more detail; a denser grid cannot add detail absent from the source.</li><li><strong>Make it yours.</strong> Raise the elevation multiplier, explore map, wireframe, contour, and elevation views, and check the map layers you want. Colors live on the design pages: the 3D model design page's Colors card holds the surface palette, the Print palette's mapped colors, each map feature's color, and the GPS route color. Map layers: roads, train tracks, boundaries, water, and trails follow the terrain surface. Check Boundaries to choose borders, city boundaries, or park boundaries, and Trails to choose the AT (Appalachian Trail) or other mapped trails. Buildings use OSM footprints and mapped heights or levels; missing heights default to an illustrative six meters. With Buildings checked, 3D buildings adds mapped building parts, base heights, and roof shapes. These layers are included in 3MF, GLB models, and preview images.</li><li><strong>Follow a section.</strong> Move the profile slider to inspect any slice along the frame's axes. The chart always shows unexaggerated heights above sea level.</li><li><strong>Export.</strong> Download a closed STL or OBJ model, a colored GLB, or the original elevation grid.</li></ol><p>The starter {{ presets[default_place].name }} model uses bundled real elevation data. New terrain, place search, ZIP lookup, map tiles, and feature layers need an internet connection. Features reflect OpenStreetMap coverage; administrative border definitions vary by country. Feature layers support areas up to 50 km per side. Terrain starts as a ground surface. Enable Buildings for approximate structures from OSM; trees are not modeled. Place search uses OpenStreetMap data through Nominatim. ZIP locations come from Zippopotam.us / GeoNames.</p><p class="small-hint">Reset frame restores its default size and zero rotation. The two-point button toggles alignment mode. Escape cancels it without changing the frame; selecting a preset or resetting the frame also exits this mode. You can also focus a resize handle and use arrow keys; hold Shift for larger steps. The corner rotates in 1° steps, or 15° with Shift; Home resets its angle. Hold Shift while dragging the corner to snap to 15°. Escape cancels an active resize or rotation.</p><p class="small-hint">The north indicator accounts for selection rotation. Profiles follow the box’s edges; orbiting changes the model’s apparent direction. Base thickness is a percentage of the longest horizontal side.</p></dialog>
+  <dialog id="help-dialog"><form method="dialog" class="dialog-header"><h2>A world of possibilities.</h2><button class="icon-button" aria-label="Close help dialog">×</button></form><ol><li><strong>Frame a place.</strong> The selection frame stays fixed on screen. Pan the map beneath it, and use the +/− buttons or mouse wheel to zoom. Drag the right edge horizontally, bottom edge vertically to resize. Drag the lower-right corner to rotate the box around its center. The 1:1, 3:4, and 16:9 buttons snap its width-to-height ratio while keeping its center and rotation. Click a selected ratio again to swap portrait and landscape (3:4 ↔ 4:3 or 16:9 ↔ 9:16). Use the two-point button to click two locations: the box centers on their midpoint and rotates its horizontal axis through them, preserving its size. Presets, the address and city search, and US ZIP codes (five digits or ZIP+4) also work; a typed latitude, longitude pair in the search box jumps straight there.</li><li><strong>Generate the landscape.</strong> Python fetches real elevation data from the source you choose (Mapzen worldwide, or USGS 3DEP lidar-derived data for the United States) and samples a terrain grid. Smaller areas reveal more detail; a denser grid cannot add detail absent from the source.</li><li><strong>Make it yours.</strong> Raise the elevation multiplier, explore map, wireframe, contour, and elevation views, and check the map layers you want on the model. Map layers: roads, train tracks, boundaries, water, and trails follow the terrain surface. Check Boundaries to choose borders, city boundaries, or park boundaries, and Trails to choose the AT (Appalachian Trail) or other mapped trails. Buildings use OSM footprints and mapped heights or levels; missing heights default to an illustrative six meters. With Buildings checked, 3D buildings adds mapped building parts, base heights, and roof shapes.</li><li><strong>Export.</strong> Export model opens the model view: download a standard STL in one filament, or a multicolor 3MF in the Print palette's mapped colors (up to four filaments, map layers included). When a model is generated in the headset, this page opens the same model view by itself; ◀ Map selection goes back.</li></ol><p>The starter {{ presets[default_place].name }} model uses bundled real elevation data. New terrain, place search, ZIP lookup, map tiles, and feature layers need an internet connection. Features reflect OpenStreetMap coverage; administrative border definitions vary by country. Feature layers support areas up to 50 km per side. Terrain starts as a ground surface. Enable Buildings for approximate structures from OSM; trees are not modeled. Place search uses OpenStreetMap data through Nominatim. ZIP locations come from Zippopotam.us / GeoNames.</p><p class="small-hint">Reset frame restores its default size and zero rotation. The two-point button toggles alignment mode. Escape cancels it without changing the frame; selecting a preset or resetting the frame also exits this mode. You can also focus a resize handle and use arrow keys; hold Shift for larger steps. The corner rotates in 1° steps, or 15° with Shift; Home resets its angle. Hold Shift while dragging the corner to snap to 15°. Escape cancels an active resize or rotation.</p><p class="small-hint">The north indicator accounts for selection rotation. Profiles follow the box’s edges; orbiting changes the model’s apparent direction. Base thickness is a percentage of the longest horizontal side.</p></dialog>
   <noscript>This application needs JavaScript for interactive map selection and 3D rendering.</noscript>
 </body>
 </html>

@@ -19,19 +19,6 @@ async function rotate(page,degrees) {
   const angle=Math.atan2(y-center.y,x-center.x)+degrees*Math.PI/180,r=Math.hypot(x-center.x,y-center.y);
   await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(center.x+r*Math.cos(angle),center.y+r*Math.sin(angle),{steps:8});await page.mouse.up();
 }
-function glbPositions(bytes) {
-  const jsonLength=bytes.readUInt32LE(12),document=JSON.parse(bytes.subarray(20,20+jsonLength).toString());
-  const binary=20+jsonLength+8,points=[];
-  for(const mesh of document.meshes)for(const primitive of mesh.primitives) {
-    const accessor=document.accessors[primitive.attributes.POSITION],view=document.bufferViews[accessor.bufferView];
-    assert.equal(accessor.componentType,5126);
-    for(let i=0;i<accessor.count;i++) {
-      const offset=binary+(view.byteOffset||0)+(accessor.byteOffset||0)+i*(view.byteStride||12);
-      points.push([bytes.readFloatLE(offset),bytes.readFloatLE(offset+4),bytes.readFloatLE(offset+8)]);
-    }
-  }
-  return {document,points};
-}
 (async()=>{
   const browser=await chromium.launch({headless:true,executablePath:process.env.TERRAIN_CHROMIUM_PATH,
     args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
@@ -69,20 +56,17 @@ function glbPositions(bytes) {
     await page.evaluate(()=>window.scrollTo(0,0));
     await page.screenshot({path:path.join(output,'selection-oval-explorer.png')});
     await page.locator('#export-button').click();
-    assert.equal(await page.locator('#studio').isVisible(),true);
-    await page.screenshot({path:path.join(output,'selection-oval-studio.png')});
-    // A GLB exported from the editable view must have no rectangular corners, including roads/water.
-    const download=page.waitForEvent('download');await page.locator('[data-export="glb"]').click();
-    const file=await download,{points}=glbPositions(await fs.readFile(await file.path()));
-    let maxX=0,maxZ=0;
-    for(const [x,,z] of points){maxX=Math.max(maxX,Math.abs(x));maxZ=Math.max(maxZ,Math.abs(z));}
-    assert.ok(points.length>100);
-    assert.ok(points.every(([x,,z])=>(x/maxX)**2+(z/maxZ)**2<=1.001),'GLB terrain, walls and features share the oval footprint');
-    await page.waitForFunction(()=>!document.querySelector('[data-export="metadata"]').disabled);
-    const metadataDownload=page.waitForEvent('download');await page.locator('[data-export="metadata"]').click();
-    const metadata=JSON.parse(await fs.readFile(await (await metadataDownload).path(),'utf8'));
-    assert.equal(metadata.bounds.shape,'oval');assert.equal(metadata.bounds.rotation_deg,surface.bounds.rotation_deg);
-    await page.locator('#studio-back').click();
+    assert.equal(await page.locator('#model-view').isVisible(),true,'Export model opens the model view');
+    await page.screenshot({path:path.join(output,'selection-oval-model-view.png')});
+    // The standard STL has no rectangular corners: terrain and walls share the oval footprint.
+    const download=page.waitForEvent('download');await page.locator('[data-model-export="stl"]').click();
+    const stl=await fs.readFile(await (await download).path()),count=stl.readUInt32LE(80),xs=[],ys=[];
+    for(let t=0;t<count;t++)for(let v=0;v<3;v++){const at=84+t*50+12+v*12;xs.push(stl.readFloatLE(at));ys.push(stl.readFloatLE(at+4));}
+    const mid=values=>(Math.min(...values)+Math.max(...values))/2,half=values=>(Math.max(...values)-Math.min(...values))/2;
+    const cx=mid(xs),cy=mid(ys),rx=half(xs),ry=half(ys);
+    assert.ok(count>100);
+    assert.ok(xs.every((x,k)=>((x-cx)/rx)**2+((ys[k]-cy)/ry)**2<=1.002),'The STL shares the oval footprint');
+    await page.locator('#model-view-back').click();
     await page.locator('#selection-shape').selectOption('circle');
     response=page.waitForResponse(r=>/\/api\/terrain\/[^/?]+(?:\?|$)/.test(r.url())&&r.request().method()==='GET');
     await page.locator('#generate').click();
