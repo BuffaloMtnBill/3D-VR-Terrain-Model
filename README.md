@@ -221,6 +221,8 @@ back of the wrist on a short stalk, turned partly toward your eyes, so the wrist
 are chosen with a laser from each hand (shown only while a menu is up). A grip is a pinch or a fist (with the index
 finger curled too, so a finger held out to tap is never a grip); with controllers it is the grip button or the
 trigger, and each controller taps with the small dot just in front of it.
+No double taps: a second press on the same panel at about the same spot within 100 ms is ignored, so a jittery tap
+that opens a menu can't also choose the option that appears under your finger or laser dot (`static/vr-press.js`).
 
 | Grip | Map Selection |
 | --- | --- |

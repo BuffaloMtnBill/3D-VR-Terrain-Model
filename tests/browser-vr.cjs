@@ -225,6 +225,29 @@ const near=(actual,expected,tolerance,label)=>assert.ok(Math.abs(actual-expected
   await page.waitForFunction(m=>Math.abs(window.testVR().state.map.tiles.lift-m)<1e-9,multiplier+.1);   // the relief rises with it
   await press('radial:center');assert.equal((await vrState()).watch.menu,'terrain','The middle goes back one menu');
   await press('radial:center');assert.equal((await vrState()).watch.menu,'root','and again to the first');
+  // No double taps: a second press on the same panel and spot within 100 ms is ignored, elsewhere it counts.
+  assert.deepEqual(await page.evaluate(async()=>{
+    const {createPressGuard,PRESS_GAP}=await import('/static/vr-press.js'),guard=createPressGuard();
+    const at=(x,now,panel='radial menu')=>guard.allow({panel,x,y:0,width:.42,now});
+    return [PRESS_GAP,at(0,1000),at(.01,1060),at(.2,1080),at(.2,1300),at(.2,1350,'keyboard'),at(.2,1460)];
+  }),[100,true,false,true,true,true,true],'The same spot within 100 ms is ignored; another spot, panel, or a later press counts');
+  // A double pull of the trigger on Terrain opens Terrain once: the option now under the dot in the new ring is not chosen.
+  const ignoredBefore=(await vrState()).watch.ignoredPresses;
+  await aim(page,'controller','right','radial:root:terrain');
+  const pulls=await page.evaluate(async()=>{
+    const c=window.xrDevice.controllers.right,frame=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    const times=[];for(const value of [1,0,1,0]){c.updateButtonValue('trigger',value);times.push(performance.now());await frame();}
+    return times[2]-times[0];
+  });
+  await frames(4);
+  // The emulator's frames are slow on a busy machine: pulls 100 ms or more apart are two real presses.
+  state=await vrState();
+  if(pulls<100) {
+    assert.deepEqual(state.watch.path,['root','terrain'],`A double pull (${Math.round(pulls)} ms apart) opens Terrain once`);
+    assert.equal(state.watch.ignoredPresses,ignoredBefore+1,'The second pull is ignored');
+  } else assert.equal(state.watch.path.length,3,`Pulls ${Math.round(pulls)} ms apart are two presses: Terrain, then the option under the dot`);
+  await pose('right',[.3,1.1,-.1]);await frames(4);
+  while((await vrState()).watch.menu!=='root'){await press('radial:center');await page.waitForTimeout(150);}
   // While a menu is up the map stays put: a grip and a sweep leave the selection alone.
   const lockedFrom=(await vrState()).pageSelection;
   const down=[-Math.SQRT1_2,0,0,Math.SQRT1_2];   // pointing at the map, not at the menu

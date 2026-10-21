@@ -7,6 +7,7 @@ import {mercatorPixel,rotationAngle} from './selection-geometry.js';
 import {createVoice} from './vr-voice.js';
 import {buzz,click,tick} from './sounds.js';
 import {COMMANDS} from './vr-commands.js';
+import {createPressGuard} from './vr-press.js';
 
 const $=id=>document.getElementById(id);
 const fire=(el,type)=>el.dispatchEvent(new Event(type,{bubbles:true}));
@@ -519,8 +520,14 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
     if(id&&id!==hand.uiHover&&region.press&&!region.disabled){tick();buzz(hand,.15,12);}
     hand.uiHover=id;
   }
-  function choose(hand,region) {
+  // No double taps: a repeat press on the same panel and spot within 100 ms is ignored (vr-press.js).
+  const guard=createPressGuard();let ignored=0;
+  function choose(hand,region,at) {
     if(!region?.press)return;
+    if(at) {
+      const local=at.surface.mesh.worldToLocal(at.point.clone());
+      if(!guard.allow({panel:at.surface.name,x:local.x,y:local.y,width:at.surface.width,now:performance.now()})){ignored++;return;}
+    }
     if(!region.disabled){click();buzz(hand,.6,35);}
     region.press();
   }
@@ -530,14 +537,14 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
       drawLaser(hand,null);
       const region=touch.surface.regionAt(touch.x,touch.y);
       light(hand,region);
-      if(touch.depth<POKE.touch){if(!hand.poking){hand.poking=true;choose(hand,region);}}
+      if(touch.depth<POKE.touch){if(!hand.poking){hand.poking=true;choose(hand,region,{surface:touch.surface,point:fingertip});}}
       else if(touch.depth>POKE.release)hand.poking=false;
       return {onUI:true};
     }
     hand.poking=false;
     const aim=aimAt(hand);drawLaser(hand,aim);
     light(hand,aim?.region);
-    if(select)choose(hand,aim?.region);
+    if(select)choose(hand,aim?.region,aim?.point&&{surface:aim.surface,point:aim.point});
     return {onUI:Boolean(aim?.point)};
   }
 
@@ -605,7 +612,7 @@ export function createWatch(ctx,{rig,camera,joint,hands,exit,mode,generate,showM
       const regions=s=>s.mesh.visible?s.regions.map(({id})=>id):[];
       const stalk=s=>{if(!s.stem?.visible)return null;const p=s.stem.geometry.attributes.position;return Math.hypot(p.getX(1)-p.getX(0),p.getY(1)-p.getY(0),p.getZ(1)-p.getZ(0));};
       const along=sheet.mesh.visible&&sheet.at?sheet.mesh.position.clone().sub(sheet.at.wrist):null;
-      return {sheet:{shown:sheet.mesh.visible,facing:sheet.facing??null,lines:sheet.mesh.visible?sheetLines().map(line=>line.say+(line.note?` ${line.note}`:'')):[],
+      return {ignoredPresses:ignored,sheet:{shown:sheet.mesh.visible,facing:sheet.facing??null,lines:sheet.mesh.visible?sheetLines().map(line=>line.say+(line.note?` ${line.note}`:'')):[],
           along:along?along.dot(sheet.at.arm):null,out:along?along.dot(sheet.at.back):null},
         stalks:{face:stalk(face),button:stalk(wrist)},caption:caption.mesh.visible?captionText:null,lasers:lasers.map(l=>l.line.visible),voice:voice.state,voiceNote,editor:editor.mesh.visible?{...draft,dragging:dragging?.name||null}:null,face:face.mesh.visible?face.mesh.position.toArray():null,button:wrist.mesh.visible?wrist.mesh.position.toArray():null,buttonLabel:wrist.signature?JSON.parse(wrist.signature)[0]:null,menu:radial.mesh.visible?menu:null,path:radial.mesh.visible?[...stack]:[],keyboard:keyboard.mesh.visible,text,
         regions:{watch:regions(face),radial:regions(radial),keyboard:regions(keyboard),wrist:regions(wrist),editor:regions(editor)},
