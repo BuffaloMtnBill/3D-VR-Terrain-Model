@@ -1152,8 +1152,15 @@ export function createStudio(ctx) {
     }
     const file=await fetch(`/api/studio/jobs/${job}/file`);
     if(!file.ok)throw new Error(await errorMessage(file));
+    file.job=job;  // Save to Models copies the finished job on the server
     return file;
   }
+  // The "Also save models" box remembers its setting in this browser.
+  document.addEventListener('change',event=>{
+    if(event.target.id==='studio-save-models')try{localStorage.setItem('terrain.saveToModels',event.target.checked?'1':'0');}catch(error){}
+  });
+  const restoreSaveToModels=()=>{try{const box=$('studio-save-models');if(box)box.checked=localStorage.getItem('terrain.saveToModels')==='1';}catch(error){}};
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',restoreSaveToModels);else restoreSaveToModels();
   function setBusy(value) {
     busy=value;
     document.querySelectorAll('[data-export]').forEach(button=>{button.disabled=value;});
@@ -1186,7 +1193,15 @@ export function createStudio(ctx) {
           if(hasContent())ctx.notify('This server does not support add-ons yet; the file was exported without them.',true);
         }
         bar.value=1;
-        ctx.download(await response.blob(),filenameOf(response,`terrain.${format}`));
+        const filename=filenameOf(response,`terrain.${format}`);
+        ctx.download(await response.blob(),filename);
+        if($('studio-save-models')?.checked&&response.job&&['3mf','stl','obj','glb'].includes(format)) {
+          const saved=await postJSON(`/api/studio/jobs/${response.job}/save`,{name:filename.replace(/\.[^.]+$/,'')});
+          if(!saved.ok)throw new Error(await errorMessage(saved));
+          const result=await saved.json();
+          status.textContent=`Downloaded, and saved in Models/VR Terrain/${result.name}.`;
+          return;
+        }
       }
       status.textContent='Your file has been downloaded.';
       return true;

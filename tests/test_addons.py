@@ -488,3 +488,21 @@ def test_marker_platform_endpoint(studio):
     assert client.get("/api/studio/marker-platform?format=blend").data == (addons.DATA / "templates" / "marker-platform.blend").read_bytes()
     assert client.get("/api/studio/marker-platform?format=3mf&color=green").status_code == 400
     assert client.get("/api/studio/marker-platform?format=dwg").status_code == 400
+
+
+def test_finished_exports_save_into_models(studio, tmp_path):
+    client, extension, cover = studio
+    client.application.config["MODELS_DIR"] = tmp_path / "Models"
+    jobs = extension["studio_jobs"]
+    jobs["m"] = dict(state="ready", progress=1, message="", content=b"solid terrain", mimetype="model/stl",
+                     filename="terrain-120mm.stl", finished=time.monotonic())
+    jobs["p"] = dict(jobs["m"], filename="heights.png")
+    first = client.post("/api/studio/jobs/m/save", json={})
+    again = client.post("/api/studio/jobs/m/save", json={"name": "Desk relief"})
+    assert first.get_json()["name"] == "terrain-120mm.stl" and again.get_json()["name"] == "Desk relief.stl"
+    assert (tmp_path / "Models" / "VR Terrain" / "terrain-120mm.stl").read_bytes() == b"solid terrain"
+    assert client.post("/api/studio/jobs/p/save", json={}).status_code == 400    # not a model
+    assert client.post("/api/studio/jobs/gone/save", json={}).status_code == 404
+    # Only this computer may write files: a request from the network is refused.
+    remote = client.post("/api/studio/jobs/m/save", json={}, environ_base={"REMOTE_ADDR": "192.168.0.50"})
+    assert remote.status_code == 403

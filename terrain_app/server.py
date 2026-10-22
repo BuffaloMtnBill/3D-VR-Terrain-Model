@@ -31,6 +31,7 @@ from .addons import BALL_COLOR, catalog as studio_catalog, check_project, platfo
 from .studio import marker_ball_file, marker_platform_file, studio_export, studio_format
 from .hydrography import HydrographyClient, HYDROGRAPHY_URL, water_source
 from . import lamp_handoff
+from .models_folder import save_bytes
 from .live import Hub
 from .relief import ReliefTiles
 from .speech import MAX_SECONDS as MAX_SPEECH_SECONDS, Transcriber, decode_samples, purpose_of, vocabulary_of
@@ -720,6 +721,29 @@ def create_app(test_config=None):
                 return jsonify(error="This export is not ready yet."), 409
             content, mimetype, filename = record["content"], record["mimetype"], record["filename"]
         return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True, download_name=filename)
+
+    @app.post("/api/studio/jobs/<job>/save")
+    def studio_job_save(job):
+        """Save a finished model export into the shared Models folder (Models/VR Terrain).
+
+        Only the computer's own page may do this: headsets and other paired devices
+        never write files on this machine.
+        """
+        if not is_local(request.remote_addr):
+            return jsonify(error="Models can be saved only from this computer's page."), 403
+        with lock:
+            record = studio_jobs.get(job)
+            if record is None:
+                return jsonify(error="This export has expired. Export again."), 404
+            if record["state"] != "ready":
+                return jsonify(error="This export is not ready yet."), 409
+            content, filename = record["content"], record["filename"]
+        suffix = Path(filename).suffix.lower()
+        if suffix not in (".stl", ".3mf", ".obj", ".glb"):
+            return jsonify(error="Only models (STL, 3MF, OBJ, GLB) are saved to Models."), 400
+        name = (request.get_json(silent=True) or {}).get("name") or Path(filename).stem
+        saved = save_bytes(content, "VR Terrain", name, suffix, "terrain", app.config.get("MODELS_DIR"))
+        return jsonify(path=str(saved), name=saved.name)
 
     @app.get("/api/studio/marker-ball")
     def studio_marker_ball():
