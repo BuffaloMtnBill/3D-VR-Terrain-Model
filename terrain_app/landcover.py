@@ -11,7 +11,7 @@ from shapely import contains_xy
 from shapely.geometry import Polygon
 
 from .features import MAX_ELEMENTS, MAX_POINTS, MAX_RESPONSE_BYTES, OVERPASS_URL, QUERY_SETTINGS, REQUEST_TIMEOUT, coastline_paths, encode_polygons, sea_geometry, element_polygons, paths
-from .services import USER_AGENT, cache_json, cached_json, response_json
+from .services import OVERPASS_MIRRORS, cache_json, cached_json, overpass_json
 
 COVER_NAMES = ("dark_foliage", "light_foliage", "dirt", "snow", "water", "buildings")
 COVER_LABELS = ("Dark foliage", "Light foliage", "Dirt", "Snow", "Water", "Buildings")
@@ -130,9 +130,8 @@ class LandCoverClient:
         if isinstance(result, dict) and result.get("schema_version") == 2 and result.get("bounds") == bounds.to_dict() and set(result.get("regions", {})) == set(COVER_NAMES):
             return result
         try:
-            with requests.post(self.url, data={"data": cover_query(bounds)}, headers={"User-Agent": USER_AGENT},
-                               timeout=REQUEST_TIMEOUT, stream=True) as response:
-                data = response_json(response, MAX_RESPONSE_BYTES)
+            data = overpass_json(self.url, cover_query(bounds), REQUEST_TIMEOUT, MAX_RESPONSE_BYTES,
+                                 OVERPASS_MIRRORS if self.url == OVERPASS_URL else ())
         except requests.RequestException:
             raise ValueError("The surface map could not load. The service may be busy; retry or check your connection.") from None
         result = prepare_cover(data, bounds)

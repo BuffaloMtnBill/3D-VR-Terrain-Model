@@ -52,6 +52,14 @@ py -m venv .venv
 
 ```bash
 cd 3D-VR-Terrain-Model
+./run.sh
+```
+
+`run.sh` sets up `.venv` on the first run (and again whenever `requirements.txt`
+changes), then starts the app; extra arguments are passed to `app.py`. To do it by hand:
+
+```bash
+cd 3D-VR-Terrain-Model
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
@@ -432,6 +440,18 @@ are a separate request with their own allowance. Queries may run for 60 seconds
 on the Overpass server; the app waits up to 75 seconds for the response. Results cache for seven days in
 the cache directory's `features` folder. Rotated areas fetch their enclosing geographic extent, then
 clip linework and polygons to the actual selected rectangle. Elevation exaggeration moves the overlays with the surface.
+
+**Faster features.** A new area's features take Overpass about 30–45 seconds, so the app avoids asking twice:
+
+- Each download covers 20% more on every side (at least 250 m), rounded outward to a 0.005° grid, and is kept for
+  seven days. A later area inside a saved download (the same place framed a little differently, as happens moving the
+  map by hand in VR) is cut from it at once instead of downloading again.
+- In VR, once the map rests for a moment, the server starts downloading the framed area's features (and buildings,
+  when on) before you press Generate. Only the latest framing waits its turn.
+- Overpass runs two queries at a time for each computer and refuses more, so the app's map features, buildings,
+  and print colors take turns in two slots. A refusal for being busy waits a moment and asks again; when the main
+  server stays busy or can't be reached, two public mirrors are tried. A server set with `TERRAIN_OVERPASS_URL` is
+  used alone.
 
 Borders represent OSM administrative levels 2–6 (country, state, and county);
 city boundaries use levels 7–10. These categories have separate switches,

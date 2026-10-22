@@ -264,7 +264,7 @@ function setupScene() {
   vr=createVR({renderer,scene,SCALE,notify,requestRender,api,fetchSurface,handoff,mapStyles:()=>mapStyles,get grid(){return grid;},get model(){return model;},get surface(){return topMesh;},get state(){return state;},get live(){return live;},get featuresLoading(){return Boolean(featureRequest);},
     source:()=>$('elevation-source').value,exaggeration:()=>Number($('exaggeration').value),
     // The VR cut sets the page's selection, exactly as dragging the map frame would.
-    setSelection:bounds=>{draftSelection=null;updateSelection(bounds,true,true);if(vr?.presenting)handoff();},
+    setSelection:bounds=>{draftSelection=null;updateSelection(bounds,true,true);if(vr?.presenting){handoff();prefetchFeatures();}},
     // A handle mid-drag: the computer's page follows the cut before it is let go.
     previewSelection:bounds=>{draftSelection=bounds;if(vr?.presenting)handoff();}});
   vr.attachButton($('enter-vr'));
@@ -789,6 +789,22 @@ async function openTerrain(event) {
   try{await loadSurface(event.id,true,event.name||null);notify(`Opened ${event.name||'the new terrain'} from another device.`);}
   catch(error){notify(error.message,true);}
 }
+
+// ---------- a head start for map features while the map is framed in VR ----------
+// Once the box rests for a moment, the server starts downloading its features (padded a little, so nearby framings
+// reuse the download); by the time Generate is pressed they are often in hand. Only the latest framing is fetched.
+let prefetchTimer=null,lastPrefetch='';
+function prefetchFeatures() {
+  clearTimeout(prefetchTimer);
+  prefetchTimer=setTimeout(()=>{
+    if(!vr?.presenting||!featuresEnabled()||!state.selection||state.selectionError)return;
+    const body=JSON.stringify({bounds:state.selection,buildings:$('feature-buildings').checked});
+    if(body===lastPrefetch)return;
+    lastPrefetch=body;
+    api('/api/features/prefetch',{method:'POST',headers:{'Content-Type':'application/json'},body}).catch(()=>{});
+  },PREFETCH_REST_MS);
+}
+const PREFETCH_REST_MS=1200;
 
 // ---------- handoff: the headset's workspace, continued on the computer ----------
 const pageId=Math.random().toString(36).slice(2);

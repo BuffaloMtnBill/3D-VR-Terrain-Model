@@ -62,6 +62,10 @@ def fixture_other_features(bounds):
 
 app.extensions["terrain"]["features"].fetch = fixture_other_features
 app.extensions["terrain"]["features"].fetch_buildings = fixture_buildings
+# The VR head start: recorded, never downloaded (GET /api/test/prefetched lists the areas, for the browser tests).
+prefetched = []
+app.extensions["terrain"]["features"].prefetch = lambda bounds, buildings=False: prefetched.append({**bounds.to_dict(), "buildings": buildings}) or True
+app.add_url_rule("/api/test/prefetched", "test_prefetched", lambda: {"areas": prefetched})
 
 
 def fixture_water(bounds):

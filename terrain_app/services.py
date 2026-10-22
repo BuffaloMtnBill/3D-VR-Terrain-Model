@@ -6,7 +6,7 @@ from pathlib import Path
 import os
 import re
 import sys
-from threading import Event, Lock
+from threading import BoundedSemaphore, Event, Lock
 import time
 import uuid
 
@@ -39,6 +39,35 @@ def response_json(response, max_bytes, kind=dict):
     if not isinstance(value, kind):
         raise ValueError("The map service returned an invalid response. Try again later.")
     return value
+
+
+# Overpass (OpenStreetMap's public query service) runs only two queries at a time for each computer and refuses more
+# (HTTP 429). Every Overpass query here (map features, buildings, print colors) waits for one of those two slots.
+OVERPASS_SLOTS = 2
+OVERPASS_MIRRORS = ("https://maps.mail.ru/osm/tools/overpass/api/interpreter", "https://overpass.private.coffee/api/interpreter")
+OVERPASS_BUSY = (429, 502, 503, 504)
+OVERPASS_RETRY_S = 3.0
+_overpass_slots = BoundedSemaphore(OVERPASS_SLOTS)
+
+
+def overpass_json(url, query, timeout, max_bytes, mirrors=()):
+    """One Overpass query, in turn: a refusal for being busy (429) waits a moment and tries again, and when the
+    server stays busy or can't be reached, each mirror is tried. Raises requests.RequestException if none answer."""
+    targets, last = [url, url, *[mirror for mirror in mirrors if mirror != url]], None
+    for attempt, target in enumerate(targets):
+        if attempt == 1:
+            if not (isinstance(last, requests.HTTPError) and "429" in str(last)):
+                continue   # only a "too many requests" refusal is worth asking the same server again
+            time.sleep(OVERPASS_RETRY_S)
+        with _overpass_slots:
+            try:
+                with requests.post(target, data={"data": query}, headers={"User-Agent": USER_AGENT}, timeout=timeout, stream=True) as response:
+                    if response.status_code in OVERPASS_BUSY:
+                        raise requests.HTTPError(str(response.status_code))
+                    return response_json(response, max_bytes)
+            except requests.RequestException as error:
+                last = error
+    raise last or requests.RequestException("No Overpass server answered.")
 
 
 class SingleFlight:

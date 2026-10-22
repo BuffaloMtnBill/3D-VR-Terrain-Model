@@ -341,6 +341,16 @@ def create_app(test_config=None):
     def locate_place():
         return jsonify(place_client.lookup(request.args.get("q", "")))
 
+    @app.post("/api/features/prefetch")
+    def prefetch_features():
+        """A head start while the map is framed in VR: the area's map features (and buildings, when on) download in
+        the background unless a saved download covers them. Only the latest area waits; nothing is returned."""
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Supply the area.")
+        started = feature_client.prefetch(Bounds.from_dict(payload.get("bounds")), buildings=payload.get("buildings") is True)
+        return jsonify(started=started), 202
+
     @app.post("/api/features/<identifier>")
     def create_features(identifier):
         records, fetch = feature_records()

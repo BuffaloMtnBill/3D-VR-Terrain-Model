@@ -10,8 +10,9 @@ import requests
 from shapely.geometry import Point, Polygon
 
 from terrain_app.elevation import Bounds, selection_coordinates
-from terrain_app.features import FeatureClient, LAYER_NAMES, building_height, classify, layer_options, overpass_query, paths, prepare_features, to_selection
+from terrain_app.features import FeatureClient, LAYER_NAMES, building_height, classify, download_extent, layer_options, overpass_query, paths, prepare_features, to_selection
 from terrain_app.server import create_app, load_example
+from terrain_app.features import OVERPASS_URL as OVERPASS_DEFAULT
 from terrain_app.services import ZipClient, ZipLookupError, response_json
 from terrain_app.hydrography import HydrographyClient, prepare_water
 
@@ -317,8 +318,10 @@ def test_feature_fetch_uses_rotated_envelope_and_reuses_cache(tmp_path, monkeypa
     result = client.fetch(bounds)
     assert client.fetch(bounds) == result
     assert len(calls) == 1 and result["counts"] == dict.fromkeys(LAYER_NAMES, 0)
-    extent = bounds.geographic_extent
-    bbox = ",".join(f"{value:.8f}" for value in (extent.south, extent.west, extent.north, extent.east))
+    # The download covers the rotated area's envelope, padded and rounded outward so nearby areas can share it.
+    extent, area = bounds.geographic_extent, download_extent(bounds.geographic_extent)
+    assert area.south < extent.south and area.west < extent.west and area.north > extent.north and area.east > extent.east
+    bbox = ",".join(f"{value:.8f}" for value in (area.south, area.west, area.north, area.east))
     assert f"out geom({bbox})" in calls[0]
     assert overpass_query(bounds).endswith("out geom qt;")
 
@@ -536,7 +539,8 @@ def test_buildings_download_separately_from_other_layers(tmp_path, monkeypatch, 
     assert client.fetch_buildings(bounds)["counts"]["buildings"] == 1
     client.fetch_buildings(bounds)
     client.fetch(bounds)
-    assert queries == [building_query(bounds), overpass_query(bounds)]  # separately cached
+    area = download_extent(bounds.geographic_extent)
+    assert queries == [building_query(area), overpass_query(area)]  # separately cached
 
     provider, calls = application.extensions["terrain"]["features"], []
     monkeypatch.setattr(provider, "fetch", lambda bounds: calls.append("other") or prepare_features({"elements": []}, bounds))
@@ -671,3 +675,80 @@ def test_generate_gives_the_chosen_map_features_a_head_start(application, monkey
         assert not started["osm"].wait(.3)
     finally:
         terrain_done.set()
+
+
+def test_a_nearby_area_reuses_the_saved_download(tmp_path, monkeypatch):
+    """Moving or zooming the frame a little (as in VR) cuts the new area from the padded download already saved."""
+    calls = []
+    road = osm_way(7, {"highway": "primary"}, [(-82.12, 36.10), (-82.10, 36.12)])
+    far_road = osm_way(8, {"highway": "primary"}, [(-81.90, 36.40), (-81.89, 36.41)])
+    far_road["bounds"] = {"minlat": 36.40, "minlon": -81.90, "maxlat": 36.41, "maxlon": -81.89}
+    def post(url, **options):
+        calls.append(options["data"]["data"])
+        return JsonResponse({"elements": [road, far_road]})
+    monkeypatch.setattr("terrain_app.features.requests.post", post)
+    client = FeatureClient(tmp_path)
+    first = client.fetch(Bounds(36.08, -82.16, 36.14, -82.06))
+    moved = client.fetch(Bounds(36.085, -82.155, 36.142, -82.058))   # panned and zoomed a little
+    assert len(calls) == 1, "The second area comes from the saved download"
+    assert first["counts"]["roads"] == moved["counts"]["roads"] == 1, "Elements outside the area are left out"
+    assert client.covered(Bounds(36.09, -82.15, 36.13, -82.07)) and not client.covered(Bounds(36.5, -81.5, 36.55, -81.45))
+    client.fetch(Bounds(36.5, -81.5, 36.55, -81.45))
+    assert len(calls) == 2, "An area outside every saved download is downloaded"
+
+
+def test_overpass_busy_retries_then_mirrors(tmp_path, monkeypatch):
+    from terrain_app import services
+    monkeypatch.setattr(services, "OVERPASS_RETRY_S", 0)
+    urls, answers = [], iter([429, 429, 503, 200])
+    def post(url, **_options):
+        urls.append(url)
+        return JsonResponse({"elements": []}, next(answers))
+    monkeypatch.setattr("terrain_app.features.requests.post", post)
+    assert FeatureClient(tmp_path).fetch(Bounds(36.08, -82.16, 36.14, -82.06))["counts"]["roads"] == 0
+    # Busy (429): the same server once more after a moment; still busy: each mirror in turn.
+    assert urls == [OVERPASS_DEFAULT, OVERPASS_DEFAULT, *services.OVERPASS_MIRRORS]
+    # A configured server (a test or private Overpass) is used alone: no mirrors.
+    urls.clear()
+    monkeypatch.setattr("terrain_app.features.requests.post", lambda url, **_options: urls.append(url) or JsonResponse({}, 503))
+    with pytest.raises(ValueError, match="could not load"):
+        FeatureClient(tmp_path / "own", url="http://localhost:9/overpass").fetch(Bounds(36.08, -82.16, 36.14, -82.06))
+    assert urls == ["http://localhost:9/overpass"]
+
+
+def test_overpass_runs_two_queries_at_a_time(tmp_path, monkeypatch):
+    import threading
+    running, most, lock = [0], [0], threading.Lock()
+    def post(url, **_options):
+        with lock:
+            running[0] += 1;most[0] = max(most[0], running[0])
+        time.sleep(.05)
+        with lock:
+            running[0] -= 1
+        return JsonResponse({"elements": []})
+    monkeypatch.setattr("terrain_app.features.requests.post", post)
+    client = FeatureClient(tmp_path)
+    areas = [Bounds(36+i, -82.16, 36.06+i, -82.06) for i in range(5)]
+    threads = [threading.Thread(target=client.fetch, args=(area,)) for area in areas]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert most[0] == 2, f"Overpass allows each computer two queries at once ({most[0]} ran together)"
+
+
+def test_framing_in_vr_starts_the_download(tmp_path, monkeypatch, application):
+    calls = []
+    monkeypatch.setattr("terrain_app.features.requests.post", lambda url, **options: calls.append(options["data"]["data"]) or JsonResponse({"elements": []}))
+    client = application.extensions["terrain"]["features"]
+    monkeypatch.setattr(client, "cache_dir", tmp_path)
+    http, area = application.test_client(), {"south": 36.08, "west": -82.16, "north": 36.14, "east": -82.06}
+    assert http.post("/api/features/prefetch", json={"bounds": area, "buildings": True}).get_json() == {"started": True}
+    for _ in range(100):
+        if client.covered(Bounds.from_dict(area), buildings=True):
+            break
+        time.sleep(.02)
+    assert client.covered(Bounds.from_dict(area), buildings=True) and len(calls) == 2, "Map features and buildings both downloaded"
+    assert http.post("/api/features/prefetch", json={"bounds": area}).get_json() == {"started": False}, "Already covered: nothing to do"
+    assert http.post("/api/features/prefetch", json={"bounds": {"south": 0, "west": 0, "north": 1, "east": 1}}).get_json() == {"started": False}
+    assert http.post("/api/features/prefetch", json={"bounds": {"south": 1}}).status_code == 400

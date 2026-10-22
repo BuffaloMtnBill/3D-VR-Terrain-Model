@@ -1,9 +1,11 @@
 """Read OSM linework and water polygons, then clip them to the selected rectangle."""
 import hashlib
 import json
+import logging
 import math
 from pathlib import Path
 import re
+from threading import Lock, Thread
 import time
 
 import numpy as np
@@ -15,7 +17,9 @@ from shapely.strtree import STRtree
 
 from .buildings import building_dimensions, building_mesh, is_detailed
 from .elevation import Bounds, pixel_coordinates
-from .services import USER_AGENT, SingleFlight, cache_json, cached_json, response_json
+from .services import OVERPASS_MIRRORS, SingleFlight, cache_json, cached_json, overpass_json
+
+LOGGER = logging.getLogger(__name__)
 
 LAYER_NAMES = ("roads", "railways", "borders", "water", "cities", "parks", "buildings", "at", "trails")
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
@@ -377,10 +381,55 @@ def overpass_query(bounds):
 ); out geom qt;'''
 
 
+# Each Overpass download covers a little more than the area asked for, rounded outward to a grid, and is kept: a
+# later area inside it (the same place framed a little differently, as happens moving the map by hand in VR) is cut
+# from the saved download instead of waiting half a minute for Overpass again.
+FETCH_PAD = .2          # share of the area's width and height added on each side
+FETCH_PAD_MIN_M = 250   # but at least this much (m)
+FETCH_GRID = .005       # degrees: download edges are rounded outward to this grid, so nearby areas share downloads
+MAX_FEATURE_SIDE_M = 50_000
+RAW_MAX_AGE_S = 7*86400
+
+
+def download_extent(extent: Bounds) -> Bounds:
+    """The padded, grid-rounded rectangle downloaded for an area's geographic extent (padding is left out where it
+    would pass the size limit)."""
+    width, height = extent.dimensions
+    latitude = math.radians((extent.south+extent.north)/2)
+    pad_y = math.degrees(max(FETCH_PAD*height, FETCH_PAD_MIN_M)/6_371_008.8)
+    pad_x = math.degrees(max(FETCH_PAD*width, FETCH_PAD_MIN_M)/(6_371_008.8*max(math.cos(latitude), .01)))
+    down = lambda value: math.floor(value/FETCH_GRID+1e-9)*FETCH_GRID
+    up = lambda value: math.ceil(value/FETCH_GRID-1e-9)*FETCH_GRID
+    padded = Bounds(round(max(down(extent.south-pad_y), -85), 6), round(max(down(extent.west-pad_x), -180), 6),
+                    round(min(up(extent.north+pad_y), 85), 6), round(min(up(extent.east+pad_x), 180), 6))
+    return padded if max(padded.dimensions) <= MAX_FEATURE_SIDE_M else extent
+
+
+def contains(outer: Bounds, inner: Bounds) -> bool:
+    return outer.south <= inner.south and outer.west <= inner.west and outer.north >= inner.north and outer.east >= inner.east
+
+
+def within(data, extent: Bounds):
+    """A saved download cut to the elements that reach into an extent (each element's own bounding box)."""
+    def reaches(element):
+        if not isinstance(element, dict):
+            return False
+        box_ = element.get("bounds")
+        if isinstance(box_, dict):
+            return not (box_.get("maxlat", 90) < extent.south or box_.get("minlat", -90) > extent.north
+                        or box_.get("maxlon", 180) < extent.west or box_.get("minlon", -180) > extent.east)
+        if "lat" in element and "lon" in element:
+            return extent.south <= element["lat"] <= extent.north and extent.west <= element["lon"] <= extent.east
+        return True   # no position given: keep it, prepare_features decides
+    return {**data, "elements": [element for element in data.get("elements", []) if reaches(element)]}
+
+
 class FeatureClient:
     def __init__(self, cache_dir: Path, url=OVERPASS_URL):
         self.cache_dir, self.url = Path(cache_dir), url
-        self.flight = SingleFlight()
+        self.flight, self.downloads = SingleFlight(), SingleFlight()
+        self.mirrors = OVERPASS_MIRRORS if url == OVERPASS_URL else ()   # a configured server is used alone
+        self._prefetch_lock, self._prefetch_next, self._prefetching = Lock(), None, False
 
     def fetch(self, bounds: Bounds):
         """Every layer except buildings."""
@@ -389,10 +438,14 @@ class FeatureClient:
     def fetch_buildings(self, bounds: Bounds):
         return self._fetch(bounds, building_query, "-buildings")
 
-    def _fetch(self, bounds: Bounds, query, suffix):
+    @staticmethod
+    def _check(bounds):
         bounds.validate()
-        if max(bounds.dimensions) > 50_000:
+        if max(bounds.dimensions) > MAX_FEATURE_SIDE_M:
             raise ValueError("Map features are available for areas up to 50 km per side. Select a smaller area and generate its terrain.")
+
+    def _fetch(self, bounds: Bounds, query, suffix):
+        self._check(bounds)
         key = hashlib.sha256(json.dumps(bounds.to_dict(), sort_keys=True).encode()).hexdigest()
         path = self.cache_dir / f"{key}{suffix}.json"
         return self.flight.do(str(path), lambda: self._download(bounds, query, suffix, path))
@@ -401,15 +454,87 @@ class FeatureClient:
         result = cached_json(path, 7*86400, MAX_RESPONSE_BYTES)
         if isinstance(result, dict) and result.get("schema_version") == 6 and result.get("bounds") == bounds.to_dict() and set(result.get("layers", {})) == set(LAYER_NAMES):
             return result
-        try:
-            with requests.post(self.url, data={"data": query(bounds)}, headers={"User-Agent": USER_AGENT},
-                               timeout=REQUEST_TIMEOUT, stream=True) as response:
-                data = response_json(response, MAX_RESPONSE_BYTES)
-        except requests.RequestException:
-            raise ValueError("Map features could not load. The service may be busy; retry in a moment or check your connection.") from None
-        result = prepare_features(data, bounds)
+        extent = bounds.geographic_extent
+        result = prepare_features(within(self._raw(extent, query, suffix), extent), bounds)
         if not suffix:
             # A park or water area can also be tagged as a building; buildings come only from their own request.
             result["layers"]["buildings"], result["counts"]["buildings"] = [], 0
         cache_json(path, result)
         return result
+
+    # ---------- the saved Overpass downloads ----------
+    def _raw_path(self, area: Bounds, suffix):
+        return self.cache_dir / f"raw{suffix}-{area.south:.6f}_{area.west:.6f}_{area.north:.6f}_{area.east:.6f}.json"
+
+    def _covering(self, extent: Bounds, suffix):
+        """The smallest saved download (under a week old) that covers an extent, or None."""
+        best, now = None, time.time()
+        for path in self.cache_dir.glob(f"raw{suffix}-*.json"):
+            found = re.fullmatch(rf"raw{re.escape(suffix)}-(-?[\d.]+)_(-?[\d.]+)_(-?[\d.]+)_(-?[\d.]+)\.json", path.name)
+            try:
+                if not found or now-path.stat().st_mtime > RAW_MAX_AGE_S:
+                    continue
+            except OSError:
+                continue
+            area = Bounds(*map(float, found.groups()))
+            if contains(area, extent) and (best is None or (area.north-area.south)*(area.east-area.west) < (best[0].north-best[0].south)*(best[0].east-best[0].west)):
+                best = (area, path)
+        return best
+
+    def covered(self, bounds: Bounds, buildings=False):
+        extent = bounds.geographic_extent
+        return all(self._covering(extent, suffix) for suffix in ("", *(("-buildings",) if buildings else ())))
+
+    def _raw(self, extent: Bounds, query, suffix):
+        """Overpass's answer for an area covering `extent`: from a saved download, or a new padded one."""
+        found = self._covering(extent, suffix)
+        if found:
+            saved = cached_json(found[1], RAW_MAX_AGE_S, 4*MAX_RESPONSE_BYTES)
+            if isinstance(saved, dict) and isinstance(saved.get("data"), dict):
+                return saved["data"]
+        area = download_extent(extent)
+        path = self._raw_path(area, suffix)
+        return self.downloads.do(str(path), lambda: self._save_raw(area, query, suffix, path))
+
+    def _save_raw(self, area, query, suffix, path):
+        try:
+            data = overpass_json(self.url, query(area), REQUEST_TIMEOUT, MAX_RESPONSE_BYTES, self.mirrors)
+        except requests.RequestException:
+            raise ValueError("Map features could not load. The service may be busy; retry in a moment or check your connection.") from None
+        if not isinstance(data.get("elements"), list) or data.get("remark"):
+            raise ValueError("Map feature lookup did not finish. Try again or select a smaller area.")   # not saved
+        cache_json(path, {"area": area.to_dict(), "data": data})
+        return data
+
+    # ---------- a head start while the map is being framed (VR) ----------
+    def prefetch(self, bounds: Bounds, buildings=False):
+        """Download (in the background) what an area's features will need, unless a saved download covers it. Only
+        the latest area waits its turn: one framed a moment ago and moved on from is skipped."""
+        try:
+            self._check(bounds)
+        except ValueError:
+            return False
+        if self.covered(bounds, buildings):
+            return False
+        with self._prefetch_lock:
+            self._prefetch_next = (bounds, buildings)
+            if self._prefetching:
+                return True
+            self._prefetching = True
+        Thread(target=self._prefetch_loop, name="feature-prefetch", daemon=True).start()
+        return True
+
+    def _prefetch_loop(self):
+        while True:
+            with self._prefetch_lock:
+                job, self._prefetch_next = self._prefetch_next, None
+                if job is None:
+                    self._prefetching = False
+                    return
+            bounds, buildings = job
+            extent = bounds.geographic_extent
+            for query, suffix in ((overpass_query, ""), *(((building_query, "-buildings"),) if buildings else ())):
+                try:
+                    self._raw(extent, query, suffix)
+                except Exception:   # the page's own request reports any problem when it asks
+                    LOGGER.info("A map feature head start did not finish", exc_info=True)

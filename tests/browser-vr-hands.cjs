@@ -95,6 +95,12 @@ async function openPage(browser,headset) {
   near(state.position[0]-before[0],-.1*state.scale,.01*state.scale,'Dragging the pinch moves the world with the hand');
   await pinch('right',0);await frames();
   assert.equal((await vrState()).hands[1].mode,null,'Opening the fingers lets go');
+  // Once the moved box rests, its map features start downloading on the server: a head start for Generate.
+  const prefetched=await page.waitForResponse(r=>r.url().endsWith('/api/features/prefetch'),{timeout:5000});
+  const area=(await (await page.request.get(new URL('/api/test/prefetched',page.url()).href)).json()).areas.at(-1);
+  const resting=(await vrState()).pageSelection;
+  for(const key of ['north','south','west','east'])near(area[key],resting[key],1e-9,`The resting box's area is fetched ahead (${key})`);
+  assert.equal(prefetched.status(),202);
 
   // Map Selection with hands: pinch to grip the map and move your hand; the map moves with it under the box.
   assert.equal((await vrState()).mode,'map','VR starts in Map Selection');
@@ -109,9 +115,12 @@ async function openPage(browser,headset) {
   await pinch('right',.55);await frames(4);
   // Half open, the fingertips are already 4 cm apart while the headset still reports its pinch: the grip lets go now.
   assert.equal((await vrState()).hands[1].mode,null,'Fingers apart let go, whatever the headset still reports');
-  assert.deepEqual((await vrState()).position,heldAt,'Opening the fingers does not move the map');
+  // (To within float rounding: after a long glide the map's offset is thousands of units.)
+  const openedAt=(await vrState()).position;
+  heldAt.forEach((value,axis)=>near(openedAt[axis],value,1e-6*Math.max(1,Math.abs(value)),'Opening the fingers does not move the map'));
   await pinch('right',0);await frames(6);
-  assert.deepEqual((await vrState()).position,heldAt,'nor does letting go');
+  const letGoAt=(await vrState()).position;
+  heldAt.forEach((value,axis)=>near(letGoAt[axis],value,1e-6*Math.max(1,Math.abs(value)),'nor does letting go'));
   assert.equal((await vrState()).gliding,false);
   const panned=(await vrState()).pageSelection;
   assert.ok((panned.west+panned.east)/2<(startSelection.west+startSelection.east)/2,'Moving the gripped map east moves the selection west');
