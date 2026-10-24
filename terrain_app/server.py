@@ -27,11 +27,11 @@ from .features import FeatureClient, OVERPASS_URL, layer_options
 from .services import GEOCODER_URL, PlaceClient, ZipClient, ZipLookupError, default_cache_dir
 from .landcover import LandCoverClient, print_colors, face_classes
 from .printing import export_3mf
-from .addons import BALL_COLOR, catalog as studio_catalog, check_project, platform_top, project_options, text_outline
+from .addons import BALL_COLOR, catalog as studio_catalog, check_project, marker_templates, platform_top, project_options, text_outline
 from .studio import marker_ball_file, marker_platform_file, studio_export, studio_format
 from .hydrography import HydrographyClient, HYDROGRAPHY_URL, water_source
 from . import lamp_handoff
-from .models_folder import save_bytes
+from .models_folder import record_derivation, save_bytes
 from .live import Hub
 from .relief import ReliefTiles
 from .speech import MAX_SECONDS as MAX_SPEECH_SECONDS, Transcriber, decode_samples, purpose_of, vocabulary_of
@@ -704,7 +704,8 @@ def create_app(test_config=None):
             if sum(job["state"] in ("queued", "running") for job in studio_jobs.values()) >= 4:
                 return jsonify(error="Four exports are already running. Wait for one to finish."), 429
             job = uuid.uuid4().hex
-            studio_jobs[job] = dict(state="queued", progress=0, message="Waiting to start…", finished=None)
+            studio_jobs[job] = dict(state="queued", progress=0, message="Waiting to start…", finished=None,
+                                    templates=marker_templates(project, format))
         executor.studio.submit(run_studio_job, job, partial(studio_export, terrain, options, format, attribution, palette=colors, classes=classes,
                                                             feature_layers=features, feature_data=feature_data, project=project, preview_mesh=preview,
                                                             buildings=marker_buildings(identifier, project)))
@@ -747,12 +748,13 @@ def create_app(test_config=None):
                 return jsonify(error="This export has expired. Export again."), 404
             if record["state"] != "ready":
                 return jsonify(error="This export is not ready yet."), 409
-            content, filename = record["content"], record["filename"]
+            content, filename, templates = record["content"], record["filename"], record.get("templates", [])
         suffix = Path(filename).suffix.lower()
         if suffix not in (".stl", ".3mf", ".obj", ".glb"):
             return jsonify(error="Only models (STL, 3MF, OBJ, GLB) are saved to Models."), 400
         name = (request.get_json(silent=True) or {}).get("name") or Path(filename).stem
         saved = save_bytes(content, "VR Terrain", name, suffix, "terrain", app.config.get("MODELS_DIR"))
+        record_derivation({saved: templates}, "VR Terrain Model", app.config.get("MODELS_DIR"))
         return jsonify(path=str(saved), name=saved.name)
 
     @app.get("/api/studio/marker-ball")

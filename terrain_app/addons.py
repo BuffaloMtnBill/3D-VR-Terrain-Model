@@ -267,6 +267,12 @@ def marker_style(project):
     return (project or {}).get("marker_balls", {}).get("style", "ball")
 
 
+def marker_templates(project, format):
+    """Template ids (Models/Templates/templates.json) an export is made from: its marker ball or platform, which only
+    3MF prints carry. Saving the export to Models records them, so the marker's derivatives can be listed together."""
+    return [f"terrain-marker-{marker_style(project)}"] if format == "3mf" and ball_count(project) else []
+
+
 def marker_info(project):
     """The bundled template a project's nail markers carry: the ball's metadata or the platform's."""
     return PLATFORM_INFO if marker_style(project) == "platform" else BALL_INFO

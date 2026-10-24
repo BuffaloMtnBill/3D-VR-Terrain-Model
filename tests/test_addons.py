@@ -506,3 +506,20 @@ def test_finished_exports_save_into_models(studio, tmp_path):
     # Only this computer may write files: a request from the network is refused.
     remote = client.post("/api/studio/jobs/m/save", json={}, environ_base={"REMOTE_ADDR": "192.168.0.50"})
     assert remote.status_code == 403
+
+
+def test_saved_3mf_prints_record_their_marker_template(studio, tmp_path):
+    client, extension, cover = studio
+    client.application.config["MODELS_DIR"] = tmp_path / "Models"
+    extension["studio_jobs"]["b"] = dict(state="ready", progress=1, message="", content=b"3mf", mimetype="model/3mf",
+                                         filename="terrain-print.3mf", finished=time.monotonic(), templates=["terrain-marker-ball"])
+    client.post("/api/studio/jobs/b/save", json={"name": "Trail map"})
+    assets = json.loads((tmp_path / "Models" / ".collection.json").read_text())["assets"]
+    assert assets["VR Terrain/Trail map.3mf"]["derived_from"] == ["terrain-marker-ball"]
+
+
+def test_only_3mf_prints_with_markers_come_from_a_marker_template():
+    project = addons.project_options({"addons": [{"type": "nail_marker", "u": .5, "v": .5}], "marker_balls": {"include": True, "style": "platform"}})
+    assert addons.marker_templates(project, "3mf") == ["terrain-marker-platform"]
+    assert addons.marker_templates(project, "stl") == []
+    assert addons.marker_templates(addons.project_options({"marker_balls": {"include": True}}), "3mf") == []
