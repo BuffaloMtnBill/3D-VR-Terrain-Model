@@ -4,7 +4,8 @@ Run with Blender 4.2 or newer (no GUI needed):
 
     blender --background --python scripts/make_marker_ball.py
 
-It writes terrain_app/data/templates/marker-ball.{stl,blend,json}. Every size is
+It writes marker-ball.{stl,blend,json} to ~/Projects/Models/Templates/Terrain
+($PROJECTS_TEMPLATES/Terrain), shared by the terrain apps. Every size is
 a millimeter parameter below; the JSON records them so the app can size the
 matching nail hole in the terrain.
 
@@ -38,7 +39,10 @@ SNAP_LENGTH = 0.6
 SEGMENTS = 96
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / "terrain_app" / "data" / "templates"
+sys.path.append(str(ROOT / "terrain_app"))
+from models_folder import templates_root  # stdlib only, so Blender's Python can import it
+
+OUTPUT = templates_root() / "Terrain"  # shared with the other terrain apps
 
 
 def mesh_object(name, build):

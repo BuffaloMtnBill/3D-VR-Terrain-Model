@@ -21,7 +21,7 @@ terrain-studio = "terrain_app.__main__:main"
 include = ["terrain_app*"]
 
 [tool.setuptools.package-data]
-terrain_app = ["templates/*", "static/*", "static/vendor/*", "static/vendor/images/*", "data/*", "data/fonts/*", "data/templates/*"]
+terrain_app = ["templates/*", "static/*", "static/vendor/*", "static/vendor/images/*", "data/*", "data/fonts/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

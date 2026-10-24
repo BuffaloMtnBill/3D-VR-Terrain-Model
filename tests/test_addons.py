@@ -325,7 +325,7 @@ def test_studio_check_catalog_text_and_marker_ball_endpoints(studio):
     with ZipFile(BytesIO(three.data)) as archive:
         model = ET.fromstring(archive.read("3D/3dmodel.model"))
     assert model.find(f"{{{CORE}}}resources/{{{CORE}}}basematerials/{{{CORE}}}base").attrib["displaycolor"] == "#00FF00FF"
-    assert client.get("/api/studio/marker-ball?format=blend").data == (addons.DATA / "templates" / "marker-ball.blend").read_bytes()
+    assert client.get("/api/studio/marker-ball?format=blend").data == (addons.TEMPLATES / "marker-ball.blend").read_bytes()
     assert client.get("/api/studio/marker-ball?format=3mf&color=green").status_code == 400
     assert client.get("/api/studio/marker-ball?format=dwg").status_code == 400
 
@@ -478,14 +478,14 @@ def test_marker_platform_endpoint(studio):
     client, _, _ = studio
     assert client.get("/api/studio/catalog").get_json()["marker_platform"]["deck_top_z"] == PLATFORM_INFO["deck_top_z"]
     stl = client.get("/api/studio/marker-platform?format=stl")
-    assert stl.mimetype == "model/stl" and stl.data == (addons.DATA / "templates" / "marker-platform.stl").read_bytes()
+    assert stl.mimetype == "model/stl" and stl.data == (addons.TEMPLATES / "marker-platform.stl").read_bytes()
     three = client.get("/api/studio/marker-platform?format=3mf&color=%2300ff00")
     assert "marker-platform.3mf" in three.headers["Content-Disposition"]
     model, ns, objects, mesh = read_3mf(BytesIO(three.data))
     vertices, faces = mesh(next(iter(objects.values())))
     assert_closed(vertices, faces)
     assert vertices[:, 2].min() == pytest.approx(0, abs=1e-4) and volume(vertices, faces) > 0  # deck down, still outward-facing
-    assert client.get("/api/studio/marker-platform?format=blend").data == (addons.DATA / "templates" / "marker-platform.blend").read_bytes()
+    assert client.get("/api/studio/marker-platform?format=blend").data == (addons.TEMPLATES / "marker-platform.blend").read_bytes()
     assert client.get("/api/studio/marker-platform?format=3mf&color=green").status_code == 400
     assert client.get("/api/studio/marker-platform?format=dwg").status_code == 400
 

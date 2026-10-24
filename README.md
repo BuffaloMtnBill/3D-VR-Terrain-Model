@@ -539,6 +539,14 @@ cache folder, wherever the app is started from:
 The app prints the folder when it starts. It is safe to delete at any time; data
 is downloaded again when needed. Set `TERRAIN_CACHE_DIR` to use another place.
 
+## Template models
+
+The marker ball and marker platform (`marker-ball` and `marker-platform` as `.stl`, `.blend` and `.json`) are
+not part of this repository: they live in `~/Projects/Models/Templates/Terrain`, shared with the other terrain
+apps. Set `PROJECTS_TEMPLATES` (or `PROJECTS_MODELS`, whose `Templates` folder is used) to point elsewhere. The
+app needs them to start; `scripts/make_marker_ball.py` and `scripts/make_marker_platform.py` regenerate them
+there with Blender.
+
 ## Configuration
 
 Optional environment variables:

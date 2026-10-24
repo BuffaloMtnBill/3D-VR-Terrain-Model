@@ -22,19 +22,22 @@ from .features import parts as geometry_parts
 from .mesh import build_mesh
 from .footprint import footprint_polygon
 from .print_features import clean_collinear_faces, extrude, footprint as feature_footprint, from_mesh, grid_window, surface_heights
+from .models_folder import templates_root
 
 DATA = Path(__file__).parent / "data"
+# marker-ball and marker-platform (.stl, .blend, .json) live with the other template models, shared by the terrain apps
+TEMPLATES = templates_root() / "Terrain"
 FONT_PATH = DATA / "fonts" / "DejaVuSans-Bold.ttf"
 FONT_NAME = "DejaVu Sans Bold"
 # Text styles for the silhouette page's text blocks (the 3D design page's add-ons stay bold); all DejaVu Sans.
 FONT_FILES = {"bold": "DejaVuSans-Bold.ttf", "regular": "DejaVuSans.ttf", "italic": "DejaVuSans-Oblique.ttf", "bold-italic": "DejaVuSans-BoldOblique.ttf"}
 FONT_STYLES = tuple(FONT_FILES)
-BALL_PATH = DATA / "templates" / "marker-ball.stl"
-BALL_INFO = json.loads((DATA / "templates" / "marker-ball.json").read_text(encoding="utf-8"))
+BALL_PATH = TEMPLATES / "marker-ball.stl"
+BALL_INFO = json.loads((TEMPLATES / "marker-ball.json").read_text(encoding="utf-8"))
 BALL_COLOR = "#c0392b"
 BALL_GAP = 4.0  # mm between the model and marker balls laid out beside it
-PLATFORM_PATH = DATA / "templates" / "marker-platform.stl"
-PLATFORM_INFO = json.loads((DATA / "templates" / "marker-platform.json").read_text(encoding="utf-8"))
+PLATFORM_PATH = TEMPLATES / "marker-platform.stl"
+PLATFORM_INFO = json.loads((TEMPLATES / "marker-platform.json").read_text(encoding="utf-8"))
 MARKER_STYLES = {"ball": "Ball", "platform": "Platform"}
 PLATFORM_TOPS = {"none": "Nothing", "terrain": "Terrain around the marker", "building": "Building at the marker"}
 TOP_BASE = 1.2  # mm of solid under a terrain top

@@ -3,6 +3,10 @@
 The Control Panel's workflow passes models between programs through that folder:
 creation programs save there, and the Visualizer and the VR programs open from
 it. Set PROJECTS_MODELS to use another folder.
+
+Template models the programs build from (marker balls, lamp lids and bases)
+live in its Templates folder; set PROJECTS_TEMPLATES to use another one. That
+folder is for templates only: programs never save output there.
 """
 import os
 import re
@@ -11,6 +15,10 @@ from pathlib import Path
 
 def models_root():
     return Path(os.environ.get('PROJECTS_MODELS') or Path.home()/'Projects'/'Models').expanduser()
+
+
+def templates_root():
+    return Path(os.environ.get('PROJECTS_TEMPLATES') or models_root()/'Templates').expanduser()
 
 
 def clean_name(name, fallback):
