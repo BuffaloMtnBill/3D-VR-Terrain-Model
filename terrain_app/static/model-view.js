@@ -23,7 +23,7 @@ export function createModelView({studio,state,notify,filamentCount}) {
     if(!state.data||state.id==='example'&&by==='headset')return false;
     $('model-view-title').textContent=$('landscape-title')?.textContent||state.name||'Your model';
     $('model-view-source').textContent=by==='headset'?'Generated in the headset. Turn it here as you like, and export it to print.':'';
-    sizeShown();refresh();
+    sizeShown();refresh();studio.refreshDestination?.();
     if(!dialog.open){$('model-view-stage').append(scene);dialog.showModal();}
     if(by==='page'||!opener)opener=by;
     return true;

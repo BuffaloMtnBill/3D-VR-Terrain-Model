@@ -9,7 +9,7 @@ from zipfile import ZipFile
 import numpy as np
 import pytest
 
-from terrain_app import addons
+from terrain_app import addons, server
 from terrain_app.addons import (PLATFORM_INFO, Model, addon_mesh, apply_addons, check_project, marker_ball, marker_platform, plan_project,
                                 print_color_set, project_options, text_outline)
 from terrain_app.elevation import Bounds, Terrain
@@ -500,12 +500,39 @@ def test_finished_exports_save_into_models(studio, tmp_path):
     first = client.post("/api/studio/jobs/m/save", json={})
     again = client.post("/api/studio/jobs/m/save", json={"name": "Desk relief"})
     assert first.get_json()["name"] == "terrain-120mm.stl" and again.get_json()["name"] == "Desk relief.stl"
-    assert (tmp_path / "Models" / "VR Terrain" / "terrain-120mm.stl").read_bytes() == b"solid terrain"
+    assert (tmp_path / "Models" / "Terrain" / "terrain-120mm.stl").read_bytes() == b"solid terrain"
     assert client.post("/api/studio/jobs/p/save", json={}).status_code == 400    # not a model
     assert client.post("/api/studio/jobs/gone/save", json={}).status_code == 404
     # Only this computer may write files: a request from the network is refused.
     remote = client.post("/api/studio/jobs/m/save", json={}, environ_base={"REMOTE_ADDR": "192.168.0.50"})
     assert remote.status_code == 403
+
+
+def test_saving_stops_at_the_models_limit(studio, tmp_path, monkeypatch):
+    client, extension, cover = studio
+    client.application.config["MODELS_DIR"] = tmp_path / "Models"
+    folder = tmp_path / "Models" / "Terrain"
+    (folder / "old" / ".hidden").mkdir(parents=True)
+    for index in range(3):
+        (folder / "old" / f"m{index}.stl").write_bytes(b"x")
+    (folder / "notes.txt").write_text("not a model")
+    (folder / "old" / ".hidden" / "skip.stl").write_bytes(b"x")
+    assert client.get("/api/models/terrain").get_json() == {"folder": "Models/Terrain", "count": 3, "limit": 500, "room": True}
+    monkeypatch.setattr(server, "MODELS_LIMIT", 4)
+    extension["studio_jobs"]["m"] = dict(state="ready", progress=1, message="", content=b"solid terrain", mimetype="model/stl",
+                                         filename="terrain-120mm.stl", finished=time.monotonic())
+    saved = client.post("/api/studio/jobs/m/save", json={"name": "Fourth"}).get_json()
+    assert saved["count"] == 4 and saved["room"] is False
+    full = client.post("/api/studio/jobs/m/save", json={"name": "Fifth"})
+    assert full.status_code == 409 and "already holds 4 models" in full.get_json()["error"]
+    assert not (folder / "Fifth.stl").exists()
+    assert client.get("/api/models/terrain", environ_base={"REMOTE_ADDR": "192.168.0.50"}).status_code == 403
+
+
+def test_no_endpoint_takes_uploaded_model_files(studio):
+    client, extension, cover = studio
+    # The headset must never write files here: models are saved only from export jobs the server built itself.
+    assert client.post("/api/models/terrain/glb", json={"name": "x", "data": ""}).status_code in (404, 405)
 
 
 def test_saved_3mf_prints_record_their_marker_template(studio, tmp_path):
@@ -515,7 +542,7 @@ def test_saved_3mf_prints_record_their_marker_template(studio, tmp_path):
                                          filename="terrain-print.3mf", finished=time.monotonic(), templates=["terrain-marker-ball"])
     client.post("/api/studio/jobs/b/save", json={"name": "Trail map"})
     assets = json.loads((tmp_path / "Models" / ".collection.json").read_text())["assets"]
-    assert assets["VR Terrain/Trail map.3mf"]["derived_from"] == ["terrain-marker-ball"]
+    assert assets["Terrain/Trail map.3mf"]["derived_from"] == ["terrain-marker-ball"]
 
 
 def test_only_3mf_prints_with_markers_come_from_a_marker_template():

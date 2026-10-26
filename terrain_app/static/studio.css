@@ -205,5 +205,13 @@
 @media (max-width:760px){.model-view-body{flex-direction:column}.model-view-export{width:auto;border-left:0;border-top:1px solid var(--line)}#model-view-stage{min-height:55vh}}
 .model-view-export .export-choices button:disabled{opacity:.6;cursor:not-allowed}
 .model-view-export .export-choices button:disabled #model-view-3mf-hint{color:#edbb8b}
-.studio-save-models { display: flex; gap: .5em; align-items: center; margin: .6em 0 .2em; font-size: .85em; }
+.studio-save-models { display: flex; flex-wrap: wrap; gap: .45em .8em; align-items: center; margin: .6em 0 .2em; font-size: .85em; }
+.studio-save-models > label { display: flex; gap: .5em; align-items: center; flex: 1 1 100%; }
+.studio-save-models > label { margin: 0; }
+.studio-save-models input[type=text] { flex: 1; min-width: 0; padding: 7px 8px; font-size: 11px; border: 1px solid #49543c; border-radius: 4px; background: #122118; color: var(--ink); }
+.studio-destination { display: flex; flex-wrap: wrap; gap: .3em .9em; }
+.studio-destination label { display: flex; gap: .3em; align-items: center; }
+.studio-destination label:has(input:disabled) { opacity: .5; }
+.studio-save-models .small-hint { flex-basis: 100%; margin: 0; }
+.studio-save-models .small-hint.full { color: #ffb391; }
 .studio-save-models code { font-size: .95em; }

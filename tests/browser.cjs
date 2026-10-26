@@ -459,11 +459,32 @@ async function main() {
   assert.equal(await page.locator('[data-model-export]').count(),2,'Two exports: standard and multicolor');
   await page.locator('#model-view-size').fill('150');await page.locator('#model-view-size').dispatchEvent('input');
   assert.equal(await page.locator('#export-size').inputValue(),'150','The size is the model\'s export size');
+  // Files take the name typed in the model view (the place's name until something is typed).
+  assert.equal(await page.locator('#studio-model-name').getAttribute('placeholder'),await page.locator('#landscape-title').innerText());
+  await page.locator('#studio-model-name').fill('Test peak');
   const stlWaiting=page.waitForEvent('download');await page.locator('[data-model-export="stl"]').click();
-  const stlDownload=await stlWaiting;assert.equal(stlDownload.suggestedFilename(),'terrain.stl');
+  const stlDownload=await stlWaiting;assert.equal(stlDownload.suggestedFilename(),'Test peak.stl');
   await stlDownload.saveAs(path.join(output,'terrain.stl'));
   const stlBytes=await fs.readFile(path.join(output,'terrain.stl'));
   assert.ok(stlBytes.length>1000);assert.equal(stlBytes.length,84+50*stlBytes.readUInt32LE(80));
+  // Saving straight into Models/Terrain, only with a scratch Models folder (TERRAIN_TEST_MODELS_DIR, the same folder as
+  // the server's PROJECTS_MODELS), never the real one.
+  const models=process.env.TERRAIN_TEST_MODELS_DIR;
+  if(models) {
+    const folder=path.join(models,'Terrain');
+    await fs.rm(folder,{recursive:true,force:true});
+    await page.locator('#model-view-back').click();await page.locator('#export-button').click();  // reopening reads the folder again
+    await page.waitForFunction(()=>/holds 0 of 500 models/.test(document.getElementById('studio-models-note').textContent));
+    await page.locator('input[name="studio-destination"][value="save"]').check();
+    let downloads=0;const counting=()=>downloads++;page.on('download',counting);
+    await page.locator('[data-model-export="stl"]').click();
+    await page.waitForFunction(()=>/^Saved in /.test(document.getElementById('model-view-status').textContent));
+    assert.equal(await page.locator('#model-view-status').innerText(),'Saved in Models/Terrain/Test peak.stl.');
+    assert.ok((await fs.stat(path.join(folder,'Test peak.stl'))).size>1000);
+    assert.equal(downloads,0,'Save alone downloads nothing');page.off('download',counting);
+    await page.locator('input[name="studio-destination"][value="download"]').check();
+    await fs.rm(folder,{recursive:true,force:true});
+  }
   await page.screenshot({path:path.join(output,'model-view.png'),fullPage:true});
   await page.locator('#model-view-back').click();
   assert.equal(await page.locator('#model-view').isVisible(),false,'◀ Map selection closes it');
@@ -490,7 +511,7 @@ async function main() {
     await page.locator('[data-model-export="3mf"]').click();
   }
   const printDownload=await printWaiting,requestData=(await printRequest).postDataJSON();
-  assert.equal(printDownload.suggestedFilename(),'terrain-print.3mf');
+  assert.equal(printDownload.suggestedFilename(),'Test peak.3mf');
   assert.ok(new Set(Object.values(requestData.print_palette)).size<=4);
   await printDownload.saveAs(path.join(output,'terrain-print.3mf'));
   assert.equal((await fs.readFile(path.join(output,'terrain-print.3mf'))).subarray(0,2).toString(),'PK');

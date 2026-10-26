@@ -298,7 +298,15 @@
           <button type="button" data-model-export="stl"><strong>Standard 3D model <span>↓</span></strong><span>STL · one solid piece in a single filament, for any printer</span></button>
           <button type="button" data-model-export="3mf"><strong>Multicolor <span>↓</span></strong><span id="model-view-3mf-hint">3MF · the Print palette's mapped colors as up to four filament parts</span></button>
         </div>
-        <label class="studio-save-models"><input type="checkbox" id="studio-save-models"> Also save models (3MF, STL, OBJ, GLB) in <code>~/Projects/Models/VR Terrain</code></label>
+        <div class="studio-save-models">
+          <label for="studio-model-name">Name <input id="studio-model-name" type="text" maxlength="80" autocomplete="off" spellcheck="false" aria-describedby="studio-models-note"></label>
+          <div class="studio-destination" role="radiogroup" aria-label="Where model files go">
+            <label><input type="radio" name="studio-destination" value="download" checked> Download</label>
+            <label><input type="radio" name="studio-destination" value="save"> Save to Models</label>
+            <label><input type="radio" name="studio-destination" value="both"> Both</label>
+          </div>
+          <span id="studio-models-note" class="small-hint">Models can be saved in <code>~/Projects/Models/Terrain</code> from this computer's own page.</span>
+        </div>
         <progress id="model-view-progress" max="1" value="0" hidden></progress>
         <div id="model-view-status" role="status"></div>
       </aside>

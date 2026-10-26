@@ -1155,12 +1155,55 @@ export function createStudio(ctx) {
     file.job=job;  // Save to Models copies the finished job on the server
     return file;
   }
-  // The "Also save models" box remembers its setting in this browser.
-  document.addEventListener('change',event=>{
-    if(event.target.id==='studio-save-models')try{localStorage.setItem('terrain.saveToModels',event.target.checked?'1':'0');}catch(error){}
-  });
-  const restoreSaveToModels=()=>{try{const box=$('studio-save-models');if(box)box.checked=localStorage.getItem('terrain.saveToModels')==='1';}catch(error){}};
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',restoreSaveToModels);else restoreSaveToModels();
+  // ---------- where model files go: downloaded, saved in ~/Projects/Models/Terrain (this computer only), or both ----------
+  const MODEL_FORMATS=['3mf','stl','obj','glb'];
+  let modelsFolder=null;  // {folder, count, limit, room} once the server says this page may save there
+  const destination=()=>document.querySelector('input[name="studio-destination"]:checked')?.value||'download';
+  // The name typed above the buttons (or the place's name) as a file name: the characters Models accepts, spaces collapsed.
+  const placeName=()=>String(ctx.state.loadedName||ctx.state.name||'').split(',')[0].trim();
+  const modelName=()=>(String($('studio-model-name').value||placeName()).replace(/[^\w .-]+/g,' ').replace(/\s+/g,' ').trim().replace(/^[ .]+|[ .]+$/g,'').slice(0,80))||'terrain';
+  // Models take the name itself; other files keep what they are after it (Roan-heightmap.png).
+  const named=(filename,fallback)=>{
+    const file=filename||fallback||'terrain',suffix=file.match(/\.[a-z0-9]+$/i)?.[0]||'',format=suffix.slice(1).toLowerCase();
+    return MODEL_FORMATS.includes(format)?`${modelName()}${suffix}`:`${modelName()}-${file.slice(0,file.length-suffix.length)}${suffix}`;
+  };
+  function renderDestination() {
+    const note=$('studio-models-note'),saving=modelsFolder?.room;
+    for(const input of document.querySelectorAll('input[name="studio-destination"]'))if(input.value!=='download')input.disabled=!saving;
+    if(!saving&&destination()!=='download')document.querySelector('input[name="studio-destination"][value="download"]').checked=true;
+    note.classList.toggle('full',Boolean(modelsFolder&&!modelsFolder.room));
+    note.textContent=!modelsFolder?'Saving to ~/Projects/Models works only on this computer\'s own page.'
+      :modelsFolder.room?`${modelsFolder.folder} holds ${modelsFolder.count} of ${modelsFolder.limit} models. 3MF, STL, OBJ and GLB can be saved there; other files download.`
+      :`${modelsFolder.folder} is full: it holds ${modelsFolder.count} models (the limit is ${modelsFolder.limit}). Move some out to save more; downloads still work.`;
+  }
+  function refreshDestination() {$('studio-model-name').placeholder=placeName()||'terrain';refreshModelsFolder();}
+  async function refreshModelsFolder() {
+    try{const response=await fetch('/api/models/terrain');modelsFolder=response.ok?await response.json():null;}catch(error){modelsFolder=null;}
+    renderDestination();
+  }
+  function wireDestination() {
+    try{
+      const saved=localStorage.getItem('terrain.modelsDestination')||(localStorage.getItem('terrain.saveToModels')==='1'?'both':null);
+      const input=saved&&document.querySelector(`input[name="studio-destination"][value="${saved}"]`);if(input)input.checked=true;
+    }catch(error){}
+    document.addEventListener('change',event=>{
+      if(event.target.name==='studio-destination')try{localStorage.setItem('terrain.modelsDestination',event.target.value);}catch(error){}
+    });
+    renderDestination();
+  }
+  // Downloads the finished file and/or saves it into Models/Terrain; returns what to tell the user.
+  async function deliver(format,blob,filename,job) {
+    const where=MODEL_FORMATS.includes(format)?destination():'download',name=named(filename,`terrain.${format}`);
+    if(where!=='save')ctx.download(blob,name);
+    if(where==='download')return MODEL_FORMATS.includes(format)||destination()==='download'?`Downloaded ${name}.`:`Downloaded ${name} (only models are saved to Models).`;
+    // The server saves only exports it built itself (it takes no uploaded files), so a GLB made in the browser downloads.
+    if(!job){if(where==='save')ctx.download(blob,name);return `Downloaded ${name}; a GLB built in the browser cannot be saved to Models.`;}
+    const response=await postJSON(`/api/studio/jobs/${job}/save`,{name:modelName()});
+    const result=await response.json().catch(()=>({}));
+    if(result.limit){modelsFolder={folder:result.folder,count:result.count,limit:result.limit,room:result.room};renderDestination();}
+    if(!response.ok)throw new Error(result.error||'The model could not be saved.');
+    return `${where==='both'?'Downloaded, and saved':'Saved'} in ${result.folder||'Models/Terrain'}/${result.name}.`;
+  }
   function setBusy(value) {
     busy=value;
     document.querySelectorAll('[data-export]').forEach(button=>{button.disabled=value;});
@@ -1179,7 +1222,8 @@ export function createStudio(ctx) {
     try {
       await ctx.prepareExport(format,message=>{status.textContent=message;});
       if(format==='glb'&&!hasContent()) {
-        status.textContent='Building the GLB in the browser…';await ctx.exportGLB();
+        status.textContent='Building the GLB in the browser…';
+        status.textContent=await deliver(format,await ctx.exportGLB(),`terrain.glb`,null);
       } else {
         const body=requestBody(format);
         if(!formatsWithProject.includes(format))delete body.project;
@@ -1193,17 +1237,14 @@ export function createStudio(ctx) {
           if(hasContent())ctx.notify('This server does not support add-ons yet; the file was exported without them.',true);
         }
         bar.value=1;
-        const filename=filenameOf(response,`terrain.${format}`);
-        ctx.download(await response.blob(),filename);
-        if($('studio-save-models')?.checked&&response.job&&['3mf','stl','obj','glb'].includes(format)) {
-          const saved=await postJSON(`/api/studio/jobs/${response.job}/save`,{name:filename.replace(/\.[^.]+$/,'')});
-          if(!saved.ok)throw new Error(await errorMessage(saved));
-          const result=await saved.json();
-          status.textContent=`Downloaded, and saved in Models/VR Terrain/${result.name}.`;
-          return;
+        const filename=filenameOf(response,`terrain.${format}`),blob=await response.blob();
+        if(response.job||!MODEL_FORMATS.includes(format))status.textContent=await deliver(format,blob,filename,response.job);
+        else {
+          // The old export endpoint leaves no job to save from, so its models download.
+          ctx.download(blob,named(filename));
+          status.textContent=`Downloaded ${named(filename)}${destination()==='download'?'':'; this server cannot save to Models'}.`;
         }
       }
-      status.textContent='Your file has been downloaded.';
       return true;
     } catch(error){status.textContent=error.message;ctx.notify(error.message,true);return false;}
     finally{setBusy(false);setTimeout(()=>{if(!busy)bar.hidden=true;},1200);ctx.updatePrintPalette();}
@@ -1295,6 +1336,7 @@ export function createStudio(ctx) {
     });
     document.addEventListener('keydown',keydown);
     document.querySelectorAll('[data-export]').forEach(button=>button.addEventListener('click',()=>exportFormat(button.dataset.export)));
+    wireDestination();
     document.querySelectorAll('[data-studio-view]').forEach(button=>button.addEventListener('click',()=>{
       const view=button.dataset.studioView;
       if(view==='xray'){xray=!xray;applyMaterials();setCamera(cameraMode);}
@@ -1372,7 +1414,10 @@ export function createStudio(ctx) {
       if(saveFailed)$('studio-place-hint').textContent='Projects cannot be saved in this browser; export the project JSON to keep it.';
       loadCatalog().then(()=>{if(dialog.open){rebuildGhosts();renderList();renderSettings();}});
       ctx.updatePrintPalette();scheduleCheck();
+      refreshDestination();
     },
+    // The model view shows the name and destination too: its default name and the folder's count, read again.
+    refreshDestination,
     close(){if(dialog.open)dialog.close();},
     exportFormat,
     // The main scene rebuilt (new area, base, palette, features): copy it again while the studio is visible.

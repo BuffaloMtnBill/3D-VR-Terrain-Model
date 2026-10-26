@@ -1052,7 +1052,7 @@ async function exportGLB() {
   group.scale.setScalar(opts.size_mm/SCALE/1000);
   try {
     const result=await new GLTFExporter().parseAsync(group,{binary:true,onlyVisible:true});
-    download(new Blob([result],{type:'model/gltf-binary'}),'terrain.glb');
+    return new Blob([result],{type:'model/gltf-binary'});
   } finally {ownedMeshes.forEach(mesh=>{mesh.geometry.dispose();mesh.material.dispose();});}
 }
 

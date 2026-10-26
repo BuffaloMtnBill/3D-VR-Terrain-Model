@@ -31,7 +31,7 @@ from .addons import BALL_COLOR, catalog as studio_catalog, check_project, marker
 from .studio import marker_ball_file, marker_platform_file, studio_export, studio_format
 from .hydrography import HydrographyClient, HYDROGRAPHY_URL, water_source
 from . import lamp_handoff
-from .models_folder import record_derivation, save_bytes
+from .models_folder import count_models, record_derivation, save_bytes
 from .live import Hub
 from .relief import ReliefTiles
 from .speech import MAX_SECONDS as MAX_SPEECH_SECONDS, Transcriber, decode_samples, purpose_of, vocabulary_of
@@ -82,6 +82,10 @@ def restart_process():
     # The listening socket survives exec as an open descriptor, which would keep the port busy for the new server.
     os.closerange(3, min(os.sysconf("SC_OPEN_MAX"), 65536))
     os.execv(sys.executable, command)
+
+
+MODELS_CATEGORY = "Terrain"  # ~/Projects/Models/Terrain, shared with Terrain Model and Terrain Studio
+MODELS_LIMIT = 500  # saving there stops once it holds this many models
 
 
 def create_app(test_config=None):
@@ -733,9 +737,30 @@ def create_app(test_config=None):
             content, mimetype, filename = record["content"], record["mimetype"], record["filename"]
         return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True, download_name=filename)
 
+    def models_status():
+        count = count_models(MODELS_CATEGORY, app.config.get("MODELS_DIR"))
+        return dict(folder=f"Models/{MODELS_CATEGORY}", count=count, limit=MODELS_LIMIT, room=count < MODELS_LIMIT)
+
+    def save_model(content, name, suffix, templates=()):
+        """Save a model into Models/Terrain, unless that folder already holds MODELS_LIMIT models."""
+        status = models_status()
+        if not status["room"]:
+            return jsonify(error=f"{status['folder']} already holds {status['count']} models (the limit is {MODELS_LIMIT}). "
+                                 "Move some out, or download the model instead.", **status), 409
+        saved = save_bytes(content, MODELS_CATEGORY, name, suffix, "terrain", app.config.get("MODELS_DIR"))
+        record_derivation({saved: list(templates)}, "VR Terrain Model", app.config.get("MODELS_DIR"))
+        return jsonify(path=str(saved), name=saved.name, **models_status())
+
+    @app.get("/api/models/terrain")
+    def models_folder_status():
+        """How full Models/Terrain is, so the computer's page can offer saving there. Headsets get a refusal."""
+        if not is_local(request.remote_addr):
+            return jsonify(error="Models can be saved only from this computer's page."), 403
+        return jsonify(models_status())
+
     @app.post("/api/studio/jobs/<job>/save")
     def studio_job_save(job):
-        """Save a finished model export into the shared Models folder (Models/VR Terrain).
+        """Save a finished model export into the shared Models folder (Models/Terrain).
 
         Only the computer's own page may do this: headsets and other paired devices
         never write files on this machine.
@@ -753,9 +778,7 @@ def create_app(test_config=None):
         if suffix not in (".stl", ".3mf", ".obj", ".glb"):
             return jsonify(error="Only models (STL, 3MF, OBJ, GLB) are saved to Models."), 400
         name = (request.get_json(silent=True) or {}).get("name") or Path(filename).stem
-        saved = save_bytes(content, "VR Terrain", name, suffix, "terrain", app.config.get("MODELS_DIR"))
-        record_derivation({saved: templates}, "VR Terrain Model", app.config.get("MODELS_DIR"))
-        return jsonify(path=str(saved), name=saved.name)
+        return save_model(content, name, suffix, templates)
 
     @app.get("/api/studio/marker-ball")
     def studio_marker_ball():

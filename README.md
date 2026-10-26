@@ -8,9 +8,10 @@ branches from 3D-VR-Terrain before silhouette mode was added.
 A fork of [Terrain Studio · 3D Map Extractor](https://github.com/BuffaloMtnBill/3D-Map-Extractor) built around an
 integrated 3D workflow: the terrain is explored and edited in a VR headset as well as on the page. For safety,
 the VR side cannot save a model anywhere: there is no Save menu in VR, and the server has no endpoint that
-writes uploaded files to disk. The one exception is the computer's own page: its **Also save models** box (in the
-model view) copies each finished export into `~/Projects/Models/VR Terrain`, and the server refuses that request from any
-other device.
+writes uploaded files to disk. The one exception is the computer's own page: in the model view, **Save to Models** (or
+**Both**) saves the finished export, under the **Name** typed there (the place's name by default), into
+`~/Projects/Models/Terrain`, shared with Terrain Model and Terrain Studio. The server saves only exports it built itself,
+refuses the request from any other device, and stops saving once that folder holds 500 models.
 
 
 A Python application that turns a rectangle on OpenStreetMap into an interactive

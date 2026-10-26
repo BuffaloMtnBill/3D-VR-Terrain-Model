@@ -35,6 +35,19 @@ def templates_root():
     return Path(os.environ.get('PROJECTS_TEMPLATES') or models_root()/'Templates').expanduser()
 
 
+MODEL_SUFFIXES = ('.stl', '.3mf', '.obj', '.glb')
+
+
+def count_models(category, root=None, suffixes=MODEL_SUFFIXES):
+    """How many model files <root>/<category> holds, counting subfolders and skipping hidden files and folders."""
+    folder = Path(root or models_root())/category
+    total = 0
+    for _, folders, files in os.walk(folder):
+        folders[:] = [name for name in folders if not name.startswith('.')]
+        total += sum(not name.startswith('.') and Path(name).suffix.lower() in suffixes for name in files)
+    return total
+
+
 def clean_name(name, fallback):
     """A file name stem from what the user typed: letters, digits, spaces, dots, dashes and underscores."""
     stem = re.sub(r'[^\w .-]+', '', str(name or '')).strip(' .')[:80]
