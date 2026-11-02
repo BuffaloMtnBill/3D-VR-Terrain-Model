@@ -13,6 +13,7 @@ import os
 import socket
 import subprocess
 import sys
+from threading import Lock
 import time
 import uuid
 from pathlib import Path
@@ -83,6 +84,9 @@ def lamp_running(url=None, timeout=.5):
         return False
 
 
+STARTING = Lock()
+
+
 def start_lamp(folder=None, wait=15.0):
     """Start CylinderLamp (without opening a browser) if it isn't running; True once it answers. Uses the project's own
     environment when it has one."""
@@ -91,14 +95,17 @@ def start_lamp(folder=None, wait=15.0):
     folder = Path(folder or lamp_dir())
     if not (folder / "app.py").is_file():
         return False
-    python = folder / (".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python")
-    port = urlsplit(lamp_url()).port or 5057
-    subprocess.Popen([str(python if python.is_file() else sys.executable), "app.py", "--no-browser", "--port", str(port)],
-                     cwd=folder, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=os.name != "nt")
-    deadline = time.monotonic()+wait
-    while time.monotonic() < deadline:
+    with STARTING:                      # one start at a time; a caller that waited finds it already running
         if lamp_running():
             return True
-        time.sleep(.25)
-    return False
+        python = folder / (".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python")
+        port = urlsplit(lamp_url()).port or 5057
+        subprocess.Popen([str(python if python.is_file() else sys.executable), "app.py", "--no-browser", "--port", str(port)],
+                         cwd=folder, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=os.name != "nt")
+        deadline = time.monotonic()+wait
+        while time.monotonic() < deadline:
+            if lamp_running():
+                return True
+            time.sleep(.25)
+        return False

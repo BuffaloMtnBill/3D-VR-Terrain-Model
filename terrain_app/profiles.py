@@ -15,6 +15,12 @@ EARTH_RADIUS_M = 6371008.8
 REFRACTION = .13  # standard atmospheric refraction coefficient: light bends to see ~7% farther over the curve
 HIGH_GROUND = 8.0  # how strongly the ridgeline prefers high ground over a shorter way
 SKYLINE_RADIUS_M = 1000.0  # skylines are drawn on a cylinder of this radius, so angles become lengths in meters
+# A viewpoint samples every direction at every distance step, and keeps the whole table (bands and ridges read it).
+# An ordinary frame needs at most about 1440 directions × 1100 steps; a long, thin one (rows held at 16 while columns
+# spread over hundreds of kilometers) would need hundreds of thousands of steps at its thin cells' spacing, so the step
+# is lengthened to keep the table within this budget, and the work is done a few directions at a time.
+MAX_VIEW_SAMPLES = 1440*2048
+VIEW_BATCH_SAMPLES = 262144
 
 
 def finite(value):
@@ -130,33 +136,51 @@ def viewpoint(terrain, point, bearing=0.0, fov=120.0, eye_m=2.0, samples=None, m
     the horizon) is cut off, so the skyline, bands, and ridges end there.
 
     Returns azimuths (compass degrees, left to right), skyline angles (degrees), the distance (m) of the terrain that
-    forms the skyline, a per-step angle table for depth bands, the step distances, and the farthest distance seen."""
+    forms the skyline, a per-step angle table for depth bands, the step distances, the farthest distance seen, and the
+    step used (longer than the frame's spacing when MAX_VIEW_SAMPLES would otherwise be exceeded)."""
     start = frame_point(terrain, point, "viewpoint")
     grid = terrain.elevations.astype(np.float64)
     rows, columns = grid.shape
     width, height = terrain.width, terrain.height
     count = samples or int(min(1440, max(90, round(fov*4))))
     azimuths = bearing-fov/2+np.arange(count)*fov/max(count-1, 1)
-    step = min(width/(columns-1), height/(rows-1))/2
-    reach = math.hypot(width, height)
-    distances = np.arange(1, int(reach/step)+1)*step
+    if max_radius_m and max_radius_m <= min_radius_m:
+        raise ValueError("The cutoff distance must be farther than the minimum distance.")
+    if count*16 > MAX_VIEW_SAMPLES:
+        raise ValueError("Too many directions for a viewpoint: use fewer samples.")
     origin = start*(width, height)
+    step = min(width/(columns-1), height/(rows-1))/2
+    # No ray stays in the frame past its farthest corner, and none is wanted past the cutoff: stop there, before any
+    # sample is made.
+    reach = max(math.hypot(x-origin[0], y-origin[1]) for x in (0, width) for y in (0, height))
+    if max_radius_m:
+        reach = min(reach, max_radius_m)
+    # Within the sample budget: lengthen the step if the frame's own spacing would need more steps than it allows.
+    allowed = MAX_VIEW_SAMPLES//count
+    if reach/step > allowed:
+        step = reach/allowed
+    distances = np.arange(1, int(reach/step)+1)*step
+    if not len(distances):
+        raise ValueError("Nothing lies within the cutoff distance. Raise it, or move the viewpoint." if max_radius_m
+                         else "The viewpoint must have terrain around it inside the generated area.")
     directions = np.asarray([bearing_direction(terrain, point, azimuth) for azimuth in azimuths])
-    positions = origin+directions[:, None, :]*distances[None, :, None]  # (azimuths, steps, 2) in frame meters
-    uv = positions/(width, height)
-    inside = ((uv >= 0) & (uv <= 1)).all(axis=2)
     eye = float(sample(grid, start))+eye_m
     drop = distances**2/(2*EARTH_RADIUS_M)*(1-REFRACTION)
-    angles = np.degrees(np.arctan2(sample(grid, uv)-drop[None, :]-eye, distances[None, :]))
-    angles[~inside] = -np.inf  # a viewpoint at the frame's edge simply sees no terrain in directions that leave it
+    angles = np.empty((count, len(distances)))
+    batch = max(1, VIEW_BATCH_SAMPLES//len(distances))
+    for first in range(0, count, batch):
+        rays = slice(first, first+batch)
+        positions = origin+directions[rays, None, :]*distances[None, :, None]  # (directions, steps, 2) in frame meters
+        uv = positions/(width, height)
+        seen = np.degrees(np.arctan2(sample(grid, uv)-drop[None, :]-eye, distances[None, :]))
+        seen[~((uv >= 0) & (uv <= 1)).all(axis=2)] = -np.inf  # a viewpoint at the frame's edge sees no terrain in directions that leave it
+        angles[rays] = seen
     if not np.isfinite(angles).any():
         raise ValueError("The viewpoint must have terrain around it inside the generated area.")
     angles[:, distances < min_radius_m] = -np.inf
     if not np.isfinite(angles).any():
         raise ValueError("Nothing lies beyond the minimum distance inside the generated area. Lower it, or generate a larger area.")
     if max_radius_m:
-        if max_radius_m <= min_radius_m:
-            raise ValueError("The cutoff distance must be farther than the minimum distance.")
         angles[:, distances > max_radius_m] = -np.inf
         if not np.isfinite(angles).any():
             raise ValueError("Nothing lies within the cutoff distance. Raise it, or move the viewpoint.")
@@ -166,7 +190,7 @@ def viewpoint(terrain, point, bearing=0.0, fov=120.0, eye_m=2.0, samples=None, m
     return {"azimuths": azimuths, "angles": horizon, "skyline_m": distances[angles.argmax(axis=1)],
             "table": angles, "steps": distances, "farthest": farthest, "min_radius_m": float(min_radius_m), "max_radius_m": float(max_radius_m or 0),
             "eye_m": eye, "start": start,
-            "directions": directions}
+            "directions": directions, "step_m": float(step)}
 
 
 def band(view, near, far):
@@ -380,4 +404,4 @@ def profile_json(terrain, request):
             "skyline_m": np.round(view["skyline_m"], 1).tolist(), "bands": bands, "band_edges": edges,
             "farthest_m": round(view["farthest"], 1), "eye_elevation_m": round(view["eye_m"], 1),
             "point": np.round(view["start"], 6).tolist(), "rays": view_ray_ends(view, terrain),
-            "bearing": request["bearing"], "fov": request["fov"]}
+            "bearing": request["bearing"], "fov": request["fov"], "step_m": round(view["step_m"], 2)}

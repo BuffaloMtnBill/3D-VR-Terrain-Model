@@ -50,3 +50,36 @@ def test_old_handoffs_are_pruned(tmp_path, monkeypatch):
     for _ in range(5):
         lamp_handoff.save_handoff({"format": lamp_handoff.FORMAT}, tmp_path)
     assert len(list(tmp_path.glob("*.json"))) == 3
+
+
+def test_only_this_computer_hands_off_to_cylinderlamp(client, tmp_path, monkeypatch):
+    """SECURITY_REVIEW.md TS-04: another computer gets the download, but can't write handoffs or start CylinderLamp."""
+    started = []
+    monkeypatch.setattr(lamp_handoff, "start_lamp", lambda *a, **k: started.append(True) or False)
+    lan = {"REMOTE_ADDR": "192.168.0.50"}
+    assert client.post("/api/silhouette/t/cylinder-lamp", json=LAYERED, environ_base=lan).status_code == 403
+    assert not (tmp_path / "handoff").exists() or not any((tmp_path / "handoff").iterdir())
+    assert started == []
+    download = client.post("/api/silhouette/t/cylinder-lamp?download=1", json=LAYERED, environ_base=lan)
+    assert download.status_code == 200 and json.loads(download.data)["format"] == lamp_handoff.FORMAT
+
+
+def test_cylinderlamp_is_started_once_at_a_time(tmp_path, monkeypatch):
+    """Two handoffs at once start one CylinderLamp: the second waits, then finds it running."""
+    import threading
+    folder = tmp_path / "lamp"
+    folder.mkdir()
+    (folder / "app.py").write_text("")
+    launched, up = [], threading.Event()
+    monkeypatch.setattr(lamp_handoff, "lamp_running", up.is_set)
+    def popen(*args, **kwargs):
+        launched.append(args)
+        threading.Timer(.3, up.set).start()
+    monkeypatch.setattr(lamp_handoff.subprocess, "Popen", popen)
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(lamp_handoff.start_lamp(folder, wait=5))) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert results == [True, True] and len(launched) == 1

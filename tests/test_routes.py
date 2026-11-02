@@ -156,3 +156,33 @@ def test_restart_endpoint_replies_then_restarts(tmp_path):
         assert restarted == [True]
     finally:
         app.extensions["terrain"]["executor"].shutdown(wait=True)
+
+
+LAN = {"REMOTE_ADDR": "192.168.0.50"}
+
+
+def test_restart_is_for_this_computer_and_not_queued_twice(tmp_path):
+    """SECURITY_REVIEW.md TS-04: another computer can't restart the server, and repeated presses restart it once."""
+    restarted = []
+    app = create_app({"TESTING": True, "CACHE_DIR": tmp_path / "tiles", "RESTART": lambda: restarted.append(True)})
+    try:
+        client = app.test_client()
+        assert client.post("/api/restart", json={}, environ_base=LAN).status_code == 403
+        assert all(client.post("/api/restart", json={}).status_code == 202 for _ in range(3))
+        time.sleep(1.2)
+        assert restarted == [True]
+    finally:
+        app.extensions["terrain"]["executor"].shutdown(wait=True)
+
+
+def test_pages_may_not_be_framed(tmp_path):
+    """SECURITY_REVIEW.md TS-08: no other site can frame the app (clickjacking)."""
+    app = create_app({"TESTING": True, "CACHE_DIR": tmp_path / "tiles"})
+    try:
+        client = app.test_client()
+        for path in ("/", "/api/config"):
+            response = client.get(path)
+            assert response.headers["X-Frame-Options"] == "DENY"
+            assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+    finally:
+        app.extensions["terrain"]["executor"].shutdown(wait=True)

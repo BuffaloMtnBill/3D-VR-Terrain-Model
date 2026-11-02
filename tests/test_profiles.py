@@ -495,3 +495,70 @@ def test_viewpoint_at_the_frame_edge_sees_inward():
     view = viewpoint(terrain, to_point(0, .5), 90, 360, 2.0)
     assert view["angles"].max() > 1
     assert (view["angles"] == -90).any(), "Directions straight out of the frame have no terrain"
+
+
+# ── viewpoint memory budget (SECURITY_REVIEW.md TS-01) ──────────────────────────────────────────────────────────────
+def narrow_strip():
+    """A valid 249 km × 50.1 m selection: its grid is 16 × 384, so its cells are 650 m long but 3.3 m tall."""
+    from terrain_app.elevation import grid_shape
+    from terrain_app.profiles import EARTH_RADIUS_M
+    lat = 36.0
+    dlon = math.degrees(249000/(EARTH_RADIUS_M*math.cos(math.radians(lat))))
+    dlat = math.degrees(50.1/EARTH_RADIUS_M)
+    bounds = Bounds(lat, -82-dlon/2, lat+dlat, -82+dlon/2)
+    rows, columns = grid_shape(bounds, 384)
+    assert (rows, columns) == (16, 384)
+    return Terrain(bounds, np.full((rows, columns), 300, np.float32), 11, 2, "2026-10-01T00:00:00Z"), [lat+dlat/2, -82.0]
+
+
+@pytest.fixture
+def no_huge_arrays(monkeypatch):
+    """Fail, instead of allocating gigabytes, if a viewpoint lays out more distance steps than the budget allows (the
+    old code made 149,101 for the narrow strip and then a 1440 × 149,101 × 2 array)."""
+    from terrain_app import profiles
+
+    class Guarded:
+        def __getattr__(self, name):
+            return getattr(np, name)
+
+        def arange(self, *args, **kwargs):
+            result = np.arange(*args, **kwargs)
+            assert result.size <= profiles.MAX_VIEW_SAMPLES//360, f"{result.size} steps laid out"
+            return result
+    monkeypatch.setattr(profiles, "np", Guarded())
+
+
+def test_a_narrow_strip_viewpoint_stays_within_the_sample_budget(no_huge_arrays):
+    from terrain_app.profiles import MAX_VIEW_SAMPLES
+    terrain, point = narrow_strip()
+    view = viewpoint(terrain, point, bearing=90, fov=360)
+    assert view["table"].size <= MAX_VIEW_SAMPLES
+    cell = terrain.height/15/2
+    assert view["step_m"] > cell                      # sampled more coarsely than its thin cells, to fit
+    assert view["farthest"] > 1000
+
+
+def test_a_cutoff_bounds_the_work_before_sampling(no_huge_arrays):
+    terrain, point = narrow_strip()
+    view = viewpoint(terrain, point, bearing=90, fov=360, max_radius_m=1000)
+    cell = terrain.height/15/2
+    assert view["step_m"] == pytest.approx(cell)       # within 1 km it keeps the frame's own spacing
+    assert view["steps"].max() <= 1000 and len(view["steps"]) == int(1000/cell)
+    assert view["farthest"] <= 1000
+
+
+def test_the_narrow_strip_through_the_profile_endpoint(app, no_huge_arrays):
+    terrain, point = narrow_strip()
+    from terrain_app.profiles import profile_json
+    with app.test_request_context():
+        for extra in ({"max_radius_m": 1000}, {}, {"bands": 3}):
+            result = profile_json(terrain, profile_options({"mode": "viewpoint", "point": point, "fov": 360, **extra}))
+            assert len(result["angles"]) == len(result["azimuths"]) >= 360 and result["step_m"] > 0
+
+
+def test_ordinary_frames_keep_their_own_spacing():
+    """The budget only lengthens the step for frames that need it: a square 384 grid seen all round keeps half a cell."""
+    heights = np.random.default_rng(3).normal(400, 30, (384, 384)).astype(np.float32)
+    terrain = Terrain(BOUNDS, heights, 11, 2, "2026-10-01T00:00:00Z")
+    view = viewpoint(terrain, to_point(.05, .95), bearing=45, fov=360)
+    assert view["step_m"] == pytest.approx(min(terrain.width, terrain.height)/383/2)

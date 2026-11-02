@@ -11,7 +11,9 @@ folder is for templates only: programs never save output there.
 record_derivation() notes which templates (ids in Templates/templates.json) a
 saved model was made from, in the folder's collection index (.collection.json,
 shared with Collection Manager), so a template's derivatives can be listed
-together.
+together. describe() notes what a saved model is (category, tags, a description,
+details such as its size or location and the program that made it), so Collection
+Manager can show and filter models as soon as they are saved.
 """
 from contextlib import contextmanager
 import json
@@ -145,6 +147,58 @@ def record_derivation(files, program, root=None):
                 record = index['assets'].setdefault(rel, {})
                 record['derived_from'] = sorted(set(record.get('derived_from', [])) | set(templates))
                 record['made_by'] = program
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+# Colours for the categories describe() adds, matching Collection Manager's palette; others take the grey.
+CATEGORY_COLORS = {'Terrain': '#7cc46a', 'Silhouettes': '#5a8de0', 'Animals': '#e0794a', 'Lamps': '#d9b44a',
+                   'Lamp lids': '#d66bb0', 'Trees': '#4ab8c4', 'Clouds': '#9aa0a6', 'Houses': '#9a72e0',
+                   'AI models': '#d66bb0', 'Boxes': '#b98b5e', 'Insets': '#e0708f'}
+MAX_DETAILS = 40
+
+
+def _tag(tag):
+    return ' '.join(str(tag).split()).strip().lower()[:40]
+
+
+def describe(files, program, category='', tags=(), notes='', details=None, root=None):
+    """Note in the collection index what each saved file is, for Collection Manager to show and filter by.
+
+    `files` is a saved path or a list of them; a folder stands for the model files in it (as save_set makes).
+    The file goes in `category` (added to the index's categories if it is new), gains `tags`, gets `notes` (a
+    description) and `details` ({label: value}, such as {'Size': '180 mm'}) and is marked as made by `program`.
+    What someone already set by hand wins: a category or notes the file has are kept and tags are only added.
+    Files outside the Models folder are skipped. Returns False instead of raising, like record_derivation."""
+    root = Path(root or models_root()).resolve()
+    paths = []
+    for path in [files] if isinstance(files, (str, os.PathLike)) else files:
+        path = Path(path).resolve()
+        paths += sorted(p for p in path.rglob('*') if p.is_file() and p.suffix.lower() in MODEL_SUFFIXES) \
+            if path.is_dir() else [path] if path.is_file() else []
+    rels = [p.relative_to(root).as_posix() for p in paths if root in p.parents]
+    if not rels:
+        return True
+    category = ' '.join(str(category or '').split())[:60]
+    tags = {_tag(t) for t in tags} - {''}
+    details = {' '.join(str(k).split())[:40]: ' '.join(str(v).split())[:200]
+               for k, v in list((details or {}).items())[:MAX_DETAILS] if str(v).strip()}
+    try:
+        with collection_index(root) as index:
+            if category and category not in {c.get('name') for c in index['categories']}:
+                index['categories'].append({'name': category, 'color': CATEGORY_COLORS.get(category, '#9aa0a6')})
+            for rel in rels:
+                record = index['assets'].setdefault(rel, {})
+                if category and not record.get('category'):
+                    record['category'] = category
+                if tags:
+                    record['tags'] = sorted(set(record.get('tags', [])) | tags)
+                if notes and not record.get('notes'):
+                    record['notes'] = str(notes)[:4000]
+                if details:
+                    record['details'] = details
+                record['made_by'] = str(program)[:80]
         return True
     except (OSError, ValueError):
         return False

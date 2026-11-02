@@ -4,7 +4,7 @@ from functools import partial
 import gzip
 from io import BytesIO
 from pathlib import Path
-from threading import RLock
+from threading import Lock, RLock
 import json
 import logging
 import os
@@ -31,7 +31,8 @@ from .addons import BALL_COLOR, catalog as studio_catalog, check_project, marker
 from .studio import marker_ball_file, marker_platform_file, studio_export, studio_format
 from .hydrography import HydrographyClient, HYDROGRAPHY_URL, water_source
 from . import lamp_handoff
-from .models_folder import count_models, record_derivation, save_bytes
+from .catalogue import about_terrain, describe_terrain
+from .models_folder import count_models, describe, record_derivation, save_bytes
 from .live import Hub
 from .relief import ReliefTiles
 from .speech import MAX_SECONDS as MAX_SPEECH_SECONDS, Transcriber, decode_samples, purpose_of, vocabulary_of
@@ -165,6 +166,9 @@ def create_app(test_config=None):
     def response_headers(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # No other site may frame these pages (clickjacking: SECURITY_REVIEW.md TS-08).
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
+        response.headers["X-Frame-Options"] = "DENY"
         if request.path.startswith("/api/") and not request.path.startswith("/api/relief/"):
             response.headers["Cache-Control"] = "no-store"
         return response
@@ -261,10 +265,16 @@ def create_app(test_config=None):
     def index():
         return render_template("index.html", presets=presets, default_place=default_place, silhouette_presets=SILHOUETTE_PRESETS)
 
+    restart_pending = Lock()
+
     @app.post("/api/restart")
     def restart_server():
-        """The header's Restart server button: reply first, then restart once the response has gone out."""
-        Timer(.5, app.config.get("RESTART", restart_process)).start()
+        """The header's Restart server button: reply first, then restart once the response has gone out. For this
+        computer only; presses while a restart is pending don't queue another."""
+        if not is_local(request.remote_addr):
+            return jsonify(error="The server can be restarted only from this computer."), 403
+        if restart_pending.acquire(blocking=False):
+            Timer(.5, app.config.get("RESTART", restart_process)).start()
         return jsonify(restarting=True), 202
 
     @app.get("/api/config")
@@ -709,7 +719,8 @@ def create_app(test_config=None):
                 return jsonify(error="Four exports are already running. Wait for one to finish."), 429
             job = uuid.uuid4().hex
             studio_jobs[job] = dict(state="queued", progress=0, message="Waiting to start…", finished=None,
-                                    templates=marker_templates(project, format))
+                                    templates=marker_templates(project, format),
+                                    about=about_terrain(terrain, options, format, features, project, bool(payload.get("route"))))
         executor.studio.submit(run_studio_job, job, partial(studio_export, terrain, options, format, attribution, palette=colors, classes=classes,
                                                             feature_layers=features, feature_data=feature_data, project=project, preview_mesh=preview,
                                                             buildings=marker_buildings(identifier, project)))
@@ -741,14 +752,16 @@ def create_app(test_config=None):
         count = count_models(MODELS_CATEGORY, app.config.get("MODELS_DIR"))
         return dict(folder=f"Models/{MODELS_CATEGORY}", count=count, limit=MODELS_LIMIT, room=count < MODELS_LIMIT)
 
-    def save_model(content, name, suffix, templates=()):
-        """Save a model into Models/Terrain, unless that folder already holds MODELS_LIMIT models."""
+    def save_model(content, name, suffix, templates=(), about=None, place=""):
+        """Save a model into Models/Terrain, unless that folder already holds MODELS_LIMIT models, and tell Collection
+        Manager what it is: `about` from catalogue.about_terrain and the place the page searched for."""
         status = models_status()
         if not status["room"]:
             return jsonify(error=f"{status['folder']} already holds {status['count']} models (the limit is {MODELS_LIMIT}). "
                                  "Move some out, or download the model instead.", **status), 409
         saved = save_bytes(content, MODELS_CATEGORY, name, suffix, "terrain", app.config.get("MODELS_DIR"))
         record_derivation({saved: list(templates)}, "VR Terrain Model", app.config.get("MODELS_DIR"))
+        describe(saved, "VR Terrain Model", "Terrain", **describe_terrain(about, place), root=app.config.get("MODELS_DIR"))
         return jsonify(path=str(saved), name=saved.name, **models_status())
 
     @app.get("/api/models/terrain")
@@ -773,12 +786,12 @@ def create_app(test_config=None):
                 return jsonify(error="This export has expired. Export again."), 404
             if record["state"] != "ready":
                 return jsonify(error="This export is not ready yet."), 409
-            content, filename, templates = record["content"], record["filename"], record.get("templates", [])
+            content, filename, templates, about = record["content"], record["filename"], record.get("templates", []), record.get("about")
         suffix = Path(filename).suffix.lower()
         if suffix not in (".stl", ".3mf", ".obj", ".glb"):
             return jsonify(error="Only models (STL, 3MF, OBJ, GLB) are saved to Models."), 400
-        name = (request.get_json(silent=True) or {}).get("name") or Path(filename).stem
-        return save_model(content, name, suffix, templates)
+        body = request.get_json(silent=True) or {}
+        return save_model(content, body.get("name") or Path(filename).stem, suffix, templates, about, str(body.get("place") or "")[:300])
 
     @app.get("/api/studio/marker-ball")
     def studio_marker_ball():
@@ -838,7 +851,8 @@ def create_app(test_config=None):
     @app.post("/api/silhouette/<identifier>/cylinder-lamp")
     def silhouette_cylinder_lamp(identifier):
         """Hand the silhouette's layers to CylinderLamp (started if needed) and answer the page to open there; with
-        ?download=1, the handoff file itself."""
+        ?download=1, the handoff file itself. Only the download is offered to other computers: the handoff folder and
+        CylinderLamp are this computer's."""
         terrain = find_terrain(identifier)
         if terrain is None:
             return jsonify(error="Terrain is unavailable. Generate the area again."), 404
@@ -850,6 +864,8 @@ def create_app(test_config=None):
         if request.args.get("download"):
             return send_file(BytesIO(json.dumps(data, indent=1).encode()), mimetype="application/json", as_attachment=True,
                              download_name="lamp-silhouette.json")
+        if not is_local(request.remote_addr):
+            return jsonify(error="CylinderLamp can be opened only from this computer; download the handoff file instead."), 403
         handoff = lamp_handoff.save_handoff(data)
         running = lamp_handoff.start_lamp()
         return jsonify(id=handoff, url=f"{lamp_handoff.lamp_url()}/?silhouette={handoff}", running=running,

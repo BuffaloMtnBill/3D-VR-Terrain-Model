@@ -1198,7 +1198,8 @@ export function createStudio(ctx) {
     if(where==='download')return MODEL_FORMATS.includes(format)||destination()==='download'?`Downloaded ${name}.`:`Downloaded ${name} (only models are saved to Models).`;
     // The server saves only exports it built itself (it takes no uploaded files), so a GLB made in the browser downloads.
     if(!job){if(where==='save')ctx.download(blob,name);return `Downloaded ${name}; a GLB built in the browser cannot be saved to Models.`;}
-    const response=await postJSON(`/api/studio/jobs/${job}/save`,{name:modelName()});
+    // The place it shows goes to Collection Manager with the model.
+    const response=await postJSON(`/api/studio/jobs/${job}/save`,{name:modelName(),place:String(ctx.state.loadedName||ctx.state.name||'')});
     const result=await response.json().catch(()=>({}));
     if(result.limit){modelsFolder={folder:result.folder,count:result.count,limit:result.limit,room:result.room};renderDestination();}
     if(!response.ok)throw new Error(result.error||'The model could not be saved.');

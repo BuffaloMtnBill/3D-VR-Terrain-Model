@@ -27,6 +27,19 @@ jobs:
       - name: Run the tests
         run: python -m pytest -q
 
+  audit:
+    name: Known vulnerabilities in the dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install pip-audit
+        run: python -m pip install -U pip pip-audit
+      - name: Audit the pinned requirements (fails on any known advisory)
+        run: pip-audit -r requirements.txt --progress-spinner off
+
   windows-launcher:
     name: run.bat first-run setup
     runs-on: windows-latest

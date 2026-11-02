@@ -545,6 +545,22 @@ def test_saved_3mf_prints_record_their_marker_template(studio, tmp_path):
     assert assets["Terrain/Trail map.3mf"]["derived_from"] == ["terrain-marker-ball"]
 
 
+def test_saved_models_tell_collection_manager_what_they_are(studio, tmp_path):
+    client, extension, cover = studio
+    client.application.config["MODELS_DIR"] = tmp_path / "Models"
+    job, status = run_job(client, {"format": "stl", "size_mm": 120, "exaggeration": 3})
+    assert status["state"] == "ready"
+    client.post(f"/api/studio/jobs/{job}/save", json={"name": "Roan", "place": "Roan Mountain, Carter County, Tennessee, United States"})
+    index = json.loads((tmp_path / "Models" / ".collection.json").read_text())
+    stl = index["assets"]["Terrain/Roan.stl"]
+    assert stl["category"] == "Terrain" and stl["made_by"] == "VR Terrain Model"
+    assert {"terrain", "stl", "tennessee", "united states"} <= set(stl["tags"])
+    assert stl["details"]["Place"] == "Roan Mountain" and stl["details"]["Region"] == "Carter County, Tennessee, United States"
+    assert stl["details"]["Vertical exaggeration"] == "3×" and stl["details"]["Centre"].endswith("° W")
+    assert stl["notes"].startswith("Terrain model of Roan Mountain, Carter County") and "120 mm across" in stl["notes"]
+    assert {"name": "Terrain", "color": "#7cc46a"} in index["categories"]
+
+
 def test_only_3mf_prints_with_markers_come_from_a_marker_template():
     project = addons.project_options({"addons": [{"type": "nail_marker", "u": .5, "v": .5}], "marker_balls": {"include": True, "style": "platform"}})
     assert addons.marker_templates(project, "3mf") == ["terrain-marker-platform"]
